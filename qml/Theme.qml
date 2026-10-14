@@ -46,15 +46,5 @@ QtObject {
     readonly property color danger: light ? "#e11d2a" : "#f4212e"
     readonly property color success: light ? "#059669" : "#10b981"
 
-    // Violet accent for the music panel
-    readonly property color violet: light ? "#9333ea" : "#a855f7"
-    readonly property color violetLight: light ? "#a855f7" : "#c084fc"
-    readonly property color violetDeep: light ? "#7e22ce" : "#7c3aed"
-    readonly property color violetSurface: light ? "#faf8fe" : "#0b0914"
-    readonly property color violetEdge: light ? "#e2d8f3" : "#221738"
-    readonly property color violetWell: light ? "#efe9f9" : "#17122a"
-    readonly property color violetWellEdge: light ? "#d6cbef" : "#2a2145"
-    readonly property color violetRow: light ? "#ece4fa" : "#1c1430"
-
     readonly property string font: "Segoe UI"
 }

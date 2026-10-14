@@ -961,8 +961,8 @@ Window {
             id: musicBg
             anchors.fill: parent
             radius: 28
-            tint: t.violetSurface
-            edge: t.violetEdge
+            tint: t.surface
+            edge: t.border
         }
 
         MusicPanel {

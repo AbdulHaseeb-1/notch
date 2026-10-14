@@ -13,8 +13,11 @@ your apps, tucks itself away and drops back down when you need it.
 - **System** - turn on System stats in Settings for CPU, memory and battery beside the clock. Click that block
   for disk, network throughput and uptime. Numbers turn red when they're in
   trouble (CPU or memory over 90%, battery under 15%).
-- **Music** - the note in the notch is Noch's own player. Click it to open the
-  player, click the mark to play or pause, and scroll on it to change volume.
+- **Music** - the note beside the notch is Noch's own player. Click it to open
+  the transport bar (previous, play or pause, next, repeat, volume); the volume
+  icon opens a slider, and the note at the start of the bar opens the full
+  player. While music plays the pill shrinks to a small gradient level
+  indicator. Scroll on the pill to change volume.
   Drop songs or a folder onto the notch, or use **Add music**. The queue, the
   last track and the volume are remembered.
 - **Apps** - icons are read from the real installed programs and shown in black

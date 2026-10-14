@@ -14,12 +14,12 @@ Item {
     Theme { id: t }
 
     // ---- palette
-    readonly property color cardBg:      t.violetSurface
-    readonly property color bezelBg:     t.violetWell
-    readonly property color bezelBorder: t.violetWellEdge
-    readonly property color accent:      t.violet
-    readonly property color accentLight: t.violetLight
-    readonly property color accentDeep:  t.violetDeep
+    readonly property color cardBg:      t.surface
+    readonly property color bezelBg:     t.raised
+    readonly property color bezelBorder: t.border
+    readonly property color accent:      t.ink
+    readonly property color accentLight: t.ink
+    readonly property color accentDeep:  t.inkSoft
     readonly property color textMuted:   t.textDim
     readonly property color textFaint:   t.textFaint
 
@@ -77,7 +77,7 @@ Item {
         anchors.fill: parent
         radius: panel.cardRadius
         tint: panel.cardBg
-        edge: t.violetEdge
+        edge: t.border
         clip: true
 
     }
@@ -179,8 +179,8 @@ Item {
             Item {
                 id: art
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 196
-                height: 196
+                width: 172
+                height: 172
 
                 Rectangle {
                     id: bezel
@@ -196,7 +196,7 @@ Item {
                         width: parent.width - 38
                         height: width
                         radius: 8
-                        color: "#0b0816"
+                        color: "#0c0c0f"
                         clip: true
 
                         Image {
@@ -221,8 +221,8 @@ Item {
                             Rectangle {
                                 anchors.fill: parent
                                 gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "#1c0f33" }
-                                    GradientStop { position: 1.0; color: "#08050f" }
+                                    GradientStop { position: 0.0; color: "#1f1f24" }
+                                    GradientStop { position: 1.0; color: "#0a0a0d" }
                                 }
                             }
 
@@ -237,9 +237,9 @@ Item {
                                         centerRadius: defaultArt.width * 0.5
                                         focalX: centerX
                                         focalY: centerY
-                                        GradientStop { position: 0.0; color: "#998b5cf6" }
-                                        GradientStop { position: 0.5; color: "#265b21b6" }
-                                        GradientStop { position: 1.0; color: "#005b21b6" }
+                                        GradientStop { position: 0.0; color: "#40ffffff" }
+                                        GradientStop { position: 0.5; color: "#1cb0b0ba" }
+                                        GradientStop { position: 1.0; color: "#00b0b0ba" }
                                     }
                                     startX: 0; startY: 0
                                     PathLine { x: defaultArt.width; y: 0 }
@@ -276,20 +276,20 @@ Item {
                                         strokeColor: "transparent"
                                         fillGradient: LinearGradient {
                                             x1: 20; y1: 10; x2: 80; y2: 90
-                                            GradientStop { position: 0.0; color: "#80c084fc" }
-                                            GradientStop { position: 1.0; color: "#304c1d95" }
+                                            GradientStop { position: 0.0; color: "#80ffffff" }
+                                            GradientStop { position: 1.0; color: "#30707078" }
                                         }
                                         PathSvg { path: "M50 10 L85 30 L85 70 L50 90 L15 70 L15 30 Z" }
                                     }
                                     ShapePath {
                                         strokeWidth: -1
                                         strokeColor: "transparent"
-                                        fillColor: "#55e9d5ff"
+                                        fillColor: "#55f2f2f5"
                                         PathSvg { path: "M50 32 L70 66 L30 66 Z" }
                                     }
                                     // edges
                                     ShapePath {
-                                        strokeColor: "#e9d5ff"
+                                        strokeColor: "#f2f2f5"
                                         strokeWidth: 1.6
                                         fillColor: "transparent"
                                         joinStyle: ShapePath.RoundJoin
@@ -306,7 +306,7 @@ Item {
             }
         }
 
-        Item { width: 1; height: 24 }
+        Item { width: 1; height: 18 }
 
         // ── Title / artist + heart & volume ─────────────────────────────
         Item {
@@ -356,13 +356,6 @@ Item {
                     hoverColor: panel.accentLight
                     opacity: player.hasTrack ? 1 : 0.4
                     onClicked: panel.toggleLike()
-                }
-                IconHit {
-                    icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
-                    glyphSize: 17
-                    color: panel.accent
-                    hoverColor: panel.accentLight
-                    onClicked: player.toggleMute()
                 }
             }
         }
@@ -506,8 +499,8 @@ Item {
                     anchors.fill: parent
                     radius: width / 2
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: playHit.containsMouse ? t.violetLight : t.violet }
-                        GradientStop { position: 1.0; color: playHit.containsMouse ? t.violetDeep : t.violetDeep }
+                        GradientStop { position: 0.0; color: playHit.containsMouse ? t.ink : t.ink }
+                        GradientStop { position: 1.0; color: playHit.containsMouse ? t.inkSoft : t.inkSoft }
                     }
                     scale: playHit.pressed ? 0.92 : (playHit.containsMouse ? 1.04 : 1)
                     Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
@@ -518,7 +511,7 @@ Item {
                         name: !player.hasTrack ? "plus" : (panel.playing ? "pause" : "play")
                         size: player.hasTrack ? 22 : 20
                         stroke: 2.4
-                        color: "#ffffff"
+                        color: t.inverse
                     }
                 }
 
@@ -570,12 +563,57 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: "1"
-                        color: "#ffffff"
+                        color: t.inverse
                         font.family: t.font
                         font.pixelSize: 8
                         font.weight: Font.Black
                     }
                 }
+            }
+        }
+
+        // ── Volume: slider with the mute toggle and a percentage
+        Item {
+            width: parent.width
+            height: 30
+
+            IconHit {
+                id: volumeIcon
+                anchors.left: parent.left
+                anchors.leftMargin: panel.pad - 8
+                anchors.verticalCenter: parent.verticalCenter
+                icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
+                glyphSize: 16
+                color: panel.textMuted
+                hoverColor: t.ink
+                onClicked: player.toggleMute()
+            }
+
+            SizeSlider {
+                anchors.left: volumeIcon.right
+                anchors.leftMargin: 4
+                anchors.right: volumeValue.left
+                anchors.rightMargin: 12
+                anchors.verticalCenter: parent.verticalCenter
+                from: 0
+                to: 1
+                value: player.volume
+                onMoved: (v) => player.volume = v
+            }
+
+            Text {
+                id: volumeValue
+                anchors.right: parent.right
+                anchors.rightMargin: panel.pad
+                anchors.verticalCenter: parent.verticalCenter
+                width: 34
+                horizontalAlignment: Text.AlignRight
+                text: Math.round(player.volume * 100) + "%"
+                color: panel.textFaint
+                font.family: t.font
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                font.features: ({ "tnum": 1 })
             }
         }
 
@@ -591,7 +629,7 @@ Item {
                 x: panel.pad
                 width: parent.width - 2 * panel.pad
                 height: 1
-                color: t.violetEdge
+                color: t.border
             }
 
             ListView {
@@ -616,7 +654,7 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: 10
-                        color: qRow.current ? t.violetRow : t.ink
+                        color: qRow.current ? t.hover : t.ink
                         opacity: qRow.current ? 1 : (qRowHit.containsMouse ? 0.05 : 0)
                     }
 
@@ -692,7 +730,7 @@ Item {
         height: optCol.implicitHeight + 12
         radius: 14
         tint: t.surface
-        edge: t.violetEdge
+        edge: t.border
         opacity: panel.menuOpen ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 130 } }

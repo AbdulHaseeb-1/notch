@@ -1,18 +1,21 @@
 ﻿import QtQuick
 
-// Standalone music pill that sits beside the notch (separate from the app
-// dock, as in the design):
-//   - no song loaded:  a round [♫] button that opens the player card
-//   - song loaded:     a capsule mini player [ |◀  ▶/⏸⏸  ▶| ] with a purple
-//                      thin progress line
-// Clicking the pill outside the buttons opens / closes the full player card.
+// Music pill beside the notch, separate from the app dock.
+//   - Stopped: a round note icon.
+//   - Playing: the pill minifies to a small capsule with a soft gradient level
+//     indicator, and a faint gradient wash across it.
+//   - Clicking the pill opens the transport bar: previous, play/pause, next,
+//     repeat and volume. The volume icon opens a slider inside the bar. The
+//     note at the start of the bar opens the full player card.
+// The bar closes on a second click on empty pill space, or when the pointer
+// leaves the pill (unless the volume slider is being dragged).
 Item {
     id: chip
 
     property real s: 1
-    property bool active: false
+    property bool active: false         // the full player card is open
     property real appear: 1
-    property bool highlight: false      // e.g. while dragging files over it
+    property bool highlight: false      // a file is being dragged over the pill
 
     signal openRequested()
     signal volumeNudged(real volume)
@@ -21,47 +24,65 @@ Item {
 
     Theme { id: t }
 
-    readonly property bool hasTrack: player.hasTrack
     readonly property bool playing: player.state === 1
-    readonly property real ratio: player.duration > 0
-        ? Math.max(0, Math.min(1, player.position / player.duration)) : 0
-    readonly property color accent: t.violet
-
     readonly property real pillH: Math.round(50 * s)
-    implicitHeight: pillH
-    implicitWidth: hasTrack ? Math.round(138 * s) : pillH
+    readonly property real playingW: Math.round(80 * s)
+    property bool barOpen: false
+    property bool volumeOpen: false
+
+    width: barOpen ? barRow.implicitWidth + Math.round(20 * s)
+                   : (playing ? playingW : pillH)
     height: pillH
-    width: implicitWidth
     opacity: appear
 
-    Behavior on width { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+    Behavior on width { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
 
+    // One round transport button. Filled buttons (play/pause) are solid ink.
     component TransportButton: Item {
         id: tb
         property string icon
-        property real glyphSize: 18
-        property real s: 1
+        property real glyphSize: Math.round(18 * chip.s)
+        property color tint: t.ink
+        property bool filled: false
+        property bool badge: false
         signal clicked()
-        width: Math.round(34 * tb.s)
+
+        width: Math.round(34 * chip.s)
         height: width
-        anchors.verticalCenter: parent ? parent.verticalCenter : undefined
 
         Rectangle {
-            anchors.centerIn: parent
-            width: parent.width
-            height: width
+            anchors.fill: parent
             radius: width / 2
             color: t.ink
-            opacity: tbHit.pressed ? 0.12 : (tbHit.containsMouse ? 0.07 : 0)
+            opacity: tb.filled ? (tbHit.pressed ? 0.85 : (tbHit.containsMouse ? 0.92 : 1))
+                               : (tbHit.pressed ? 0.14 : (tbHit.containsMouse ? 0.08 : 0))
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
         Glyph {
             anchors.centerIn: parent
             name: tb.icon
             size: tb.glyphSize
-            color: t.ink
+            color: tb.filled ? t.inverse : tb.tint
             scale: tbHit.pressed ? 0.86 : 1
             Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+        }
+        // "1" badge for repeat-one.
+        Rectangle {
+            visible: tb.badge
+            anchors.right: parent.right
+            anchors.top: parent.top
+            width: Math.round(11 * chip.s)
+            height: width
+            radius: width / 2
+            color: t.ink
+            Text {
+                anchors.centerIn: parent
+                text: "1"
+                color: t.inverse
+                font.family: t.font
+                font.pixelSize: Math.round(8 * chip.s)
+                font.weight: Font.Black
+            }
         }
         MouseArea {
             id: tbHit
@@ -72,110 +93,178 @@ Item {
         }
     }
 
-    // ---- surface
+    // Surface.
     Glass {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        edge: chip.highlight ? t.ink
-            : chip.active ? t.violetDeep
-            : (bgHover.hovered ? t.borderStrong : t.border)
-        clip: true
+        edge: chip.highlight || chip.active ? t.ink
+            : (pillHover.hovered ? t.borderStrong : t.border)
+    }
 
-        // Top hairline highlight.
-        Rectangle {
-            x: bg.radius * 0.8
-            width: Math.max(0, parent.width - 2 * x)
-            y: 1
-            height: 1
-            color: t.hairline
+    // Soft gradient wash across the pill while music plays.
+    Rectangle {
+        anchors.fill: parent
+        radius: height / 2
+        opacity: chip.playing && !chip.barOpen ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 280 } }
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: "transparent" }
+            GradientStop { position: 0.5; color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.12) }
+            GradientStop { position: 1.0; color: "transparent" }
         }
     }
 
-    // Background click target (below the buttons) - opens the full card.
+    // Click target for the whole pill. It sits under the bar's buttons, so the
+    // buttons take their own clicks.
     MouseArea {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
-        onClicked: chip.openRequested()
-    }
-
-    HoverHandler {
-        id: bgHover
-        onHoveredChanged: {
-            if (hovered)
-                chip.hintRequested(chip.hasTrack && player.title.length > 0
-                                   ? player.title + (player.artist ? " — " + player.artist : "")
-                                   : qsTr("Music"))
-            else
-                chip.hintCleared()
+        onClicked: {
+            chip.barOpen = !chip.barOpen
+            if (!chip.barOpen)
+                chip.volumeOpen = false
         }
     }
 
-    // ---- idle: music note
-    Glyph {
-        anchors.centerIn: parent
-        name: "notes"
-        size: Math.round(22 * chip.s)
-        color: chip.active ? t.violetLight : t.ink
-        opacity: chip.hasTrack ? 0 : 1
-        scale: chip.hasTrack ? 0.6 : 1
-        visible: opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: 180 } }
-        Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutBack } }
-        Behavior on color { ColorAnimation { duration: 160 } }
+    HoverHandler {
+        id: pillHover
+        onHoveredChanged: {
+            if (hovered) {
+                collapseTimer.stop()
+                chip.hintRequested(player.hasTrack && player.title.length > 0
+                                   ? player.title + (player.artist ? " — " + player.artist : "")
+                                   : qsTr("Music"))
+            } else {
+                chip.hintCleared()
+                collapseTimer.restart()
+            }
+        }
     }
 
-    // ---- mini player
+    Timer {
+        id: collapseTimer
+        interval: 900
+        onTriggered: {
+            if (!pillHover.hovered && !volumeSlider.dragging) {
+                chip.barOpen = false
+                chip.volumeOpen = false
+            }
+        }
+    }
+
+    // Stopped: the note alone. Playing: the note with a small level indicator
+    // made of soft gradient bars.
     Row {
-        id: controls
+        id: idleRow
+        anchors.centerIn: parent
+        spacing: Math.round(7 * chip.s)
+        opacity: chip.barOpen ? 0 : 1
+        visible: opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+
+        Glyph {
+            name: "notes"
+            size: Math.round(20 * chip.s)
+            color: t.ink
+        }
+
+        Item {
+            id: meter
+            visible: chip.playing
+            width: Math.round(16 * chip.s)
+            height: Math.round(20 * chip.s)
+
+            Repeater {
+                model: 4
+
+                delegate: Rectangle {
+                    id: bar
+
+                    required property int index
+                    property real level: 0.45
+
+                    x: index * Math.round(5 * chip.s)
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.round(3 * chip.s)
+                    height: Math.round(20 * chip.s) * level
+                    radius: width / 2
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: t.ink }
+                        GradientStop { position: 1.0; color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.25) }
+                    }
+
+                    SequentialAnimation on level {
+                        running: chip.playing && !chip.barOpen
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 1.0; duration: 360 + bar.index * 120; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 0.25; duration: 360 + bar.index * 120; easing.type: Easing.InOutSine }
+                    }
+                }
+            }
+        }
+    }
+
+    // The transport bar.
+    Row {
+        id: barRow
         anchors.centerIn: parent
         spacing: Math.round(4 * chip.s)
-        opacity: chip.hasTrack ? 1 : 0
+        height: Math.round(34 * chip.s)
+        opacity: chip.barOpen ? 1 : 0
         visible: opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on opacity { NumberAnimation { duration: 160 } }
 
         TransportButton {
-            s: chip.s
+            icon: "notes"
+            tint: chip.active ? t.ink : t.textDim
+            onClicked: chip.openRequested()
+        }
+        TransportButton {
             icon: "prev"
             glyphSize: Math.round(19 * chip.s)
             onClicked: player.previous()
         }
         TransportButton {
-            s: chip.s
             icon: chip.playing ? "pause" : "play"
-            glyphSize: Math.round(22 * chip.s)
+            filled: true
+            glyphSize: Math.round(17 * chip.s)
             onClicked: player.toggle()
         }
         TransportButton {
-            s: chip.s
             icon: "next"
             glyphSize: Math.round(19 * chip.s)
             onClicked: player.next()
         }
-    }
-
-    // Progress line along the bottom edge.
-    Item {
-        id: progress
-        visible: chip.hasTrack && player.duration > 0
-        opacity: controls.opacity
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: Math.round(4 * chip.s)
-        width: Math.round(parent.width * 0.62)
-        height: 2
-
-        Rectangle {
-            anchors.fill: parent
-            radius: 1
-            color: t.track
+        TransportButton {
+            icon: "repeat"
+            tint: player.repeatMode > 0 ? t.ink : t.textFaint
+            badge: player.repeatMode === 2
+            onClicked: player.cycleRepeat()
         }
-        Rectangle {
-            width: Math.round(parent.width * chip.ratio)
-            height: parent.height
-            radius: 1
-            color: chip.playing ? t.violetLight : t.textDim
-            Behavior on color { ColorAnimation { duration: 200 } }
+        TransportButton {
+            icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
+            tint: chip.volumeOpen ? t.ink : t.textDim
+            onClicked: chip.volumeOpen = !chip.volumeOpen
+        }
+        Item {
+            visible: chip.volumeOpen
+            width: Math.round(92 * chip.s)
+            height: Math.round(34 * chip.s)
+
+            SizeSlider {
+                id: volumeSlider
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width
+                from: 0
+                to: 1
+                value: player.volume
+                onMoved: (v) => {
+                    player.volume = v
+                    chip.volumeNudged(v)
+                }
+            }
         }
     }
 

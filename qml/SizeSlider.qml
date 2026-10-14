@@ -15,6 +15,7 @@ Item {
 
     readonly property real ratio: Math.max(0, Math.min(1, (value - from) / (to - from)))
     readonly property bool active: hit.containsMouse || hit.pressed
+    readonly property bool dragging: hit.pressed
 
     Rectangle {
         id: track
