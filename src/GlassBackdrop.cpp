@@ -7,6 +7,7 @@
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#  include <QSettings>
 #endif
 
 namespace {
@@ -32,6 +33,16 @@ struct CompositionAttribData {
 };
 
 using SetWindowCompositionAttributeFn = BOOL(WINAPI *)(HWND, CompositionAttribData *);
+
+// Settings > Personalization > Colors > "Transparency effects". When it is off
+// the acrylic call still succeeds but nothing is blurred.
+bool transparencyEnabled()
+{
+    const QSettings personalize(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+        QSettings::NativeFormat);
+    return personalize.value(QStringLiteral("EnableTransparency"), 1).toInt() != 0;
+}
 #endif
 
 } // namespace
@@ -55,11 +66,12 @@ void GlassBackdrop::setWindow(QWindow *window)
 
     // A light, cool tint (#181411 in AABBGGRR order) at about 50% opacity. The
     // QML glass layer adds a little more on top, so text stays readable.
-    AccentPolicy accent{AccentEnableAcrylicBlurBehind, 2, 0x80181411, 0};
+    AccentPolicy accent{AccentEnableAcrylicBlurBehind, 2, static_cast<int>(0x80181411u), 0};
     CompositionAttribData data{kWcaAccentPolicy, &accent, sizeof(accent)};
 
     const HWND hwnd = reinterpret_cast<HWND>(window->winId());
-    m_blurActive = setAttribute(hwnd, &data) != FALSE;
+    const bool acrylic = setAttribute(hwnd, &data) != FALSE;
+    m_blurActive = acrylic && transparencyEnabled();
     emit blurActiveChanged();
 #else
     Q_UNUSED(window);
