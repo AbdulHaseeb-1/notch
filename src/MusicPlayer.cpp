@@ -1,0 +1,653 @@
+#include "MusicPlayer.h"
+
+#include <QAudioOutput>
+#include <QCoreApplication>
+#include <QDirIterator>
+#include <QFileInfo>
+#include <QMediaMetaData>
+#include <QMediaPlayer>
+#include <QRandomGenerator>
+#include <QSettings>
+#include <QUrl>
+
+#include <algorithm>
+
+namespace {
+
+const QStringList &audioSuffixes()
+{
+    static const QStringList suffixes = {
+        QStringLiteral("mp3"),  QStringLiteral("flac"), QStringLiteral("wav"),
+        QStringLiteral("m4a"),  QStringLiteral("aac"),  QStringLiteral("ogg"),
+        QStringLiteral("opus"), QStringLiteral("wma"),  QStringLiteral("aiff"),
+        QStringLiteral("aif"),  QStringLiteral("alac"), QStringLiteral("m4b"),
+    };
+    return suffixes;
+}
+
+bool isAudioFile(const QString &path)
+{
+    return audioSuffixes().contains(QFileInfo(path).suffix(), Qt::CaseInsensitive);
+}
+
+QUrl urlFromVariant(const QVariant &value)
+{
+    const QUrl url = value.toUrl();
+    if (url.isValid() && !url.isEmpty())
+        return url;
+    return QUrl::fromUserInput(value.toString());
+}
+
+QString localPath(const QUrl &url)
+{
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString(QUrl::PreferLocalFile);
+    if (path.isEmpty())
+        return {};
+    return QFileInfo(path).absoluteFilePath();
+}
+
+bool naturalLess(const QString &a, const QString &b)
+{
+    int i = 0;
+    int j = 0;
+    while (i < a.size() && j < b.size()) {
+        if (a.at(i).isDigit() && b.at(j).isDigit()) {
+            qulonglong na = 0;
+            qulonglong nb = 0;
+            while (i < a.size() && a.at(i).isDigit()) {
+                na = na * 10 + quint64(a.at(i).digitValue());
+                ++i;
+            }
+            while (j < b.size() && b.at(j).isDigit()) {
+                nb = nb * 10 + quint64(b.at(j).digitValue());
+                ++j;
+            }
+            if (na != nb)
+                return na < nb;
+        } else {
+            const QChar ca = a.at(i).toLower();
+            const QChar cb = b.at(j).toLower();
+            if (ca != cb)
+                return ca < cb;
+            ++i;
+            ++j;
+        }
+    }
+    return a.size() < b.size();
+}
+
+QString stringOrList(const QVariant &value)
+{
+    if (value.canConvert<QStringList>()) {
+        const QString joined = value.toStringList().join(QStringLiteral(", "));
+        if (!joined.isEmpty())
+            return joined;
+    }
+    return value.toString();
+}
+
+} // namespace
+
+MusicPlayer::MusicPlayer(QObject *parent)
+    : QObject(parent)
+{
+    m_player = new QMediaPlayer(this);
+    m_audio = new QAudioOutput(this);
+    m_player->setAudioOutput(m_audio);
+    m_audio->setVolume(float(m_volume));
+
+    m_saveTimer.setInterval(400);
+    m_saveTimer.setSingleShot(true);
+    connect(&m_saveTimer, &QTimer::timeout, this, &MusicPlayer::saveNow);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &MusicPlayer::saveNow);
+
+    connect(m_player, &QMediaPlayer::positionChanged, this, &MusicPlayer::positionChanged);
+    connect(m_player, &QMediaPlayer::durationChanged, this, &MusicPlayer::durationChanged);
+    connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
+        if (state == QMediaPlayer::PlayingState)
+            m_failStreak = 0;
+        emit stateChanged();
+        if (state != QMediaPlayer::PlayingState)
+            scheduleSave();
+    });
+    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+        if (status == QMediaPlayer::LoadedMedia || status == QMediaPlayer::BufferedMedia) {
+            if (m_pendingSeek >= 0) {
+                qint64 seekTo = m_pendingSeek;
+                m_pendingSeek = -1;
+                const qint64 length = m_player->duration();
+                if (length > 0 && seekTo > length - 1500)
+                    seekTo = 0;
+                if (seekTo > 0)
+                    m_player->setPosition(seekTo);
+            }
+            readMetadata();
+        } else if (status == QMediaPlayer::EndOfMedia) {
+            handleEnded();
+        }
+    });
+    connect(m_player, &QMediaPlayer::metaDataChanged, this, &MusicPlayer::readMetadata);
+    connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error error, const QString &) {
+        if (error != QMediaPlayer::NoError)
+            advanceAfterError();
+    });
+
+    load();
+}
+
+MusicPlayer::~MusicPlayer()
+{
+    saveNow();
+}
+
+bool MusicPlayer::hasTrack() const
+{
+    return m_index >= 0 && m_index < m_tracks.size();
+}
+
+QString MusicPlayer::title() const
+{
+    if (!hasTrack())
+        return {};
+    const Track &track = m_tracks.at(m_index);
+    if (!track.title.isEmpty())
+        return track.title;
+    return QFileInfo(track.path).completeBaseName();
+}
+
+QString MusicPlayer::artist() const
+{
+    return hasTrack() ? m_tracks.at(m_index).artist : QString();
+}
+
+QString MusicPlayer::album() const
+{
+    return hasTrack() ? m_tracks.at(m_index).album : QString();
+}
+
+qint64 MusicPlayer::position() const
+{
+    return m_player ? m_player->position() : 0;
+}
+
+qint64 MusicPlayer::duration() const
+{
+    return m_player ? m_player->duration() : 0;
+}
+
+int MusicPlayer::state() const
+{
+    if (!m_player)
+        return 0;
+    switch (m_player->playbackState()) {
+    case QMediaPlayer::PlayingState:
+        return 1;
+    case QMediaPlayer::PausedState:
+        return 2;
+    default:
+        return 0;
+    }
+}
+
+void MusicPlayer::setVolume(qreal volume)
+{
+    volume = qBound(0.0, volume, 1.0);
+    if (qAbs(m_volume - volume) < 0.001)
+        return;
+    m_volume = volume;
+    if (m_muted && volume > 0.001) {
+        m_muted = false;
+        if (m_audio)
+            m_audio->setMuted(false);
+        emit mutedChanged();
+    }
+    if (m_audio)
+        m_audio->setVolume(float(volume));
+    emit volumeChanged();
+    scheduleSave();
+}
+
+void MusicPlayer::setMuted(bool muted)
+{
+    if (m_muted == muted)
+        return;
+    m_muted = muted;
+    if (m_audio)
+        m_audio->setMuted(muted);
+    emit mutedChanged();
+    scheduleSave();
+}
+
+void MusicPlayer::toggleMute()
+{
+    setMuted(!m_muted);
+}
+
+void MusicPlayer::setRepeatAll(bool repeat)
+{
+    setRepeatMode(repeat ? 1 : 0);
+}
+
+void MusicPlayer::setRepeatMode(int mode)
+{
+    mode = qBound(0, mode, 2);
+    if (m_repeatMode == mode)
+        return;
+    m_repeatMode = mode;
+    emit repeatModeChanged();
+    emit repeatAllChanged();
+    scheduleSave();
+}
+
+void MusicPlayer::cycleRepeat()
+{
+    setRepeatMode((m_repeatMode + 1) % 3);
+}
+
+void MusicPlayer::setShuffle(bool shuffle)
+{
+    if (m_shuffle == shuffle)
+        return;
+    m_shuffle = shuffle;
+    emit shuffleChanged();
+    scheduleSave();
+}
+
+QVariantList MusicPlayer::tracks() const
+{
+    QVariantList list;
+    list.reserve(m_tracks.size());
+    for (const Track &track : m_tracks) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("title"),
+                     track.title.isEmpty() ? QFileInfo(track.path).completeBaseName() : track.title);
+        entry.insert(QStringLiteral("artist"), track.artist);
+        entry.insert(QStringLiteral("path"), track.path);
+        list.push_back(entry);
+    }
+    return list;
+}
+
+QImage MusicPlayer::coverImage() const
+{
+    QMutexLocker lock(&m_coverMutex);
+    return m_cover;
+}
+
+void MusicPlayer::toggle()
+{
+    if (m_tracks.isEmpty())
+        return;
+    if (m_player->playbackState() == QMediaPlayer::PlayingState) {
+        m_player->pause();
+        return;
+    }
+    if (!hasTrack() || m_player->mediaStatus() == QMediaPlayer::NoMedia)
+        playIndex(qMax(0, m_index), true);
+    else
+        m_player->play();
+}
+
+void MusicPlayer::next()
+{
+    if (m_tracks.isEmpty())
+        return;
+    if (m_shuffle && m_tracks.size() > 1) {
+        int pick = QRandomGenerator::global()->bounded(m_tracks.size() - 1);
+        if (pick >= m_index)
+            ++pick;
+        playIndex(pick, true);
+        return;
+    }
+    if (m_index + 1 < m_tracks.size())
+        playIndex(m_index + 1, true);
+    else if (m_repeatMode > 0)
+        playIndex(0, true);
+    else
+        m_player->pause();
+}
+
+void MusicPlayer::previous()
+{
+    if (m_tracks.isEmpty())
+        return;
+    if (m_player->position() > 3000) {
+        m_player->setPosition(0);
+        return;
+    }
+    if (m_index > 0)
+        playIndex(m_index - 1, true);
+    else if (m_repeatMode > 0)
+        playIndex(m_tracks.size() - 1, true);
+    else
+        m_player->setPosition(0);
+}
+
+void MusicPlayer::seek(qint64 ms)
+{
+    if (!m_player || m_player->duration() <= 0)
+        return;
+    m_player->setPosition(qBound(qint64(0), ms, m_player->duration()));
+}
+
+void MusicPlayer::setIndex(int index)
+{
+    if (index < 0 || index >= m_tracks.size())
+        return;
+    playIndex(index, true);
+}
+
+int MusicPlayer::addUrls(const QVariantList &urls)
+{
+    const bool startPlaying = m_tracks.isEmpty() || state() != 1;
+    const int firstNew = m_tracks.size();
+    int added = 0;
+    for (const QVariant &value : urls)
+        added += addPath(localPath(urlFromVariant(value)));
+    if (added <= 0)
+        return 0;
+    emit playlistChanged();
+    saveNow();
+    if (startPlaying)
+        playIndex(qMin(firstNew, m_tracks.size() - 1), true);
+    return added;
+}
+
+void MusicPlayer::remove(int index)
+{
+    if (index < 0 || index >= m_tracks.size())
+        return;
+    const bool current = index == m_index;
+    const bool wasPlaying = state() == 1;
+    m_tracks.removeAt(index);
+    if (m_tracks.isEmpty()) {
+        m_index = -1;
+        m_player->stop();
+        m_player->setSource({});
+        setCover({});
+        emit trackChanged();
+    } else if (current) {
+        playIndex(qMin(index, m_tracks.size() - 1), wasPlaying);
+    } else if (index < m_index) {
+        --m_index;
+        emit trackChanged();
+    }
+    emit playlistChanged();
+    saveNow();
+}
+
+void MusicPlayer::clear()
+{
+    m_player->stop();
+    m_player->setSource({});
+    m_tracks.clear();
+    m_index = -1;
+    setCover({});
+    emit trackChanged();
+    emit playlistChanged();
+    saveNow();
+}
+
+QVariantMap MusicPlayer::ingestDrop(const QVariantList &urls)
+{
+    const bool startPlaying = m_tracks.isEmpty() || state() != 1;
+    const int firstNew = m_tracks.size();
+    int added = 0;
+    QVariantList other;
+    for (const QVariant &value : urls) {
+        const QUrl url = urlFromVariant(value);
+        const int n = addPath(localPath(url));
+        if (n > 0)
+            added += n;
+        else
+            other.push_back(QVariant::fromValue(url));
+    }
+    if (added > 0) {
+        emit playlistChanged();
+        saveNow();
+        if (startPlaying)
+            playIndex(qMin(firstNew, m_tracks.size() - 1), true);
+    }
+    QVariantMap result;
+    result.insert(QStringLiteral("added"), added);
+    result.insert(QStringLiteral("other"), other);
+    return result;
+}
+
+void MusicPlayer::load()
+{
+    m_loading = true;
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("player"));
+    m_volume = qBound(0.0, settings.value(QStringLiteral("volume"), 0.8).toDouble(), 1.0);
+    m_muted = settings.value(QStringLiteral("muted"), false).toBool();
+    if (settings.contains(QStringLiteral("repeatMode")))
+        m_repeatMode = qBound(0, settings.value(QStringLiteral("repeatMode"), 1).toInt(), 2);
+    else
+        m_repeatMode = settings.value(QStringLiteral("repeat"), true).toBool() ? 1 : 0;
+    m_shuffle = settings.value(QStringLiteral("shuffle"), false).toBool();
+    m_audio->setVolume(float(m_volume));
+    m_audio->setMuted(m_muted);
+
+    const QStringList paths = settings.value(QStringLiteral("tracks")).toStringList();
+    for (const QString &path : paths) {
+        if (QFileInfo::exists(path) && isAudioFile(path))
+            m_tracks.append(Track{QFileInfo(path).absoluteFilePath(), {}, {}, {}});
+    }
+    const int savedIndex = settings.value(QStringLiteral("index"), 0).toInt();
+    const qint64 savedPosition = settings.value(QStringLiteral("position"), 0).toLongLong();
+    settings.endGroup();
+
+    if (!m_tracks.isEmpty()) {
+        m_index = qBound(0, savedIndex, m_tracks.size() - 1);
+        m_pendingSeek = savedPosition;
+        m_player->setSource(QUrl::fromLocalFile(m_tracks.at(m_index).path));
+    }
+    m_loading = false;
+    emit playlistChanged();
+    emit trackChanged();
+    emit volumeChanged();
+    emit mutedChanged();
+    emit repeatAllChanged();
+    emit repeatModeChanged();
+    emit shuffleChanged();
+}
+
+void MusicPlayer::saveNow()
+{
+    if (m_loading || !m_player)
+        return;
+    QStringList paths;
+    paths.reserve(m_tracks.size());
+    for (const Track &track : m_tracks)
+        paths.push_back(track.path);
+
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("player"));
+    settings.setValue(QStringLiteral("volume"), m_volume);
+    settings.setValue(QStringLiteral("muted"), m_muted);
+    settings.setValue(QStringLiteral("repeat"), m_repeatMode > 0);
+    settings.setValue(QStringLiteral("repeatMode"), m_repeatMode);
+    settings.setValue(QStringLiteral("shuffle"), m_shuffle);
+    settings.setValue(QStringLiteral("index"), qMax(0, m_index));
+    settings.setValue(QStringLiteral("position"), m_player->position());
+    settings.setValue(QStringLiteral("tracks"), paths);
+    settings.endGroup();
+}
+
+void MusicPlayer::scheduleSave()
+{
+    if (!m_loading)
+        m_saveTimer.start();
+}
+
+int MusicPlayer::addPath(const QString &path)
+{
+    if (path.isEmpty())
+        return 0;
+    const QFileInfo info(path);
+    if (info.isDir()) {
+        QStringList patterns;
+        for (const QString &suffix : audioSuffixes())
+            patterns.push_back(QStringLiteral("*.") + suffix);
+
+        QStringList found;
+        int visited = 0;
+        QDirIterator it(path, patterns, QDir::Files,
+                        info.isRoot() ? QDirIterator::NoIteratorFlags
+                                      : QDirIterator::Subdirectories);
+        while (it.hasNext() && found.size() < 300 && visited < 4000) {
+            found.push_back(QFileInfo(it.next()).absoluteFilePath());
+            ++visited;
+        }
+        std::sort(found.begin(), found.end(), [](const QString &a, const QString &b) {
+            return naturalLess(QFileInfo(a).fileName(), QFileInfo(b).fileName());
+        });
+
+        int added = 0;
+        for (const QString &file : found)
+            added += addPath(file);
+        return added;
+    }
+
+    if (!info.isFile() || !isAudioFile(path))
+        return 0;
+    const QString absolute = info.absoluteFilePath();
+    for (const Track &track : m_tracks) {
+        if (track.path.compare(absolute, Qt::CaseInsensitive) == 0)
+            return 0;
+    }
+    m_tracks.append(Track{absolute, {}, {}, {}});
+    return 1;
+}
+
+void MusicPlayer::playIndex(int index, bool start)
+{
+    if (m_tracks.isEmpty()) {
+        m_index = -1;
+        emit trackChanged();
+        return;
+    }
+    if (index < 0)
+        index = m_tracks.size() - 1;
+    if (index >= m_tracks.size())
+        index = 0;
+
+    m_index = index;
+    m_pendingSeek = -1;
+    setCover({});
+    m_player->setSource(QUrl::fromLocalFile(m_tracks.at(m_index).path));
+    emit trackChanged();
+    if (start)
+        m_player->play();
+    scheduleSave();
+}
+
+void MusicPlayer::readMetadata()
+{
+    if (!hasTrack())
+        return;
+    const QMediaMetaData meta = m_player->metaData();
+    Track &track = m_tracks[m_index];
+    const QString title = meta.stringValue(QMediaMetaData::Title).trimmed();
+    QString artist = meta.stringValue(QMediaMetaData::AlbumArtist).trimmed();
+    if (artist.isEmpty())
+        artist = stringOrList(meta.value(QMediaMetaData::ContributingArtist)).trimmed();
+    const QString album = meta.stringValue(QMediaMetaData::AlbumTitle).trimmed();
+
+    const bool changed = title != track.title || artist != track.artist || album != track.album;
+    if (!title.isEmpty())
+        track.title = title;
+    track.artist = artist;
+    track.album = album;
+    if (changed) {
+        emit trackChanged();
+        emit playlistChanged();
+    }
+
+    QImage cover = meta.value(QMediaMetaData::CoverArtImage).value<QImage>();
+#if QT_VERSION < QT_VERSION_CHECK(6, 12, 0)
+    if (cover.isNull())
+        cover = meta.value(QMediaMetaData::ThumbnailImage).value<QImage>();
+#endif
+    if (!cover.isNull())
+        setCover(cover);
+}
+
+void MusicPlayer::setCover(const QImage &image)
+{
+    QImage scaled = image;
+    if (!scaled.isNull() && (scaled.width() > 360 || scaled.height() > 360))
+        scaled = scaled.scaled(360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    {
+        QMutexLocker lock(&m_coverMutex);
+        m_cover = scaled;
+    }
+    m_hasCover = !scaled.isNull();
+    ++m_coverRev;
+    emit coverChanged();
+}
+
+void MusicPlayer::handleEnded()
+{
+    if (m_tracks.isEmpty())
+        return;
+    if (m_repeatMode == 2) {
+        m_player->setPosition(0);
+        m_player->play();
+        return;
+    }
+    if (m_shuffle && m_tracks.size() > 1) {
+        int pick = QRandomGenerator::global()->bounded(m_tracks.size() - 1);
+        if (pick >= m_index)
+            ++pick;
+        playIndex(pick, true);
+        return;
+    }
+    if (m_index + 1 < m_tracks.size())
+        playIndex(m_index + 1, true);
+    else if (m_repeatMode > 0)
+        playIndex(0, true);
+    else
+        m_player->pause();
+}
+
+void MusicPlayer::advanceAfterError()
+{
+    if (m_tracks.isEmpty())
+        return;
+    ++m_failStreak;
+    if (m_failStreak >= m_tracks.size()) {
+        m_failStreak = 0;
+        emit playbackError(QStringLiteral("Couldn't play this file"));
+        return;
+    }
+    if (m_index + 1 < m_tracks.size())
+        playIndex(m_index + 1, true);
+    else if (m_repeatMode > 0)
+        playIndex(0, true);
+    else
+        emit playbackError(QStringLiteral("Couldn't play this file"));
+}
+
+CoverImageProvider::CoverImageProvider(MusicPlayer *player)
+    : QQuickImageProvider(QQuickImageProvider::Image)
+    , m_player(player)
+{
+}
+
+QImage CoverImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
+{
+    Q_UNUSED(id);
+    QImage image = m_player ? m_player->coverImage() : QImage();
+    if (image.isNull()) {
+        image = QImage(1, 1, QImage::Format_ARGB32);
+        image.fill(Qt::transparent);
+    } else if (requestedSize.isValid() && requestedSize.width() > 0 && requestedSize.height() > 0
+               && (image.width() > requestedSize.width() || image.height() > requestedSize.height())) {
+        image = image.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    if (size)
+        *size = image.size();
+    return image;
+}

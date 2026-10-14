@@ -1,0 +1,12 @@
+build/
+build-verify/
+_backup_*/
+*.user
+*.autosave
+.qmake.stash
+Makefile
+CMakeUserPresets.json
+*.o
+*.obj
+__pycache__/
+*.pyc
