@@ -10,7 +10,7 @@ your apps, tucks itself away and drops back down when you need it.
   springs back down. Turn this off in Settings to keep it pinned.
 - **Resize** - drag the small handle under the notch, Ctrl + scroll on the
   notch, or use S / M / L / XL and the slider in Settings (70%-160%).
-- **System** - CPU, memory and battery sit under the clock. Click that block
+- **System** - turn on System stats in Settings for CPU, memory and battery beside the clock. Click that block
   for disk, network throughput and uptime. Numbers turn red when they're in
   trouble (CPU or memory over 90%, battery under 15%).
 - **Music** - the note in the notch is Noch's own player. Click it to open the
@@ -24,6 +24,9 @@ your apps, tucks itself away and drops back down when you need it.
   - Drag any app, shortcut or folder onto the notch to pin it, or use
     **Add app** in Settings.
   - A white dot under an icon means the app is running.
+- **Open apps** - programs with a window open sit in their own pill to the left
+  of the notch, like the music pill on the right. Hover one to preview its
+  windows, click a window to bring it forward. Pinned apps stay in the notch.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
   focused). Esc or clicking elsewhere closes it.
 
@@ -60,5 +63,9 @@ cmake --build build
 | `src/SystemMonitor.*` | CPU, memory, battery, disk, network, uptime |
 | `src/AppIconProvider.*` | `image://appicon/...` - extracts real app icons, renders them black and white |
 | `src/OverlayController.*` | Limits mouse input to the visible shapes so the rest clicks through |
+| `src/RunningApps.*` | Programs with open windows, window previews, bringing a window forward |
+| `src/GlassBackdrop.*` | Windows acrylic blur behind the notch, flyouts and menus |
+| `qml/Glass.qml` | The shared frosted-glass surface |
+| `qml/OpenApps.qml`, `qml/WindowPreview.qml` | Open-apps pill and its hover preview |
 
 Settings live in the registry under `HKCU\Software\noch\noch`.

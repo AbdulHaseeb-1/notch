@@ -12,6 +12,7 @@
 #include "GlassBackdrop.h"
 #include "MusicPlayer.h"
 #include "OverlayController.h"
+#include "RunningApps.h"
 #include "SystemMonitor.h"
 
 int main(int argc, char *argv[])
@@ -44,15 +45,18 @@ int main(int argc, char *argv[])
     auto *monitor = new SystemMonitor(&app);
     auto *player = new MusicPlayer(&app);
     auto *glass = new GlassBackdrop(&app);
+    auto *openApps = new RunningApps(&app);
 
     // The engine takes ownership of the providers.
-    engine.addImageProvider(QStringLiteral("appicon"), new AppIconProvider(dock));
+    engine.addImageProvider(QStringLiteral("appicon"), new AppIconProvider(dock, openApps));
     engine.addImageProvider(QStringLiteral("cover"), new CoverImageProvider(player));
+    engine.addImageProvider(QStringLiteral("preview"), new RunningPreviewProvider());
     engine.rootContext()->setContextProperty(QStringLiteral("overlay"), overlay);
     engine.rootContext()->setContextProperty(QStringLiteral("dock"), dock);
     engine.rootContext()->setContextProperty(QStringLiteral("monitor"), monitor);
     engine.rootContext()->setContextProperty(QStringLiteral("player"), player);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
+    engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
 
     engine.loadFromModule("noch", "Main");
 

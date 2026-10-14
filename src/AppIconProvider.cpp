@@ -1,6 +1,7 @@
 #include "AppIconProvider.h"
 
 #include "DockController.h"
+#include "RunningApps.h"
 
 #include <QAbstractFileIconProvider>
 #include <QDir>
@@ -98,9 +99,10 @@ QImage trimTransparent(const QImage &src)
 
 } // namespace
 
-AppIconProvider::AppIconProvider(const DockController *dock)
+AppIconProvider::AppIconProvider(const DockController *dock, const RunningApps *running)
     : QQuickImageProvider(QQuickImageProvider::Image)
     , m_dock(dock)
+    , m_running(running)
 {
 }
 
@@ -108,7 +110,9 @@ QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize
 {
     const QString mode = id.section(QLatin1Char('/'), 0, 0);
     const QString iconId = id.section(QLatin1Char('/'), 1);
-    const QString file = m_dock ? m_dock->iconPathForId(iconId) : QString();
+    QString file = m_dock ? m_dock->iconPathForId(iconId) : QString();
+    if (file.isEmpty() && m_running)
+        file = m_running->iconPathForId(iconId);
 
     QImage image;
     if (!file.isEmpty()) {

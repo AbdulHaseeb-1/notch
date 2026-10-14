@@ -67,6 +67,7 @@ Window {
                                           || grip.containsMouse || panelHover.hovered
                                           || menuHover.hovered || musicHover.hovered
                                           || systemHover.hovered || musicPillHover.hovered
+                                          || openRow.hovered || previewCard.hovered
     readonly property bool dragging: peekDrop.containsDrag || pillDrop.containsDrag
                                      || musicDrop.containsDrag
     readonly property bool holdOpen: !cfg.autoHide || panelOpen || musicOpen || systemOpen
@@ -129,6 +130,7 @@ Window {
     // ------------------------------------------------------------ data
     readonly property var apps: dock.apps
     readonly property var running: dock.running
+    readonly property var openList: openApps.apps
 
     function launchApp(i) {
         if (i < 0 || i >= apps.length)
@@ -206,7 +208,10 @@ Window {
                                     Math.round(menu.x), Math.round(menu.height),
                                     musicVisible, Math.round(musicFlyout.x), Math.round(musicFlyout.height),
                                     systemVisible, Math.round(systemFlyout.height),
-                                    tipVisible, hudVisible]
+                                    tipVisible, hudVisible,
+                                    openRow.visible, Math.round(openRow.x),
+                                    previewShown, Math.round(previewCard.x),
+                                    Math.round(previewCard.width), Math.round(previewCard.height)]
     onMaskKeyChanged: Qt.callLater(updateMask)
 
     function updateMask() {
@@ -215,7 +220,8 @@ Window {
             r.push({ x: peekZone.x, y: 0, width: peekZone.width, height: peekZone.height, radius: 0 })
         } else {
             const m = 22
-            const left = (width - pillW * 1.04) / 2 - m
+            const notchLeft = (width - pillW * 1.04) / 2 - m
+            const left = openRow.visible ? Math.min(notchLeft, openRow.x - m) : notchLeft
             const right = (width + pillW) / 2 + musicGap + musicDock.width + m
             const below = (tipVisible || hudVisible) ? 56 : m
             r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 30 })
@@ -234,6 +240,10 @@ Window {
             if (systemVisible) {
                 r.push({ x: systemFlyout.x - m, y: systemFlyout.baseY - 16,
                          width: systemFlyout.width + 2 * m, height: systemFlyout.height + m + 24, radius: 34 })
+            }
+            if (previewShown) {
+                r.push({ x: previewCard.x - m, y: previewCard.y - 16,
+                         width: previewCard.width + 2 * m, height: previewCard.height + m + 24, radius: 34 })
             }
         }
         overlay.setInteractiveRegions(r)
@@ -418,7 +428,7 @@ Window {
                     id: status
                     s: root.s
                     showClock: cfg.showClock
-                    showStats: false
+                    showStats: cfg.showStats
                     active: root.systemOpen
                     appear: root.itemAppear(root.apps.length + 1)
                     onClicked: root.toggleSystem()
@@ -505,6 +515,107 @@ Window {
             id: musicDrop
             anchors.fill: parent
             onDropped: (drop) => root.handleDrop(drop)
+        }
+    }
+
+    // ------------------------------------------------------------ open apps
+    // Programs with a window open: their own pill on the left of the notch,
+    // mirroring the music pill on the right. Pinned apps stay in the notch.
+    // Hovering a tile previews its windows; clicking one brings it forward.
+    property bool previewOpen: false
+    property string previewExe: ""
+    property var previewWindows: []
+    property real previewCenterX: 0
+    property real previewStamp: 0
+    readonly property bool previewShown: revealed && previewOpen && previewWindows.length > 0
+                                         && !panelOpen && !musicOpen && !systemOpen && menuIndex < 0
+
+    function openPreview(exe, centerX) {
+        const windows = openApps.windowsFor(exe)
+        if (windows.length === 0) {
+            previewOpen = false
+            return
+        }
+        previewExe = exe
+        previewWindows = windows.slice(0, 3)
+        previewCenterX = centerX
+        previewStamp = Date.now()
+        previewOpen = true
+    }
+
+    // A tile opens its preview after a short pause, so sweeping across the row
+    // does not flash every preview. Leaving the row and the preview closes it.
+    Timer {
+        id: previewShowTimer
+        interval: 260
+        property string exe: ""
+        property real centerX: 0
+        onTriggered: root.openPreview(exe, centerX)
+    }
+    Timer {
+        id: previewHideTimer
+        interval: 280
+        onTriggered: if (!openRow.hovered && !previewCard.hovered) root.previewOpen = false
+    }
+
+    OpenApps {
+        id: openRow
+        x: Math.round(pill.x - root.musicGap - width)
+        y: pill.y
+        s: root.s
+        mono: cfg.monoIcons
+        apps: root.openList
+        appear: root.clamp01(root.progress * 1.4 - 0.2)
+        scale: 0.7 + 0.3 * root.clamp01(root.progress)
+
+        onActivated: (exe) => {
+            root.previewOpen = false
+            openApps.activateApp(exe)
+        }
+        onPreviewRequested: (exe, centerX) => {
+            previewHideTimer.stop()
+            if (root.previewOpen) {
+                if (root.previewExe !== exe)
+                    root.openPreview(exe, centerX)
+            } else {
+                previewShowTimer.exe = exe
+                previewShowTimer.centerX = centerX
+                previewShowTimer.restart()
+            }
+        }
+        onHoveredChanged: {
+            if (hovered) {
+                previewHideTimer.stop()
+            } else {
+                previewShowTimer.stop()
+                previewHideTimer.restart()
+            }
+        }
+    }
+
+    WindowPreview {
+        id: previewCard
+        windows: root.previewWindows
+        stamp: root.previewStamp
+        opacity: root.previewShown ? 1 : 0
+        scale: root.previewShown ? 1 : 0.96
+        visible: opacity > 0.01
+        x: Math.round(Math.max(12, Math.min(root.width - width - 12, root.previewCenterX - width / 2)))
+        y: root.shownY + root.pillH + 12
+        transformOrigin: Item.Top
+
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+        Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+        onActivated: (windowId) => {
+            root.previewOpen = false
+            openApps.activateWindow(windowId)
+        }
+        onHoveredChanged: {
+            if (hovered)
+                previewHideTimer.stop()
+            else
+                previewHideTimer.restart()
         }
     }
 

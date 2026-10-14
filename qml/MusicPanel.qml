@@ -134,7 +134,7 @@ Item {
         id: body
         width: parent.width
 
-        // â”€â”€ Header: âˆ¨   NOW PLAYING   Â·Â·Â· â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Header: ∨   NOW PLAYING   ··· ─────────────────────────────────
         Item {
             width: parent.width
             height: 50
@@ -171,7 +171,7 @@ Item {
             }
         }
 
-        // â”€â”€ Artwork â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Artwork ─────────────────────────────────────────────────────
         Item {
             width: parent.width
             height: art.height + 4
@@ -308,7 +308,7 @@ Item {
 
         Item { width: 1; height: 24 }
 
-        // â”€â”€ Title / artist + heart & volume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Title / artist + heart & volume ─────────────────────────────
         Item {
             width: parent.width
             height: 40
@@ -369,7 +369,7 @@ Item {
 
         Item { width: 1; height: 12 }
 
-        // â”€â”€ Scrubber + timestamps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Scrubber + timestamps ───────────────────────────────────────
         Item {
             id: seek
             width: parent.width
@@ -468,7 +468,7 @@ Item {
             }
         }
 
-        // â”€â”€ Transport: shuffle Â· prev Â· PLAY Â· next Â· repeat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Transport: shuffle · prev · PLAY · next · repeat ────────────
         Item {
             width: parent.width
             height: 82
@@ -579,7 +579,7 @@ Item {
             }
         }
 
-        // â”€â”€ Queue (toggled from the Â·Â·Â· menu) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Queue (toggled from the ··· menu) ───────────────────────────
         Item {
             id: queueBox
             width: parent.width
@@ -640,7 +640,7 @@ Item {
                         anchors.right: qRemove.left
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        text: qRow.modelData.title + (qRow.modelData.artist ? "  Â·  " + qRow.modelData.artist : "")
+                        text: qRow.modelData.title + (qRow.modelData.artist ? "  ·  " + qRow.modelData.artist : "")
                         color: qRow.current ? panel.accentLight : "#d1d5db"
                         elide: Text.ElideRight
                         font.family: t.font
@@ -675,7 +675,7 @@ Item {
         Item { width: 1; height: 14 }
     }
 
-    // ---------------------------------------------------------- Â·Â·Â· menu
+    // ---------------------------------------------------------- ··· menu
     MouseArea {
         anchors.fill: parent
         visible: panel.menuOpen
@@ -707,7 +707,7 @@ Item {
             MenuRow {
                 width: parent.width
                 implicitHeight: 34
-                label: qsTr("Add songsâ€¦")
+                label: qsTr("Add songs…")
                 icon: "plus"
                 onTriggered: { panel.menuOpen = false; panel.addRequested() }
             }

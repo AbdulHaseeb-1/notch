@@ -2,8 +2,8 @@
 
 // Standalone music pill that sits beside the notch (separate from the app
 // dock, as in the design):
-//   - no song loaded:  a round [â™«] button that opens the player card
-//   - song loaded:     a capsule mini player [ |â—€  â–¶/âšâš  â–¶| ] with a purple
+//   - no song loaded:  a round [♫] button that opens the player card
+//   - song loaded:     a capsule mini player [ |◀  ▶/⏸⏸  ▶| ] with a purple
 //                      thin progress line
 // Clicking the pill outside the buttons opens / closes the full player card.
 Item {
@@ -104,7 +104,7 @@ Item {
         onHoveredChanged: {
             if (hovered)
                 chip.hintRequested(chip.hasTrack && player.title.length > 0
-                                   ? player.title + (player.artist ? " â€” " + player.artist : "")
+                                   ? player.title + (player.artist ? " — " + player.artist : "")
                                    : qsTr("Music"))
             else
                 chip.hintCleared()

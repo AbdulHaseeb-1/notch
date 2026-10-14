@@ -1,13 +1,14 @@
 import QtQuick
 
-// Clock block in the notch. Click opens the system panel, right-click opens
-// settings.
+// Clock block in the notch, with optional CPU, memory and battery figures
+// beside it (Settings > System stats). Click opens the system panel,
+// right-click opens settings.
 Item {
     id: block
 
     property real s: 1
     property bool showClock: true
-    property bool showStats: true   // kept for API compat, no longer used
+    property bool showStats: false
     property bool active: false
     property real appear: 1
 
@@ -18,8 +19,8 @@ Item {
 
     Theme { id: t }
 
-    visible: showClock
-    width: visible ? col.implicitWidth + Math.round(20 * s) : 0
+    visible: showClock || showStats
+    width: visible ? row.implicitWidth + Math.round(20 * s) : 0
     height: parent ? parent.height : Math.round(50 * s)
     opacity: appear
 
@@ -35,6 +36,32 @@ Item {
 
     readonly property string dateLine: now.toLocaleDateString(Qt.locale(), "dddd, d MMMM")
 
+    // One "label value" line of the stats column.
+    component StatLine: Row {
+        id: line
+        property string label
+        property string value
+        property bool warn: false
+        spacing: Math.round(5 * block.s)
+
+        Text {
+            width: Math.round(26 * block.s)
+            text: line.label
+            color: t.textDim
+            font.family: t.font
+            font.pixelSize: Math.round(10 * block.s)
+            font.weight: Font.DemiBold
+        }
+        Text {
+            text: line.value
+            color: line.warn ? t.danger : t.white
+            font.family: t.font
+            font.pixelSize: Math.round(11.5 * block.s)
+            font.weight: Font.Bold
+            font.features: ({ "tnum": 1 })
+        }
+    }
+
     Rectangle {
         anchors.centerIn: parent
         width: parent.width
@@ -46,29 +73,60 @@ Item {
         Behavior on color { ColorAnimation { duration: 140 } }
     }
 
-    Column {
-        id: col
+    Row {
+        id: row
         anchors.centerIn: parent
-        spacing: 0
+        spacing: Math.round(12 * block.s)
 
-        Text {
-            anchors.right: parent.right
-            text: block.now.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
-            color: t.white
-            font.family: t.font
-            font.pixelSize: Math.round(13 * block.s)
-            font.weight: Font.Bold
-            font.features: ({ "tnum": 1 })
+        Column {
+            id: stats
+            visible: block.showStats
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 1
+
+            StatLine {
+                label: "CPU"
+                value: monitor.cpuPercent < 0 ? "—" : monitor.cpuPercent + "%"
+                warn: monitor.cpuPercent >= 90
+            }
+            StatLine {
+                label: "RAM"
+                value: monitor.memoryTotal > 0 ? monitor.memoryPercent + "%" : "—"
+                warn: monitor.memoryPercent >= 90
+            }
+            StatLine {
+                visible: monitor.hasBattery
+                label: "BAT"
+                value: monitor.batteryPercent < 0 ? "—" : monitor.batteryPercent + "%"
+                warn: monitor.batteryPercent >= 0 && monitor.batteryPercent <= 15 && !monitor.charging
+            }
         }
 
-        Text {
-            anchors.right: parent.right
-            text: block.now.toLocaleDateString(Qt.locale(), "M/d/yyyy")
-            color: "#d9dcdf"
-            font.family: t.font
-            font.pixelSize: Math.round(12.5 * block.s)
-            font.weight: Font.DemiBold
-            font.features: ({ "tnum": 1 })
+        Column {
+            id: clockColumn
+            visible: block.showClock
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 0
+
+            Text {
+                anchors.right: parent.right
+                text: block.now.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
+                color: t.white
+                font.family: t.font
+                font.pixelSize: Math.round(13 * block.s)
+                font.weight: Font.Bold
+                font.features: ({ "tnum": 1 })
+            }
+
+            Text {
+                anchors.right: parent.right
+                text: block.now.toLocaleDateString(Qt.locale(), "M/d/yyyy")
+                color: "#d9dcdf"
+                font.family: t.font
+                font.pixelSize: Math.round(12.5 * block.s)
+                font.weight: Font.DemiBold
+                font.features: ({ "tnum": 1 })
+            }
         }
     }
 
