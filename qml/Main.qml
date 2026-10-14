@@ -274,15 +274,12 @@ Window {
             target: null
             onWheel: (event) => root.setScale(cfg.sizeScale + (event.angleDelta.y / 120) * 0.05)
         }
-        Rectangle {
+        Glass {
             id: bg
             anchors.fill: parent
             radius: height / 2
-            color: t.bg
-            border.width: 1
-            border.color: root.dragging ? t.white
-                        : (root.fullyHidden && peekZone.containsMouse ? t.textDim : t.border)
-            Behavior on border.color { ColorAnimation { duration: 180 } }
+            edge: root.dragging ? t.white
+                : (root.fullyHidden && peekZone.containsMouse ? t.textDim : t.border)
         }
 
         // Hairline highlight along the top edge.
@@ -632,13 +629,12 @@ Window {
 
         HoverHandler { id: menuHover }
 
-        Rectangle {
+        Glass {
             id: menuBg
             anchors.fill: parent
             radius: 18
-            color: "#0f1115"
-            border.width: 1
-            border.color: "#282d35"
+            tint: "#0f1115"
+            edge: "#282d35"
             clip: true
 
             Image {
@@ -793,13 +789,11 @@ Window {
 
         HoverHandler { id: panelHover }
 
-        Rectangle {
+        Glass {
             id: panelBg
             anchors.fill: parent
             radius: 22
-            color: t.bg
-            border.width: 1
-            border.color: t.border
+            edge: t.border
         }
 
         SettingsPanel {
@@ -842,13 +836,12 @@ Window {
 
         HoverHandler { id: musicHover }
 
-        Rectangle {
+        Glass {
             id: musicBg
             anchors.fill: parent
             radius: 28
-            color: "#0b0914"
-            border.width: 1
-            border.color: "#221738"
+            tint: "#0b0914"
+            edge: "#221738"
         }
 
         MusicPanel {
@@ -879,13 +872,11 @@ Window {
 
         HoverHandler { id: systemHover }
 
-        Rectangle {
+        Glass {
             id: systemBg
             anchors.fill: parent
             radius: 22
-            color: t.bg
-            border.width: 1
-            border.color: t.border
+            edge: t.border
         }
 
         SystemPanel {

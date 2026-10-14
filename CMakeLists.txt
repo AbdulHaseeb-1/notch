@@ -31,6 +31,8 @@ qt_add_executable(noch
     src/SystemMonitor.h
     src/MusicPlayer.cpp
     src/MusicPlayer.h
+    src/GlassBackdrop.cpp
+    src/GlassBackdrop.h
 )
 
 target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
@@ -55,6 +57,7 @@ qt_add_qml_module(noch
         qml/NowPlaying.qml
         qml/SystemPanel.qml
         qml/MusicPanel.qml
+        qml/Glass.qml
 )
 
 target_link_libraries(noch PRIVATE

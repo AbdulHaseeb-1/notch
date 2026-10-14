@@ -72,13 +72,12 @@ Item {
     implicitHeight: body.implicitHeight
 
     // ---------------------------------------------------------------- card
-    Rectangle {
+    Glass {
         id: card
         anchors.fill: parent
         radius: panel.cardRadius
-        color: panel.cardBg
-        border.width: 1
-        border.color: "#1e1a2b"
+        tint: panel.cardBg
+        edge: "#1e1a2b"
         clip: true
 
     }
@@ -683,7 +682,7 @@ Item {
         onClicked: panel.menuOpen = false
     }
 
-    Rectangle {
+    Glass {
         id: optMenu
         readonly property real targetY: 46
         anchors.right: parent.right
@@ -692,9 +691,8 @@ Item {
         width: 176
         height: optCol.implicitHeight + 12
         radius: 14
-        color: "#121117"
-        border.width: 1
-        border.color: "#262332"
+        tint: "#121117"
+        edge: "#262332"
         opacity: panel.menuOpen ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 130 } }

@@ -73,16 +73,13 @@ Item {
     }
 
     // ---- surface
-    Rectangle {
+    Glass {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        color: t.bg
-        border.width: 1
-        border.color: chip.highlight ? t.white
-                    : chip.active ? "#7c3aed"
-                    : (bgHover.hovered ? "#3a3d44" : t.border)
-        Behavior on border.color { ColorAnimation { duration: 160 } }
+        edge: chip.highlight ? t.white
+            : chip.active ? "#7c3aed"
+            : (bgHover.hovered ? "#3a3d44" : t.border)
         clip: true
 
         // Top hairline highlight.
