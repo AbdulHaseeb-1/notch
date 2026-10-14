@@ -67,6 +67,7 @@ Window {
                                           || grip.containsMouse || panelHover.hovered
                                           || menuHover.hovered || musicHover.hovered
                                           || systemHover.hovered || musicPillHover.hovered
+                                          || openRow.hovered || previewCard.hovered
     readonly property bool dragging: peekDrop.containsDrag || pillDrop.containsDrag
                                      || musicDrop.containsDrag
     readonly property bool holdOpen: !cfg.autoHide || panelOpen || musicOpen || systemOpen
@@ -129,6 +130,7 @@ Window {
     // ------------------------------------------------------------ data
     readonly property var apps: dock.apps
     readonly property var running: dock.running
+    readonly property var openList: openApps.apps
 
     function launchApp(i) {
         if (i < 0 || i >= apps.length)
@@ -206,7 +208,10 @@ Window {
                                     Math.round(menu.x), Math.round(menu.height),
                                     musicVisible, Math.round(musicFlyout.x), Math.round(musicFlyout.height),
                                     systemVisible, Math.round(systemFlyout.height),
-                                    tipVisible, hudVisible]
+                                    tipVisible, hudVisible,
+                                    openRow.visible, Math.round(openRow.x),
+                                    previewShown, Math.round(previewCard.x),
+                                    Math.round(previewCard.width), Math.round(previewCard.height)]
     onMaskKeyChanged: Qt.callLater(updateMask)
 
     function updateMask() {
@@ -215,7 +220,8 @@ Window {
             r.push({ x: peekZone.x, y: 0, width: peekZone.width, height: peekZone.height, radius: 0 })
         } else {
             const m = 22
-            const left = (width - pillW * 1.04) / 2 - m
+            const notchLeft = (width - pillW * 1.04) / 2 - m
+            const left = openRow.visible ? Math.min(notchLeft, openRow.x - m) : notchLeft
             const right = (width + pillW) / 2 + musicGap + musicDock.width + m
             const below = (tipVisible || hudVisible) ? 56 : m
             r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 30 })
@@ -234,6 +240,10 @@ Window {
             if (systemVisible) {
                 r.push({ x: systemFlyout.x - m, y: systemFlyout.baseY - 16,
                          width: systemFlyout.width + 2 * m, height: systemFlyout.height + m + 24, radius: 34 })
+            }
+            if (previewShown) {
+                r.push({ x: previewCard.x - m, y: previewCard.y - 16,
+                         width: previewCard.width + 2 * m, height: previewCard.height + m + 24, radius: 34 })
             }
         }
         overlay.setInteractiveRegions(r)
@@ -274,15 +284,12 @@ Window {
             target: null
             onWheel: (event) => root.setScale(cfg.sizeScale + (event.angleDelta.y / 120) * 0.05)
         }
-        Rectangle {
+        Glass {
             id: bg
             anchors.fill: parent
             radius: height / 2
-            color: t.bg
-            border.width: 1
-            border.color: root.dragging ? t.white
-                        : (root.fullyHidden && peekZone.containsMouse ? t.textDim : t.border)
-            Behavior on border.color { ColorAnimation { duration: 180 } }
+            edge: root.dragging ? t.ink
+                : (root.fullyHidden && peekZone.containsMouse ? t.textDim : t.border)
         }
 
         // Hairline highlight along the top edge.
@@ -291,7 +298,7 @@ Window {
             width: parent.width - 2 * x
             y: 1
             height: 1
-            color: "#12ffffff"
+            color: t.hairline
         }
 
         // Grab bar shown at the bottom edge while tucked away.
@@ -303,7 +310,7 @@ Window {
             height: 2
             radius: 1
             width: peekZone.containsMouse ? 64 * root.s : 36 * root.s
-            color: peekZone.containsMouse ? t.white : t.textDim
+            color: peekZone.containsMouse ? t.ink : t.textDim
             opacity: root.clamp01(1 - root.progress * 3)
             Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: 200 } }
@@ -389,13 +396,13 @@ Window {
                                 radius: width * 0.28
                                 color: "transparent"
                                 border.width: 1.5
-                                border.color: t.white
+                                border.color: t.ink
                                 Glyph {
                                     anchors.centerIn: parent
                                     name: "plus"
                                     size: root.iconSize * 0.55
                                     stroke: 2
-                                    color: t.white
+                                    color: t.ink
                                 }
                             }
                         }
@@ -421,7 +428,7 @@ Window {
                     id: status
                     s: root.s
                     showClock: cfg.showClock
-                    showStats: false
+                    showStats: cfg.showStats
                     active: root.systemOpen
                     appear: root.itemAppear(root.apps.length + 1)
                     onClicked: root.toggleSystem()
@@ -511,6 +518,115 @@ Window {
         }
     }
 
+    // ------------------------------------------------------------ open apps
+    // Programs with a window open: their own pill on the left of the notch,
+    // mirroring the music pill on the right. Pinned apps stay in the notch.
+    // Hovering a tile previews its windows; clicking one brings it forward.
+    property bool previewOpen: false
+    property string previewExe: ""
+    property string previewName: ""
+    property int previewCount: 0
+    property var previewWindows: []
+    property real previewCenterX: 0
+    property real previewStamp: 0
+    readonly property bool previewShown: revealed && previewOpen && previewWindows.length > 0
+                                         && !panelOpen && !musicOpen && !systemOpen && menuIndex < 0
+
+    function openPreview(exe, centerX) {
+        const windows = openApps.windowsFor(exe)
+        if (windows.length === 0) {
+            previewOpen = false
+            return
+        }
+        const program = openList.filter(app => app.exe === exe)[0]
+        previewExe = exe
+        previewName = program ? program.name : exe
+        previewCount = windows.length
+        previewWindows = windows.slice(0, 3)
+        previewCenterX = centerX
+        previewStamp = Date.now()
+        previewOpen = true
+    }
+
+    // A tile opens its preview after a short pause, so sweeping across the row
+    // does not flash every preview. Leaving the row and the preview closes it.
+    Timer {
+        id: previewShowTimer
+        interval: 260
+        property string exe: ""
+        property real centerX: 0
+        onTriggered: root.openPreview(exe, centerX)
+    }
+    Timer {
+        id: previewHideTimer
+        interval: 280
+        onTriggered: if (!openRow.hovered && !previewCard.hovered) root.previewOpen = false
+    }
+
+    OpenApps {
+        id: openRow
+        x: Math.round(pill.x - root.musicGap - width)
+        y: pill.y
+        s: root.s
+        mono: cfg.monoIcons
+        apps: root.openList
+        appear: root.clamp01(root.progress * 1.4 - 0.2)
+        scale: 0.7 + 0.3 * root.clamp01(root.progress)
+
+        onActivated: (exe) => {
+            root.previewOpen = false
+            openApps.activateApp(exe)
+        }
+        onPreviewRequested: (exe, centerX) => {
+            previewHideTimer.stop()
+            if (root.previewOpen) {
+                if (root.previewExe !== exe)
+                    root.openPreview(exe, centerX)
+            } else {
+                previewShowTimer.exe = exe
+                previewShowTimer.centerX = centerX
+                previewShowTimer.restart()
+            }
+        }
+        onHoveredChanged: {
+            if (hovered) {
+                previewHideTimer.stop()
+            } else {
+                previewShowTimer.stop()
+                previewHideTimer.restart()
+            }
+        }
+    }
+
+    WindowPreview {
+        id: previewCard
+        programName: root.previewName
+        windowCount: root.previewCount
+        windows: root.previewWindows
+        stamp: root.previewStamp
+        anchorX: root.previewCenterX
+        containerWidth: root.width
+        cardTop: root.shownY + root.pillH + 12
+        opacity: root.previewShown ? 1 : 0
+        scale: root.previewShown ? 1 : 0.96
+        visible: opacity > 0.01
+        transformOrigin: Item.Top
+
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+        Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+        onActivated: (windowId) => {
+            root.previewOpen = false
+            openApps.activateWindow(windowId)
+        }
+        onHoveredChanged: {
+            if (hovered)
+                previewHideTimer.stop()
+            else
+                previewHideTimer.restart()
+        }
+    }
+
     // ------------------------------------------------------------ resize grip
     MouseArea {
         id: grip
@@ -549,9 +665,9 @@ Window {
             width: grip.containsMouse || grip.pressed ? 46 : 30
             height: grip.pressed ? 5 : 4
             radius: height / 2
-            color: grip.containsMouse || grip.pressed ? t.white : "#8a8f94"
+            color: grip.containsMouse || grip.pressed ? t.ink : t.textDim
             border.width: 1
-            border.color: t.bg
+            border.color: t.surface
             opacity: grip.showBar && root.progress > 0.9 ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 160 } }
             Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
@@ -567,7 +683,7 @@ Window {
         width: tipLabel.implicitWidth + 20
         height: 26
         radius: 13
-        color: showHud ? t.raised : t.white
+        color: showHud ? t.raised : t.ink
         border.width: showHud ? 1 : 0
         border.color: t.border
         x: Math.round((showHud || root.toast.length > 0 ? root.width / 2 : root.tipX) - width / 2)
@@ -585,7 +701,7 @@ Window {
             id: tipLabel
             anchors.centerIn: parent
             text: tip.label
-            color: tip.showHud ? t.text : t.bg
+            color: tip.showHud ? t.text : t.inverse
             font.family: t.font
             font.pixelSize: 12
             font.weight: Font.Bold
@@ -632,13 +748,12 @@ Window {
 
         HoverHandler { id: menuHover }
 
-        Rectangle {
+        Glass {
             id: menuBg
             anchors.fill: parent
             radius: 18
-            color: "#0f1115"
-            border.width: 1
-            border.color: "#282d35"
+            tint: t.surface
+            edge: t.border
             clip: true
 
             Image {
@@ -674,7 +789,7 @@ Window {
                         visible: !menu.renaming
                         width: parent.width
                         text: menu.app ? menu.app.name : ""
-                        color: t.white
+                        color: t.ink
                         elide: Text.ElideRight
                         font.family: t.font
                         font.pixelSize: 15
@@ -687,16 +802,16 @@ Window {
                         radius: 6
                         color: t.raised
                         border.width: 1
-                        border.color: t.white
+                        border.color: t.ink
                         TextInput {
                             id: renameInput
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
                             verticalAlignment: TextInput.AlignVCenter
-                            color: t.white
-                            selectionColor: t.white
-                            selectedTextColor: t.bg
+                            color: t.ink
+                            selectionColor: t.ink
+                            selectedTextColor: t.inverse
                             font.family: t.font
                             font.pixelSize: 13
                             font.weight: Font.Bold
@@ -793,13 +908,11 @@ Window {
 
         HoverHandler { id: panelHover }
 
-        Rectangle {
+        Glass {
             id: panelBg
             anchors.fill: parent
             radius: 22
-            color: t.bg
-            border.width: 1
-            border.color: t.border
+            edge: t.border
         }
 
         SettingsPanel {
@@ -819,6 +932,8 @@ Window {
             onUnpinRequested: (i) => dock.unpin(i)
             onMoveRequested: (from, to) => dock.move(from, to)
             onStartupToggled: (on) => dock.launchAtStartup = on
+            lightTheme: appearance.light
+            onThemeToggled: (on) => appearance.light = on
             onLaunchRequested: (i) => root.launchApp(i)
         }
     }
@@ -842,13 +957,12 @@ Window {
 
         HoverHandler { id: musicHover }
 
-        Rectangle {
+        Glass {
             id: musicBg
             anchors.fill: parent
             radius: 28
-            color: "#0b0914"
-            border.width: 1
-            border.color: "#221738"
+            tint: t.surface
+            edge: t.border
         }
 
         MusicPanel {
@@ -879,13 +993,11 @@ Window {
 
         HoverHandler { id: systemHover }
 
-        Rectangle {
+        Glass {
             id: systemBg
             anchors.fill: parent
             radius: 22
-            color: t.bg
-            border.width: 1
-            border.color: t.border
+            edge: t.border
         }
 
         SystemPanel {

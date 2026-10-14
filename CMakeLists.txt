@@ -31,6 +31,12 @@ qt_add_executable(noch
     src/SystemMonitor.h
     src/MusicPlayer.cpp
     src/MusicPlayer.h
+    src/GlassBackdrop.cpp
+    src/GlassBackdrop.h
+    src/RunningApps.cpp
+    src/RunningApps.h
+    src/Appearance.cpp
+    src/Appearance.h
 )
 
 target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
@@ -55,6 +61,9 @@ qt_add_qml_module(noch
         qml/NowPlaying.qml
         qml/SystemPanel.qml
         qml/MusicPanel.qml
+        qml/Glass.qml
+        qml/OpenApps.qml
+        qml/WindowPreview.qml
 )
 
 target_link_libraries(noch PRIVATE
@@ -65,7 +74,7 @@ target_link_libraries(noch PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(noch PRIVATE user32 shell32 iphlpapi)
+    target_link_libraries(noch PRIVATE user32 shell32 iphlpapi dwmapi)
 endif()
 
 set_target_properties(noch PROPERTIES

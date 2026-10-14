@@ -19,7 +19,7 @@ Item {
         width: Math.round(34 * more.s)
         height: width
         radius: width / 2
-        color: more.active ? t.white : (hit.pressed ? t.press : t.raised)
+        color: more.active ? t.ink : (hit.pressed ? t.press : t.raised)
         opacity: more.active || hit.containsMouse ? 1 : 0
         scale: hit.pressed ? 0.9 : 1
         Behavior on opacity { NumberAnimation { duration: 140 } }
@@ -38,7 +38,7 @@ Item {
                 width: Math.max(3, Math.round(4 * more.s))
                 height: width
                 radius: width / 2
-                color: more.active ? t.bg : (hit.containsMouse ? t.white : t.text)
+                color: more.active ? t.inverse : (hit.containsMouse ? t.ink : t.text)
             }
         }
     }

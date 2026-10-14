@@ -14,14 +14,14 @@ Item {
     Theme { id: t }
 
     // ---- palette
-    readonly property color cardBg:      "#0a0a0d"
-    readonly property color bezelBg:     "#17122a"
-    readonly property color bezelBorder: "#2a2145"
-    readonly property color accent:      "#a855f7"
-    readonly property color accentLight: "#c084fc"
-    readonly property color accentDeep:  "#7c3aed"
-    readonly property color textMuted:   "#8b8f98"
-    readonly property color textFaint:   "#5b5f68"
+    readonly property color cardBg:      t.surface
+    readonly property color bezelBg:     t.raised
+    readonly property color bezelBorder: t.border
+    readonly property color accent:      t.ink
+    readonly property color accentLight: t.ink
+    readonly property color accentDeep:  t.inkSoft
+    readonly property color textMuted:   t.textDim
+    readonly property color textFaint:   t.textFaint
 
     readonly property real pad: 22
     readonly property real cardRadius: 24
@@ -72,13 +72,12 @@ Item {
     implicitHeight: body.implicitHeight
 
     // ---------------------------------------------------------------- card
-    Rectangle {
+    Glass {
         id: card
         anchors.fill: parent
         radius: panel.cardRadius
-        color: panel.cardBg
-        border.width: 1
-        border.color: "#1e1a2b"
+        tint: panel.cardBg
+        edge: t.border
         clip: true
 
     }
@@ -95,8 +94,8 @@ Item {
         id: ih
         property string icon
         property real glyphSize: 16
-        property color color: "#8b8f98"
-        property color hoverColor: "#ffffff"
+        property color color: t.textDim
+        property color hoverColor: t.ink
         property bool filled: false
         property real stroke: 1.8
         readonly property bool hovered: ihHit.containsMouse
@@ -107,7 +106,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: "#ffffff"
+            color: t.ink
             opacity: ihHit.pressed ? 0.12 : (ihHit.containsMouse ? 0.06 : 0)
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
@@ -135,7 +134,7 @@ Item {
         id: body
         width: parent.width
 
-        // â”€â”€ Header: âˆ¨   NOW PLAYING   Â·Â·Â· â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Header: ∨   NOW PLAYING   ··· ─────────────────────────────────
         Item {
             width: parent.width
             height: 50
@@ -167,12 +166,12 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 icon: "more"
                 glyphSize: 16
-                color: panel.menuOpen ? "#ffffff" : panel.textMuted
+                color: panel.menuOpen ? t.ink : panel.textMuted
                 onClicked: panel.menuOpen = !panel.menuOpen
             }
         }
 
-        // â”€â”€ Artwork â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Artwork ─────────────────────────────────────────────────────
         Item {
             width: parent.width
             height: art.height + 4
@@ -180,8 +179,8 @@ Item {
             Item {
                 id: art
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 196
-                height: 196
+                width: 172
+                height: 172
 
                 Rectangle {
                     id: bezel
@@ -197,7 +196,7 @@ Item {
                         width: parent.width - 38
                         height: width
                         radius: 8
-                        color: "#0b0816"
+                        color: "#0c0c0f"
                         clip: true
 
                         Image {
@@ -222,8 +221,8 @@ Item {
                             Rectangle {
                                 anchors.fill: parent
                                 gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "#1c0f33" }
-                                    GradientStop { position: 1.0; color: "#08050f" }
+                                    GradientStop { position: 0.0; color: "#1f1f24" }
+                                    GradientStop { position: 1.0; color: "#0a0a0d" }
                                 }
                             }
 
@@ -238,9 +237,9 @@ Item {
                                         centerRadius: defaultArt.width * 0.5
                                         focalX: centerX
                                         focalY: centerY
-                                        GradientStop { position: 0.0; color: "#998b5cf6" }
-                                        GradientStop { position: 0.5; color: "#265b21b6" }
-                                        GradientStop { position: 1.0; color: "#005b21b6" }
+                                        GradientStop { position: 0.0; color: "#40ffffff" }
+                                        GradientStop { position: 0.5; color: "#1cb0b0ba" }
+                                        GradientStop { position: 1.0; color: "#00b0b0ba" }
                                     }
                                     startX: 0; startY: 0
                                     PathLine { x: defaultArt.width; y: 0 }
@@ -277,20 +276,20 @@ Item {
                                         strokeColor: "transparent"
                                         fillGradient: LinearGradient {
                                             x1: 20; y1: 10; x2: 80; y2: 90
-                                            GradientStop { position: 0.0; color: "#80c084fc" }
-                                            GradientStop { position: 1.0; color: "#304c1d95" }
+                                            GradientStop { position: 0.0; color: "#80ffffff" }
+                                            GradientStop { position: 1.0; color: "#30707078" }
                                         }
                                         PathSvg { path: "M50 10 L85 30 L85 70 L50 90 L15 70 L15 30 Z" }
                                     }
                                     ShapePath {
                                         strokeWidth: -1
                                         strokeColor: "transparent"
-                                        fillColor: "#55e9d5ff"
+                                        fillColor: "#55f2f2f5"
                                         PathSvg { path: "M50 32 L70 66 L30 66 Z" }
                                     }
                                     // edges
                                     ShapePath {
-                                        strokeColor: "#e9d5ff"
+                                        strokeColor: "#f2f2f5"
                                         strokeWidth: 1.6
                                         fillColor: "transparent"
                                         joinStyle: ShapePath.RoundJoin
@@ -307,9 +306,9 @@ Item {
             }
         }
 
-        Item { width: 1; height: 24 }
+        Item { width: 1; height: 18 }
 
-        // â”€â”€ Title / artist + heart & volume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Title / artist + heart & volume ─────────────────────────────
         Item {
             width: parent.width
             height: 40
@@ -325,7 +324,7 @@ Item {
                 Text {
                     width: parent.width
                     text: panel.displayTitle
-                    color: "#ffffff"
+                    color: t.ink
                     elide: Text.ElideRight
                     font.family: t.font
                     font.pixelSize: 16
@@ -358,19 +357,12 @@ Item {
                     opacity: player.hasTrack ? 1 : 0.4
                     onClicked: panel.toggleLike()
                 }
-                IconHit {
-                    icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
-                    glyphSize: 17
-                    color: panel.accent
-                    hoverColor: panel.accentLight
-                    onClicked: player.toggleMute()
-                }
             }
         }
 
         Item { width: 1; height: 12 }
 
-        // â”€â”€ Scrubber + timestamps â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Scrubber + timestamps ───────────────────────────────────────
         Item {
             id: seek
             width: parent.width
@@ -393,7 +385,7 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     radius: height / 2
-                    color: "#26232f"
+                    color: t.track
                 }
                 Rectangle {
                     width: Math.max(height, panel.progressRatio * parent.width)
@@ -412,7 +404,7 @@ Item {
                     radius: width / 2
                     anchors.verticalCenter: parent.verticalCenter
                     x: Math.max(0, Math.min(parent.width - width, panel.progressRatio * parent.width - width / 2))
-                    color: "#ffffff"
+                    color: t.ink
                     visible: seek.enabled2
                     Behavior on width { NumberAnimation { duration: 120 } }
                 }
@@ -469,7 +461,7 @@ Item {
             }
         }
 
-        // â”€â”€ Transport: shuffle Â· prev Â· PLAY Â· next Â· repeat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Transport: shuffle · prev · PLAY · next · repeat ────────────
         Item {
             width: parent.width
             height: 82
@@ -481,7 +473,7 @@ Item {
                 icon: "shuffle"
                 glyphSize: 17
                 color: player.shuffle ? panel.accent : panel.textFaint
-                hoverColor: player.shuffle ? panel.accentLight : "#ffffff"
+                hoverColor: player.shuffle ? panel.accentLight : t.ink
                 onClicked: player.shuffle = !player.shuffle
             }
 
@@ -492,7 +484,7 @@ Item {
                 width: 40; height: 40
                 icon: "prev"
                 glyphSize: 22
-                color: "#f3f4f6"
+                color: t.ink
                 onClicked: player.previous()
             }
 
@@ -507,8 +499,8 @@ Item {
                     anchors.fill: parent
                     radius: width / 2
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: playHit.containsMouse ? "#b56cf8" : "#a855f7" }
-                        GradientStop { position: 1.0; color: playHit.containsMouse ? "#8b47f0" : "#8b3df0" }
+                        GradientStop { position: 0.0; color: playHit.containsMouse ? t.ink : t.ink }
+                        GradientStop { position: 1.0; color: playHit.containsMouse ? t.inkSoft : t.inkSoft }
                     }
                     scale: playHit.pressed ? 0.92 : (playHit.containsMouse ? 1.04 : 1)
                     Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
@@ -519,7 +511,7 @@ Item {
                         name: !player.hasTrack ? "plus" : (panel.playing ? "pause" : "play")
                         size: player.hasTrack ? 22 : 20
                         stroke: 2.4
-                        color: "#ffffff"
+                        color: t.inverse
                     }
                 }
 
@@ -544,7 +536,7 @@ Item {
                 width: 40; height: 40
                 icon: "next"
                 glyphSize: 22
-                color: "#f3f4f6"
+                color: t.ink
                 onClicked: player.next()
             }
 
@@ -556,7 +548,7 @@ Item {
                 icon: "repeat"
                 glyphSize: 17
                 color: player.repeatMode > 0 ? panel.accent : panel.textFaint
-                hoverColor: player.repeatMode > 0 ? panel.accentLight : "#ffffff"
+                hoverColor: player.repeatMode > 0 ? panel.accentLight : t.ink
                 onClicked: player.cycleRepeat()
 
                 // "1" badge for repeat-one.
@@ -571,7 +563,7 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: "1"
-                        color: "#ffffff"
+                        color: t.inverse
                         font.family: t.font
                         font.pixelSize: 8
                         font.weight: Font.Black
@@ -580,7 +572,52 @@ Item {
             }
         }
 
-        // â”€â”€ Queue (toggled from the Â·Â·Â· menu) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Volume: slider with the mute toggle and a percentage
+        Item {
+            width: parent.width
+            height: 30
+
+            IconHit {
+                id: volumeIcon
+                anchors.left: parent.left
+                anchors.leftMargin: panel.pad - 8
+                anchors.verticalCenter: parent.verticalCenter
+                icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
+                glyphSize: 16
+                color: panel.textMuted
+                hoverColor: t.ink
+                onClicked: player.toggleMute()
+            }
+
+            SizeSlider {
+                anchors.left: volumeIcon.right
+                anchors.leftMargin: 4
+                anchors.right: volumeValue.left
+                anchors.rightMargin: 12
+                anchors.verticalCenter: parent.verticalCenter
+                from: 0
+                to: 1
+                value: player.volume
+                onMoved: (v) => player.volume = v
+            }
+
+            Text {
+                id: volumeValue
+                anchors.right: parent.right
+                anchors.rightMargin: panel.pad
+                anchors.verticalCenter: parent.verticalCenter
+                width: 34
+                horizontalAlignment: Text.AlignRight
+                text: Math.round(player.volume * 100) + "%"
+                color: panel.textFaint
+                font.family: t.font
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                font.features: ({ "tnum": 1 })
+            }
+        }
+
+        // ── Queue (toggled from the ··· menu) ───────────────────────────
         Item {
             id: queueBox
             width: parent.width
@@ -592,7 +629,7 @@ Item {
                 x: panel.pad
                 width: parent.width - 2 * panel.pad
                 height: 1
-                color: "#1d1a26"
+                color: t.border
             }
 
             ListView {
@@ -617,7 +654,7 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: 10
-                        color: qRow.current ? "#1c1430" : "#ffffff"
+                        color: qRow.current ? t.hover : t.ink
                         opacity: qRow.current ? 1 : (qRowHit.containsMouse ? 0.05 : 0)
                     }
 
@@ -641,8 +678,8 @@ Item {
                         anchors.right: qRemove.left
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        text: qRow.modelData.title + (qRow.modelData.artist ? "  Â·  " + qRow.modelData.artist : "")
-                        color: qRow.current ? panel.accentLight : "#d1d5db"
+                        text: qRow.modelData.title + (qRow.modelData.artist ? "  ·  " + qRow.modelData.artist : "")
+                        color: qRow.current ? panel.accentLight : t.text
                         elide: Text.ElideRight
                         font.family: t.font
                         font.pixelSize: 12
@@ -676,14 +713,14 @@ Item {
         Item { width: 1; height: 14 }
     }
 
-    // ---------------------------------------------------------- Â·Â·Â· menu
+    // ---------------------------------------------------------- ··· menu
     MouseArea {
         anchors.fill: parent
         visible: panel.menuOpen
         onClicked: panel.menuOpen = false
     }
 
-    Rectangle {
+    Glass {
         id: optMenu
         readonly property real targetY: 46
         anchors.right: parent.right
@@ -692,9 +729,8 @@ Item {
         width: 176
         height: optCol.implicitHeight + 12
         radius: 14
-        color: "#121117"
-        border.width: 1
-        border.color: "#262332"
+        tint: t.surface
+        edge: t.border
         opacity: panel.menuOpen ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 130 } }
@@ -709,7 +745,7 @@ Item {
             MenuRow {
                 width: parent.width
                 implicitHeight: 34
-                label: qsTr("Add songsâ€¦")
+                label: qsTr("Add songs…")
                 icon: "plus"
                 onTriggered: { panel.menuOpen = false; panel.addRequested() }
             }

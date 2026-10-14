@@ -15,6 +15,7 @@ Item {
 
     readonly property real ratio: Math.max(0, Math.min(1, (value - from) / (to - from)))
     readonly property bool active: hit.containsMouse || hit.pressed
+    readonly property bool dragging: hit.pressed
 
     Rectangle {
         id: track
@@ -30,7 +31,7 @@ Item {
         width: knob.x + knob.width / 2
         height: 4
         radius: 2
-        color: t.white
+        color: t.ink
     }
 
     Rectangle {
@@ -40,9 +41,9 @@ Item {
         radius: width / 2
         anchors.verticalCenter: parent.verticalCenter
         x: slider.ratio * (slider.width - width)
-        color: t.white
+        color: t.ink
         border.width: hit.pressed ? 4 : 0
-        border.color: "#33ffffff"
+        border.color: t.hairline
         Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
     }
 
