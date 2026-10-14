@@ -106,6 +106,17 @@ AppIconProvider::AppIconProvider(const DockController *dock, const RunningApps *
 {
 }
 
+// Colour icon for a file, loaded once. The caller must hold m_mutex.
+QImage AppIconProvider::colourIcon(const QString &file)
+{
+    auto it = m_cache.constFind(file);
+    if (it != m_cache.constEnd())
+        return it.value();
+    const QImage image = loadIcon(file, kIconExtent);
+    m_cache.insert(file, image);
+    return image;
+}
+
 QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
 {
     const QString mode = id.section(QLatin1Char('/'), 0, 0);
@@ -117,29 +128,20 @@ QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize
     QImage image;
     if (!file.isEmpty()) {
         QMutexLocker lock(&m_mutex);
-        if (mode == QLatin1String("mono")) {
-            auto monoIt = m_monoCache.constFind(file);
-            if (monoIt != m_monoCache.constEnd()) {
-                image = monoIt.value();
-            } else {
-                auto colorIt = m_cache.constFind(file);
-                QImage colorImg = (colorIt != m_cache.constEnd())
-                    ? colorIt.value()
-                    : loadIcon(file, kIconExtent);
-                if (colorIt == m_cache.constEnd())
-                    m_cache.insert(file, colorImg);
-                if (!colorImg.isNull())
-                    image = toMonochrome(colorImg);
-                m_monoCache.insert(file, image);
-            }
-        } else {
-            auto it = m_cache.constFind(file);
-            if (it != m_cache.constEnd()) {
+        const bool onLight = mode == QLatin1String("monoLight");
+        if (onLight || mode == QLatin1String("mono")) {
+            QHash<QString, QImage> &cache = onLight ? m_inkCache : m_monoCache;
+            auto it = cache.constFind(file);
+            if (it != cache.constEnd()) {
                 image = it.value();
             } else {
-                image = loadIcon(file, kIconExtent);
-                m_cache.insert(file, image);
+                const QImage colour = colourIcon(file);
+                if (!colour.isNull())
+                    image = onLight ? toInkMonochrome(colour) : toMonochrome(colour);
+                cache.insert(file, image);
             }
+        } else {
+            image = colourIcon(file);
         }
     }
 
@@ -207,6 +209,27 @@ QImage AppIconProvider::toMonochrome(const QImage &source)
                               + 0.0722 * qBlue(line[x])) / 255.0;
             const double lifted = 0.08 + 0.92 * std::pow(l, 0.82);
             const int v = std::clamp(int(std::lround(lifted * 255.0)), 0, 255);
+            line[x] = qRgba(v, v, v, a);
+        }
+    }
+    return img.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+}
+
+// Same luminance detail as toMonochrome, but drawn dark so it reads on pale
+// glass: black logos stay near black and white logos become mid grey.
+QImage AppIconProvider::toInkMonochrome(const QImage &source)
+{
+    QImage img = source.convertToFormat(QImage::Format_ARGB32);
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb *line = reinterpret_cast<QRgb *>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            const int a = qAlpha(line[x]);
+            if (a == 0)
+                continue;
+            const double l = (0.2126 * qRed(line[x]) + 0.7152 * qGreen(line[x])
+                              + 0.0722 * qBlue(line[x])) / 255.0;
+            const double ink = 0.06 + 0.6 * std::pow(l, 0.9);
+            const int v = std::clamp(int(std::lround(ink * 255.0)), 0, 255);
             line[x] = qRgba(v, v, v, a);
         }
     }

@@ -14,14 +14,14 @@ Item {
     Theme { id: t }
 
     // ---- palette
-    readonly property color cardBg:      "#0a0a0d"
-    readonly property color bezelBg:     "#17122a"
-    readonly property color bezelBorder: "#2a2145"
-    readonly property color accent:      "#a855f7"
-    readonly property color accentLight: "#c084fc"
-    readonly property color accentDeep:  "#7c3aed"
-    readonly property color textMuted:   "#8b8f98"
-    readonly property color textFaint:   "#5b5f68"
+    readonly property color cardBg:      t.violetSurface
+    readonly property color bezelBg:     t.violetWell
+    readonly property color bezelBorder: t.violetWellEdge
+    readonly property color accent:      t.violet
+    readonly property color accentLight: t.violetLight
+    readonly property color accentDeep:  t.violetDeep
+    readonly property color textMuted:   t.textDim
+    readonly property color textFaint:   t.textFaint
 
     readonly property real pad: 22
     readonly property real cardRadius: 24
@@ -77,7 +77,7 @@ Item {
         anchors.fill: parent
         radius: panel.cardRadius
         tint: panel.cardBg
-        edge: "#1e1a2b"
+        edge: t.violetEdge
         clip: true
 
     }
@@ -94,8 +94,8 @@ Item {
         id: ih
         property string icon
         property real glyphSize: 16
-        property color color: "#8b8f98"
-        property color hoverColor: "#ffffff"
+        property color color: t.textDim
+        property color hoverColor: t.ink
         property bool filled: false
         property real stroke: 1.8
         readonly property bool hovered: ihHit.containsMouse
@@ -106,7 +106,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: "#ffffff"
+            color: t.ink
             opacity: ihHit.pressed ? 0.12 : (ihHit.containsMouse ? 0.06 : 0)
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
@@ -166,7 +166,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 icon: "more"
                 glyphSize: 16
-                color: panel.menuOpen ? "#ffffff" : panel.textMuted
+                color: panel.menuOpen ? t.ink : panel.textMuted
                 onClicked: panel.menuOpen = !panel.menuOpen
             }
         }
@@ -324,7 +324,7 @@ Item {
                 Text {
                     width: parent.width
                     text: panel.displayTitle
-                    color: "#ffffff"
+                    color: t.ink
                     elide: Text.ElideRight
                     font.family: t.font
                     font.pixelSize: 16
@@ -392,7 +392,7 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     radius: height / 2
-                    color: "#26232f"
+                    color: t.track
                 }
                 Rectangle {
                     width: Math.max(height, panel.progressRatio * parent.width)
@@ -411,7 +411,7 @@ Item {
                     radius: width / 2
                     anchors.verticalCenter: parent.verticalCenter
                     x: Math.max(0, Math.min(parent.width - width, panel.progressRatio * parent.width - width / 2))
-                    color: "#ffffff"
+                    color: t.ink
                     visible: seek.enabled2
                     Behavior on width { NumberAnimation { duration: 120 } }
                 }
@@ -480,7 +480,7 @@ Item {
                 icon: "shuffle"
                 glyphSize: 17
                 color: player.shuffle ? panel.accent : panel.textFaint
-                hoverColor: player.shuffle ? panel.accentLight : "#ffffff"
+                hoverColor: player.shuffle ? panel.accentLight : t.ink
                 onClicked: player.shuffle = !player.shuffle
             }
 
@@ -491,7 +491,7 @@ Item {
                 width: 40; height: 40
                 icon: "prev"
                 glyphSize: 22
-                color: "#f3f4f6"
+                color: t.ink
                 onClicked: player.previous()
             }
 
@@ -506,8 +506,8 @@ Item {
                     anchors.fill: parent
                     radius: width / 2
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: playHit.containsMouse ? "#b56cf8" : "#a855f7" }
-                        GradientStop { position: 1.0; color: playHit.containsMouse ? "#8b47f0" : "#8b3df0" }
+                        GradientStop { position: 0.0; color: playHit.containsMouse ? t.violetLight : t.violet }
+                        GradientStop { position: 1.0; color: playHit.containsMouse ? t.violetDeep : t.violetDeep }
                     }
                     scale: playHit.pressed ? 0.92 : (playHit.containsMouse ? 1.04 : 1)
                     Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
@@ -543,7 +543,7 @@ Item {
                 width: 40; height: 40
                 icon: "next"
                 glyphSize: 22
-                color: "#f3f4f6"
+                color: t.ink
                 onClicked: player.next()
             }
 
@@ -555,7 +555,7 @@ Item {
                 icon: "repeat"
                 glyphSize: 17
                 color: player.repeatMode > 0 ? panel.accent : panel.textFaint
-                hoverColor: player.repeatMode > 0 ? panel.accentLight : "#ffffff"
+                hoverColor: player.repeatMode > 0 ? panel.accentLight : t.ink
                 onClicked: player.cycleRepeat()
 
                 // "1" badge for repeat-one.
@@ -591,7 +591,7 @@ Item {
                 x: panel.pad
                 width: parent.width - 2 * panel.pad
                 height: 1
-                color: "#1d1a26"
+                color: t.violetEdge
             }
 
             ListView {
@@ -616,7 +616,7 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: 10
-                        color: qRow.current ? "#1c1430" : "#ffffff"
+                        color: qRow.current ? t.violetRow : t.ink
                         opacity: qRow.current ? 1 : (qRowHit.containsMouse ? 0.05 : 0)
                     }
 
@@ -641,7 +641,7 @@ Item {
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
                         text: qRow.modelData.title + (qRow.modelData.artist ? "  ·  " + qRow.modelData.artist : "")
-                        color: qRow.current ? panel.accentLight : "#d1d5db"
+                        color: qRow.current ? panel.accentLight : t.text
                         elide: Text.ElideRight
                         font.family: t.font
                         font.pixelSize: 12
@@ -691,8 +691,8 @@ Item {
         width: 176
         height: optCol.implicitHeight + 12
         radius: 14
-        tint: "#121117"
-        edge: "#262332"
+        tint: t.surface
+        edge: t.violetEdge
         opacity: panel.menuOpen ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 130 } }

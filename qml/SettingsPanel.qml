@@ -10,6 +10,7 @@ Item {
     property var runningList: []
     property bool startupSupported: false
     property bool launchAtStartup: false
+    property bool lightTheme: false
     property string version: ""
 
     signal closeRequested()
@@ -19,6 +20,7 @@ Item {
     signal unpinRequested(int index)
     signal moveRequested(int from, int to)
     signal startupToggled(bool enabled)
+    signal themeToggled(bool light)
     signal launchRequested(int index)
 
     Theme { id: t }
@@ -109,7 +111,7 @@ Item {
             name: ib.icon
             size: ib.glyphSize
             color: ib.danger && ibHit.containsMouse ? t.danger
-                 : ibHit.containsMouse ? t.white : t.textDim
+                 : ibHit.containsMouse ? t.ink : t.textDim
         }
         MouseArea {
             id: ibHit
@@ -133,7 +135,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: pb.primary ? (pbHit.containsMouse ? "#d7dbdc" : t.white)
+            color: pb.primary ? (pbHit.containsMouse ? t.inkSoft : t.ink)
                               : (pbHit.containsMouse ? t.raised : "transparent")
             border.width: pb.primary ? 0 : 1
             border.color: t.border
@@ -151,12 +153,12 @@ Item {
                 name: pb.icon
                 size: 15
                 stroke: 2.1
-                color: pb.primary ? t.bg : t.text
+                color: pb.primary ? t.inverse : t.text
             }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: pb.label
-                color: pb.primary ? t.bg : t.text
+                color: pb.primary ? t.inverse : t.text
                 font.family: t.font
                 font.pixelSize: 14
                 font.weight: Font.Bold
@@ -189,7 +191,7 @@ Item {
 
                 Text {
                     text: "Noch"
-                    color: t.white
+                    color: t.ink
                     font.family: t.font
                     font.pixelSize: 19
                     font.weight: Font.ExtraBold
@@ -243,7 +245,7 @@ Item {
 
                         Rectangle {
                             anchors.fill: parent
-                            color: t.white
+                            color: t.ink
                             opacity: tabHit.containsMouse && !tabCell.current ? 0.03 : 0
                         }
                         Text {
@@ -279,7 +281,7 @@ Item {
                 height: 4
                 radius: 2
                 width: 56
-                color: t.white
+                color: t.ink
                 x: panel.tab * (parent.width / 2) + (parent.width / 2 - width) / 2
                 Behavior on x { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
             }
@@ -398,6 +400,12 @@ Item {
                     onToggled: (c) => panel.prefs.monoIcons = c
                 }
                 ToggleRow {
+                    label: "Light theme"
+                    sub: "Pale glass instead of black. Changes everything at once."
+                    checked: panel.lightTheme
+                    onToggled: (c) => panel.themeToggled(c)
+                }
+                ToggleRow {
                     label: "Show clock"
                     checked: panel.prefs.showClock
                     onToggled: (c) => panel.prefs.showClock = c
@@ -472,7 +480,7 @@ Item {
                                 id: rowImg
                                 anchors.fill: parent
                                 source: appRow.modelData.iconId
-                                        ? "image://appicon/" + (panel.prefs.monoIcons ? "mono/" : "color/") + appRow.modelData.iconId
+                                        ? "image://appicon/" + (panel.prefs.monoIcons ? t.iconMono : "color") + "/" + appRow.modelData.iconId
                                         : ""
                                 sourceSize: Qt.size(128, 128)
                                 mipmap: true
@@ -521,7 +529,7 @@ Item {
                                     width: 6
                                     height: 6
                                     radius: 3
-                                    color: t.white
+                                    color: t.ink
                                 }
                             }
                             Text {

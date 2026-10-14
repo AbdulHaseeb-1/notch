@@ -24,7 +24,7 @@ Item {
 
     readonly property bool hovered: hover.hovered
     readonly property string iconSource: modelData.iconId
-        ? "image://appicon/" + (mono ? "mono/" : "color/") + modelData.iconId : ""
+        ? "image://appicon/" + (mono ? t.iconMono : "color") + "/" + modelData.iconId : ""
 
     width: cellW
     implicitWidth: cellW
@@ -70,9 +70,9 @@ Item {
         width: Math.round(item.iconSize + 12 * item.s)
         height: width
         radius: Math.round(9 * item.s)
-        color: item.menuActive ? "#24262b" : "#1a1c20"
+        color: item.menuActive ? t.tileActive : t.tile
         border.width: 1
-        border.color: item.menuActive ? "#3a3d44" : "#26292e"
+        border.color: item.menuActive ? t.borderStrong : t.tileEdge
         opacity: item.highlighted ? item.appear : 0
         scale: item.highlighted ? 1 : 0.85
         Behavior on opacity { NumberAnimation { duration: 140 } }
@@ -136,7 +136,7 @@ Item {
         height: Math.max(3, Math.round(3.5 * item.s))
         width: item.launching && !item.running ? height * 3 : height
         radius: height / 2
-        color: item.running && item.highlighted ? t.success : t.white
+        color: item.running && item.highlighted ? t.success : t.ink
         property real shown: item.running || item.launching ? 1 : 0
         property real pulse: 1
         opacity: shown * pulse * item.appear

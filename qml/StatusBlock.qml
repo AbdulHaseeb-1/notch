@@ -54,7 +54,7 @@ Item {
         }
         Text {
             text: line.value
-            color: line.warn ? t.danger : t.white
+            color: line.warn ? t.danger : t.ink
             font.family: t.font
             font.pixelSize: Math.round(11.5 * block.s)
             font.weight: Font.Bold
@@ -67,7 +67,7 @@ Item {
         width: parent.width
         height: parent.height - Math.round(14 * block.s)
         radius: Math.round(10 * block.s)
-        color: block.active ? "#1d1f24" : "#16181c"
+        color: block.active ? t.hover : t.raised
         opacity: block.active || hit.containsMouse ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 140 } }
         Behavior on color { ColorAnimation { duration: 140 } }
@@ -111,7 +111,7 @@ Item {
             Text {
                 anchors.right: parent.right
                 text: block.now.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
-                color: t.white
+                color: t.ink
                 font.family: t.font
                 font.pixelSize: Math.round(13 * block.s)
                 font.weight: Font.Bold
@@ -121,7 +121,7 @@ Item {
             Text {
                 anchors.right: parent.right
                 text: block.now.toLocaleDateString(Qt.locale(), "M/d/yyyy")
-                color: "#d9dcdf"
+                color: t.text
                 font.family: t.font
                 font.pixelSize: Math.round(12.5 * block.s)
                 font.weight: Font.DemiBold

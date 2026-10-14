@@ -25,7 +25,7 @@ Item {
     readonly property bool playing: player.state === 1
     readonly property real ratio: player.duration > 0
         ? Math.max(0, Math.min(1, player.position / player.duration)) : 0
-    readonly property color accent: "#a855f7"
+    readonly property color accent: t.violet
 
     readonly property real pillH: Math.round(50 * s)
     implicitHeight: pillH
@@ -51,7 +51,7 @@ Item {
             width: parent.width
             height: width
             radius: width / 2
-            color: "#ffffff"
+            color: t.ink
             opacity: tbHit.pressed ? 0.12 : (tbHit.containsMouse ? 0.07 : 0)
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
@@ -59,7 +59,7 @@ Item {
             anchors.centerIn: parent
             name: tb.icon
             size: tb.glyphSize
-            color: "#ffffff"
+            color: t.ink
             scale: tbHit.pressed ? 0.86 : 1
             Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
         }
@@ -77,9 +77,9 @@ Item {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        edge: chip.highlight ? t.white
-            : chip.active ? "#7c3aed"
-            : (bgHover.hovered ? "#3a3d44" : t.border)
+        edge: chip.highlight ? t.ink
+            : chip.active ? t.violetDeep
+            : (bgHover.hovered ? t.borderStrong : t.border)
         clip: true
 
         // Top hairline highlight.
@@ -88,7 +88,7 @@ Item {
             width: Math.max(0, parent.width - 2 * x)
             y: 1
             height: 1
-            color: "#12ffffff"
+            color: t.hairline
         }
     }
 
@@ -116,7 +116,7 @@ Item {
         anchors.centerIn: parent
         name: "notes"
         size: Math.round(22 * chip.s)
-        color: chip.active ? "#c084fc" : "#ffffff"
+        color: chip.active ? t.violetLight : t.ink
         opacity: chip.hasTrack ? 0 : 1
         scale: chip.hasTrack ? 0.6 : 1
         visible: opacity > 0.01
@@ -168,13 +168,13 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: 1
-            color: "#2a2b30"
+            color: t.track
         }
         Rectangle {
             width: Math.round(parent.width * chip.ratio)
             height: parent.height
             radius: 1
-            color: chip.playing ? "#e9d5ff" : "#9ca3af"
+            color: chip.playing ? t.violetLight : t.textDim
             Behavior on color { ColorAnimation { duration: 200 } }
         }
     }

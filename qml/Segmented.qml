@@ -37,7 +37,7 @@ Item {
         width: seg.cellW
         x: 3 + Math.max(0, seg.currentIndex) * seg.cellW
         radius: height / 2
-        color: t.white
+        color: t.ink
         Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
     }
 
@@ -58,7 +58,7 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: cell.modelData.label
-                    color: cell.selected ? t.bg : (cellHit.containsMouse ? t.text : t.textDim)
+                    color: cell.selected ? t.inverse : (cellHit.containsMouse ? t.text : t.textDim)
                     font.family: t.font
                     font.pixelSize: 12
                     font.weight: cell.selected ? Font.Bold : Font.Medium

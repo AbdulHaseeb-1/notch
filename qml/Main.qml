@@ -288,7 +288,7 @@ Window {
             id: bg
             anchors.fill: parent
             radius: height / 2
-            edge: root.dragging ? t.white
+            edge: root.dragging ? t.ink
                 : (root.fullyHidden && peekZone.containsMouse ? t.textDim : t.border)
         }
 
@@ -298,7 +298,7 @@ Window {
             width: parent.width - 2 * x
             y: 1
             height: 1
-            color: "#12ffffff"
+            color: t.hairline
         }
 
         // Grab bar shown at the bottom edge while tucked away.
@@ -310,7 +310,7 @@ Window {
             height: 2
             radius: 1
             width: peekZone.containsMouse ? 64 * root.s : 36 * root.s
-            color: peekZone.containsMouse ? t.white : t.textDim
+            color: peekZone.containsMouse ? t.ink : t.textDim
             opacity: root.clamp01(1 - root.progress * 3)
             Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: 200 } }
@@ -396,13 +396,13 @@ Window {
                                 radius: width * 0.28
                                 color: "transparent"
                                 border.width: 1.5
-                                border.color: t.white
+                                border.color: t.ink
                                 Glyph {
                                     anchors.centerIn: parent
                                     name: "plus"
                                     size: root.iconSize * 0.55
                                     stroke: 2
-                                    color: t.white
+                                    color: t.ink
                                 }
                             }
                         }
@@ -524,6 +524,8 @@ Window {
     // Hovering a tile previews its windows; clicking one brings it forward.
     property bool previewOpen: false
     property string previewExe: ""
+    property string previewName: ""
+    property int previewCount: 0
     property var previewWindows: []
     property real previewCenterX: 0
     property real previewStamp: 0
@@ -536,7 +538,10 @@ Window {
             previewOpen = false
             return
         }
+        const program = openList.filter(app => app.exe === exe)[0]
         previewExe = exe
+        previewName = program ? program.name : exe
+        previewCount = windows.length
         previewWindows = windows.slice(0, 3)
         previewCenterX = centerX
         previewStamp = Date.now()
@@ -595,13 +600,16 @@ Window {
 
     WindowPreview {
         id: previewCard
+        programName: root.previewName
+        windowCount: root.previewCount
         windows: root.previewWindows
         stamp: root.previewStamp
+        anchorX: root.previewCenterX
+        containerWidth: root.width
+        cardTop: root.shownY + root.pillH + 12
         opacity: root.previewShown ? 1 : 0
         scale: root.previewShown ? 1 : 0.96
         visible: opacity > 0.01
-        x: Math.round(Math.max(12, Math.min(root.width - width - 12, root.previewCenterX - width / 2)))
-        y: root.shownY + root.pillH + 12
         transformOrigin: Item.Top
 
         Behavior on opacity { NumberAnimation { duration: 160 } }
@@ -657,9 +665,9 @@ Window {
             width: grip.containsMouse || grip.pressed ? 46 : 30
             height: grip.pressed ? 5 : 4
             radius: height / 2
-            color: grip.containsMouse || grip.pressed ? t.white : "#8a8f94"
+            color: grip.containsMouse || grip.pressed ? t.ink : t.textDim
             border.width: 1
-            border.color: t.bg
+            border.color: t.surface
             opacity: grip.showBar && root.progress > 0.9 ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 160 } }
             Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
@@ -675,7 +683,7 @@ Window {
         width: tipLabel.implicitWidth + 20
         height: 26
         radius: 13
-        color: showHud ? t.raised : t.white
+        color: showHud ? t.raised : t.ink
         border.width: showHud ? 1 : 0
         border.color: t.border
         x: Math.round((showHud || root.toast.length > 0 ? root.width / 2 : root.tipX) - width / 2)
@@ -693,7 +701,7 @@ Window {
             id: tipLabel
             anchors.centerIn: parent
             text: tip.label
-            color: tip.showHud ? t.text : t.bg
+            color: tip.showHud ? t.text : t.inverse
             font.family: t.font
             font.pixelSize: 12
             font.weight: Font.Bold
@@ -744,8 +752,8 @@ Window {
             id: menuBg
             anchors.fill: parent
             radius: 18
-            tint: "#0f1115"
-            edge: "#282d35"
+            tint: t.surface
+            edge: t.border
             clip: true
 
             Image {
@@ -781,7 +789,7 @@ Window {
                         visible: !menu.renaming
                         width: parent.width
                         text: menu.app ? menu.app.name : ""
-                        color: t.white
+                        color: t.ink
                         elide: Text.ElideRight
                         font.family: t.font
                         font.pixelSize: 15
@@ -794,16 +802,16 @@ Window {
                         radius: 6
                         color: t.raised
                         border.width: 1
-                        border.color: t.white
+                        border.color: t.ink
                         TextInput {
                             id: renameInput
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
                             verticalAlignment: TextInput.AlignVCenter
-                            color: t.white
-                            selectionColor: t.white
-                            selectedTextColor: t.bg
+                            color: t.ink
+                            selectionColor: t.ink
+                            selectedTextColor: t.inverse
                             font.family: t.font
                             font.pixelSize: 13
                             font.weight: Font.Bold
@@ -924,6 +932,8 @@ Window {
             onUnpinRequested: (i) => dock.unpin(i)
             onMoveRequested: (from, to) => dock.move(from, to)
             onStartupToggled: (on) => dock.launchAtStartup = on
+            lightTheme: appearance.light
+            onThemeToggled: (on) => appearance.light = on
             onLaunchRequested: (i) => root.launchApp(i)
         }
     }
@@ -951,8 +961,8 @@ Window {
             id: musicBg
             anchors.fill: parent
             radius: 28
-            tint: "#0b0914"
-            edge: "#221738"
+            tint: t.violetSurface
+            edge: t.violetEdge
         }
 
         MusicPanel {

@@ -134,7 +134,7 @@ Item {
                 spacing: 1
                 Text {
                     text: "System"
-                    color: t.white
+                    color: t.ink
                     font.family: t.font
                     font.pixelSize: 17
                     font.weight: Font.ExtraBold
@@ -166,7 +166,7 @@ Item {
                     anchors.centerIn: parent
                     name: "close"
                     size: 15
-                    color: closeMouse.containsMouse ? t.white : t.textDim
+                    color: closeMouse.containsMouse ? t.ink : t.textDim
                 }
                 MouseArea {
                     id: closeMouse
@@ -216,7 +216,7 @@ Item {
                             height: Math.max(2, Math.round((Number(modelData) / 100) * parent.height))
                             anchors.bottom: parent.bottom
                             radius: 1
-                            color: Number(modelData) >= 90 ? t.danger : t.white
+                            color: Number(modelData) >= 90 ? t.danger : t.ink
                             opacity: 0.25 + 0.7 * (index / 27)
                             Behavior on height { NumberAnimation { duration: 240; easing.type: Easing.OutQuad } }
                         }
@@ -263,14 +263,14 @@ Item {
                     spacing: 18
                     Text {
                         text: "Down  " + panel.fmtRate(monitor.downBps)
-                        color: t.white
+                        color: t.ink
                         font.family: t.font
                         font.pixelSize: 13
                         font.weight: Font.Bold
                     }
                     Text {
                         text: "Up  " + panel.fmtRate(monitor.upBps)
-                        color: t.white
+                        color: t.ink
                         font.family: t.font
                         font.pixelSize: 13
                         font.weight: Font.Bold
@@ -314,12 +314,12 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         name: "activity"
                         size: 13
-                        color: tmHit.containsMouse ? t.white : t.text
+                        color: tmHit.containsMouse ? t.ink : t.text
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Task Manager"
-                        color: tmHit.containsMouse ? t.white : t.text
+                        color: tmHit.containsMouse ? t.ink : t.text
                         font.family: t.font
                         font.pixelSize: 12
                         font.weight: Font.Bold

@@ -1,5 +1,7 @@
 #include "GlassBackdrop.h"
 
+#include "Appearance.h"
+
 #include <QWindow>
 
 #ifdef Q_OS_WIN
@@ -47,15 +49,25 @@ bool transparencyEnabled()
 
 } // namespace
 
-GlassBackdrop::GlassBackdrop(QObject *parent)
+GlassBackdrop::GlassBackdrop(const Appearance *appearance, QObject *parent)
     : QObject(parent)
+    , m_appearance(appearance)
 {
+    if (m_appearance) {
+        connect(m_appearance, &Appearance::lightChanged, this, &GlassBackdrop::applyBlur);
+    }
 }
 
 void GlassBackdrop::setWindow(QWindow *window)
 {
+    m_window = window;
+    applyBlur();
+}
+
+void GlassBackdrop::applyBlur()
+{
 #ifdef Q_OS_WIN
-    if (!window || m_blurActive)
+    if (!m_window)
         return;
 
     static const auto setAttribute = reinterpret_cast<SetWindowCompositionAttributeFn>(
@@ -64,16 +76,19 @@ void GlassBackdrop::setWindow(QWindow *window)
     if (!setAttribute)
         return;
 
-    // A light, cool tint (#181411 in AABBGGRR order) at about 50% opacity. The
-    // QML glass layer adds a little more on top, so text stays readable.
-    AccentPolicy accent{AccentEnableAcrylicBlurBehind, 2, static_cast<int>(0x80181411u), 0};
+    // Tint at about 50% opacity, in AABBGGRR order: #181411 for dark glass and
+    // #F7F8FA for light glass. The QML glass layer adds a little more on top.
+    const bool light = m_appearance && m_appearance->light();
+    const unsigned int tint = light ? 0x80FAF8F7u : 0x80181411u;
+    AccentPolicy accent{AccentEnableAcrylicBlurBehind, 2, static_cast<int>(tint), 0};
     CompositionAttribData data{kWcaAccentPolicy, &accent, sizeof(accent)};
 
-    const HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    const HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
     const bool acrylic = setAttribute(hwnd, &data) != FALSE;
-    m_blurActive = acrylic && transparencyEnabled();
-    emit blurActiveChanged();
-#else
-    Q_UNUSED(window);
+    const bool active = acrylic && transparencyEnabled();
+    if (active != m_blurActive) {
+        m_blurActive = active;
+        emit blurActiveChanged();
+    }
 #endif
 }

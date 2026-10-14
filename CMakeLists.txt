@@ -35,6 +35,8 @@ qt_add_executable(noch
     src/GlassBackdrop.h
     src/RunningApps.cpp
     src/RunningApps.h
+    src/Appearance.cpp
+    src/Appearance.h
 )
 
 target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")

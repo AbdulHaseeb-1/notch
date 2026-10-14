@@ -8,6 +8,7 @@
 #include <QWindow>
 
 #include "AppIconProvider.h"
+#include "Appearance.h"
 #include "DockController.h"
 #include "GlassBackdrop.h"
 #include "MusicPlayer.h"
@@ -44,7 +45,8 @@ int main(int argc, char *argv[])
     auto *dock = new DockController(&app);
     auto *monitor = new SystemMonitor(&app);
     auto *player = new MusicPlayer(&app);
-    auto *glass = new GlassBackdrop(&app);
+    auto *appearance = new Appearance(&app);
+    auto *glass = new GlassBackdrop(appearance, &app);
     auto *openApps = new RunningApps(&app);
 
     // The engine takes ownership of the providers.
@@ -55,6 +57,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("dock"), dock);
     engine.rootContext()->setContextProperty(QStringLiteral("monitor"), monitor);
     engine.rootContext()->setContextProperty(QStringLiteral("player"), player);
+    engine.rootContext()->setContextProperty(QStringLiteral("appearance"), appearance);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
 

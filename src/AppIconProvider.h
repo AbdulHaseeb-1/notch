@@ -8,9 +8,9 @@
 class DockController;
 class RunningApps;
 
-// Serves "image://appicon/<mono|color>/<iconId>": the real icon of an installed
-// app or shortcut, read from the file itself, optionally rendered in
-// black-and-white.
+// Serves "image://appicon/<mono|monoLight|color>/<iconId>": the real icon of an
+// installed app or shortcut, read from the file itself. The mono variants are
+// black-and-white, light for the dark notch and dark for the light theme.
 class AppIconProvider final : public QQuickImageProvider
 {
 public:
@@ -21,11 +21,14 @@ public:
 
 private:
     QImage loadIcon(const QString &file, int extent);
+    QImage colourIcon(const QString &file);
     static QImage toMonochrome(const QImage &source);
+    static QImage toInkMonochrome(const QImage &source);
 
     const DockController *m_dock;
     const RunningApps *m_running;
     QMutex m_mutex;
     QHash<QString, QImage> m_cache;     // file -> colour icon
-    QHash<QString, QImage> m_monoCache; // file -> monochrome icon
+    QHash<QString, QImage> m_monoCache; // file -> light monochrome icon (dark notch)
+    QHash<QString, QImage> m_inkCache;  // file -> dark monochrome icon (light theme)
 };
