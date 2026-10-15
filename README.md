@@ -10,9 +10,21 @@ your apps, tucks itself away and drops back down when you need it.
   springs back down. Turn this off in Settings to keep it pinned.
 - **Resize** - drag the small handle under the notch, Ctrl + scroll on the
   notch, or use S / M / L / XL and the slider in Settings (70%-160%).
-- **System** - turn on System stats in Settings for CPU, memory and battery beside the clock. Click that block
-  for disk, network throughput and uptime. Numbers turn red when they're in
-  trouble (CPU or memory over 90%, battery under 15%).
+- **Hub** - click the clock to open the hub: **System**, **Timer** and
+  **Clipboard** pages in one card.
+  - *System*: CPU, memory, battery, disk, network throughput and uptime. Turn on
+    System stats in Settings for CPU, memory and battery beside the clock.
+    Numbers turn red when they're in trouble (CPU or memory over 90%, battery
+    under 15%).
+  - *Timer*: a focus timer (5 / 15 / 25 / 45 / 60 min, `+` adds five). It keeps
+    running with the panel closed; a live pill beside the music pill shows a
+    progress ring and the time left, and pulses with a toast when the session
+    ends. Click the pill to reopen the timer.
+  - *Clipboard*: history of what you copied. Click an entry to copy it again,
+    pin the ones you want to keep, `Clear` drops the rest. It is **off until you
+    turn it on**, text only, kept in memory (nothing is written to disk), gone
+    when Noch quits, and copies that password managers mark as private are
+    skipped.
 - **Music** - the note beside the notch is Noch's own player. Click it to open
   the transport bar (previous, play or pause, next, repeat, volume); the volume
   icon opens a slider, and the note at the start of the bar opens the full
@@ -32,11 +44,31 @@ your apps, tucks itself away and drops back down when you need it.
   windows, click a window to bring it forward. Pinned apps stay in the notch.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
   focused). Esc or clicking elsewhere closes it. **Light theme** switches the
-  whole notch to pale glass.
+  whole notch to pale glass. **Blur behind (beta)** blurs the desktop behind the
+  glass (see below); it is off by default.
+
+## Glass and motion
+
+The notch, its pills and its flyouts share one glass surface (`qml/Glass.qml`):
+a soft shadow, a single tinted body, light across the top and a 1px rim that is
+lit from above. Controls on the glass use translucent white (dark) or black
+(light) fills so they look right on either theme.
+
+Motion is spring-driven. The notch drops in with a little overshoot and tucks
+away firmly, flyouts spring out of the notch (`qml/Flyout.qml`), dock icons
+swell toward the pointer and settle, and toggles, tabs and pills have springy
+overshoots. Only the glass changes shape, so nothing is re-laid-out per frame.
+
+**About the blur.** Noch's window is a transparent overlay as wide as the
+screen. The system acrylic material blurs the *whole* window, so earlier builds
+fogged most of the desktop. Blur behind now asks the compositor
+(`DwmEnableBlurBehindWindow`) to blur only the rounded shapes of the notch and
+its open flyouts. It is a beta: with it off the glass is simply denser, so it
+reads on any wallpaper.
 
 ## Build
 
-Requires Qt 6.9+ (uses `RectangularShadow`) and CMake 3.21+. `run.bat` builds,
+Requires Qt 6.9+ (uses `RectangularShadow` from `QtQuick.Effects`) and CMake 3.21+. `run.bat` builds,
 deploys the Qt runtime next to `noch.exe` once, and launches it:
 
 ```bat
@@ -56,11 +88,15 @@ cmake --build build
 | File | What it does |
 | --- | --- |
 | `qml/Main.qml` | Window, notch, reveal/auto-hide, resize, tooltip, context menu, click-through mask |
-| `qml/SettingsPanel.qml` | Settings flyout (General / Apps tabs) |
+| `qml/SettingsPanel.qml` | Settings flyout (General / Apps tabs; scrolls on short screens) |
+| `qml/Flyout.qml` | The spring-animated glass card every flyout and menu sits in |
+| `qml/HubPanel.qml` | The hub card: tab strip and the System / Timer / Clipboard pages |
+| `qml/FocusTimer.qml`, `qml/TimerView.qml`, `qml/TimerPill.qml` | Focus timer: logic, panel page and the live pill |
+| `qml/ClipboardView.qml` | Clipboard page |
 | `qml/MusicPanel.qml`, `qml/NowPlaying.qml` | Music player and the compact control in the notch |
-| `qml/SystemPanel.qml`, `qml/StatusBlock.qml` | System monitor and the clock / stats block |
+| `qml/SystemPanel.qml`, `qml/StatusBlock.qml` | System page of the hub and the clock / stats block |
 | `qml/DockItem.qml` | One app icon: magnification, launch bounce, running dot |
-| `qml/Theme.qml` | Colour tokens (X / Grok dark palette) |
+| `qml/Theme.qml` | Colour tokens (dark and light) |
 | `qml/Toggle.qml`, `Segmented.qml`, `SizeSlider.qml`, `MenuRow.qml`, `MoreButton.qml`, `Glyph.qml` | Controls |
 | `src/DockController.*` | Pinned apps: discovery, persistence, launching, running detection, start-up entry |
 | `src/MusicPlayer.*` | Local playback queue, metadata, cover art |
@@ -68,9 +104,11 @@ cmake --build build
 | `src/AppIconProvider.*` | `image://appicon/...` - extracts real app icons, renders them black and white |
 | `src/OverlayController.*` | Limits mouse input to the visible shapes so the rest clicks through |
 | `src/RunningApps.*` | Programs with open windows, window previews, bringing a window forward |
-| `src/GlassBackdrop.*` | Windows acrylic blur behind the notch, flyouts and menus, tinted for the theme |
+| `src/GlassBackdrop.*` | Optional blur behind the visible glass shapes (Windows) |
+| `src/ClipboardHistory.*` | In-memory clipboard history (text only, private copies skipped) |
+| `src/ShapeRegion.h` | Builds a region from the rounded shapes QML reports |
 | `src/Appearance.*` | The dark / light theme setting |
-| `qml/Glass.qml` | The shared frosted-glass surface |
+| `qml/Glass.qml` | The shared glass surface |
 | `qml/OpenApps.qml`, `qml/WindowPreview.qml` | Open-apps pill and its hover preview |
 
 Settings live in the registry under `HKCU\Software\noch\noch`.

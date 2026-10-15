@@ -30,9 +30,9 @@ Item {
         x: toggle.checked ? parent.width - width - 3 : 3
         color: toggle.checked ? t.inverse : t.text
         scale: hit.pressed ? 0.86 : 1
-        Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutBack; easing.overshoot: 1.6 } }
+        Behavior on x { SpringAnimation { spring: 7; damping: 0.36; epsilon: 0.1 } }
         Behavior on color { ColorAnimation { duration: 160 } }
-        Behavior on scale { NumberAnimation { duration: 120 } }
+        Behavior on scale { SpringAnimation { spring: 8; damping: 0.35; epsilon: 0.001 } }
     }
 
     MouseArea {

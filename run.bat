@@ -19,10 +19,10 @@ cmake --build build || goto :err
 
 REM Copy the Qt runtime next to noch.exe once, so it also starts outside this
 REM script (for example from "Launch at startup").
-if not exist build\.deployed-v3 (
+if not exist build\.deployed-v4 (
     echo [3/3] Deploying Qt runtime...
     windeployqt --qmldir qml --no-translations --no-opengl-sw --no-system-d3d-compiler build\noch.exe >nul || goto :err
-    echo ok> build\.deployed-v3
+    echo ok> build\.deployed-v4
 )
 
 echo.

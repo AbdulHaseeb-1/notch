@@ -144,7 +144,7 @@ Item {
         }
         onContainsMouseChanged: {
             if (containsMouse)
-                block.hintRequested(block.dateLine)
+                block.hintRequested(block.dateLine + qsTr("  ·  timer, clipboard, system"))
             else
                 block.hintCleared()
         }

@@ -9,6 +9,7 @@
 
 #include "AppIconProvider.h"
 #include "Appearance.h"
+#include "ClipboardHistory.h"
 #include "DockController.h"
 #include "GlassBackdrop.h"
 #include "MusicPlayer.h"
@@ -46,7 +47,8 @@ int main(int argc, char *argv[])
     auto *monitor = new SystemMonitor(&app);
     auto *player = new MusicPlayer(&app);
     auto *appearance = new Appearance(&app);
-    auto *glass = new GlassBackdrop(appearance, &app);
+    auto *glass = new GlassBackdrop(&app);
+    auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
 
     // The engine takes ownership of the providers.
@@ -60,6 +62,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("appearance"), appearance);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
+    engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
 
     engine.loadFromModule("noch", "Main");
 

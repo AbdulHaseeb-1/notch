@@ -1,7 +1,8 @@
 #include "GlassBackdrop.h"
 
-#include "Appearance.h"
+#include "ShapeRegion.h"
 
+#include <QSettings>
 #include <QWindow>
 
 #ifdef Q_OS_WIN
@@ -9,35 +10,15 @@
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
-#  include <QSettings>
+#  include <dwmapi.h>
 #endif
 
 namespace {
+const char kEnabledKey[] = "ui/blurBehind";
 
 #ifdef Q_OS_WIN
-// Undocumented but long-standing user32 entry point used by Windows Terminal
-// and others to request acrylic. Resolved at run time so a missing export only
-// costs the blur, not the app.
-enum AccentState { AccentEnableAcrylicBlurBehind = 4 };
-constexpr int kWcaAccentPolicy = 19;
-
-struct AccentPolicy {
-    int state;
-    int flags;
-    int gradientColor; // AABBGGRR
-    int animationId;
-};
-
-struct CompositionAttribData {
-    int attribute;
-    void *data;
-    SIZE_T size;
-};
-
-using SetWindowCompositionAttributeFn = BOOL(WINAPI *)(HWND, CompositionAttribData *);
-
 // Settings > Personalization > Colors > "Transparency effects". When it is off
-// the acrylic call still succeeds but nothing is blurred.
+// the blur request succeeds but nothing is blurred.
 bool transparencyEnabled()
 {
     const QSettings personalize(
@@ -45,47 +26,95 @@ bool transparencyEnabled()
         QSettings::NativeFormat);
     return personalize.value(QStringLiteral("EnableTransparency"), 1).toInt() != 0;
 }
-#endif
 
+HRGN toWinRegion(const QRegion &region)
+{
+    HRGN result = CreateRectRgn(0, 0, 0, 0);
+    for (const QRect &r : region) {
+        HRGN piece = CreateRectRgn(r.left(), r.top(), r.left() + r.width(), r.top() + r.height());
+        CombineRgn(result, result, piece, RGN_OR);
+        DeleteObject(piece);
+    }
+    return result;
+}
+#endif
 } // namespace
 
-GlassBackdrop::GlassBackdrop(const Appearance *appearance, QObject *parent)
+GlassBackdrop::GlassBackdrop(QObject *parent)
     : QObject(parent)
-    , m_appearance(appearance)
 {
-    if (m_appearance) {
-        connect(m_appearance, &Appearance::lightChanged, this, &GlassBackdrop::applyBlur);
-    }
+    const QSettings settings;
+    m_enabled = settings.value(QLatin1String(kEnabledKey), false).toBool();
+}
+
+bool GlassBackdrop::supported() const
+{
+#ifdef Q_OS_WIN
+    return true;
+#else
+    return false;
+#endif
 }
 
 void GlassBackdrop::setWindow(QWindow *window)
 {
     m_window = window;
-    applyBlur();
+    apply();
 }
 
-void GlassBackdrop::applyBlur()
+void GlassBackdrop::setEnabled(bool enabled)
+{
+    if (m_enabled == enabled)
+        return;
+    m_enabled = enabled;
+    QSettings settings;
+    settings.setValue(QLatin1String(kEnabledKey), m_enabled);
+    emit enabledChanged();
+    apply();
+}
+
+void GlassBackdrop::setShapes(const QVariantList &shapes)
+{
+    if (!m_enabled)
+        return; // nothing to track while the blur is off
+    const qreal scale = m_window ? m_window->devicePixelRatio() : 1.0;
+    const QRegion next = regionFromShapes(shapes, 0, scale);
+    if (next == m_shapes)
+        return;
+    m_shapes = next;
+    apply();
+}
+
+void GlassBackdrop::apply()
 {
 #ifdef Q_OS_WIN
     if (!m_window)
         return;
 
-    static const auto setAttribute = reinterpret_cast<SetWindowCompositionAttributeFn>(
-        reinterpret_cast<void *>(
-            GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute")));
-    if (!setAttribute)
+    const bool want = m_enabled && transparencyEnabled() && !m_shapes.isEmpty();
+    // Until the blur has been asked for once, leave the window exactly as Qt
+    // made it. Qt itself relies on DWM blur-behind with an empty region to keep
+    // per-pixel transparency working, so "off" must put that back instead of
+    // switching blur-behind off.
+    if (!want && !m_applied) {
+        if (m_blurActive) {
+            m_blurActive = false;
+            emit blurActiveChanged();
+        }
         return;
-
-    // Tint at about 50% opacity, in AABBGGRR order: #181411 for dark glass and
-    // #F7F8FA for light glass. The QML glass layer adds a little more on top.
-    const bool light = m_appearance && m_appearance->light();
-    const unsigned int tint = light ? 0x80FAF8F7u : 0x80181411u;
-    AccentPolicy accent{AccentEnableAcrylicBlurBehind, 2, static_cast<int>(tint), 0};
-    CompositionAttribData data{kWcaAccentPolicy, &accent, sizeof(accent)};
+    }
 
     const HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
-    const bool acrylic = setAttribute(hwnd, &data) != FALSE;
-    const bool active = acrylic && transparencyEnabled();
+    HRGN region = want ? toWinRegion(m_shapes) : CreateRectRgn(0, 0, -1, -1);
+    DWM_BLURBEHIND blur{};
+    blur.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+    blur.fEnable = TRUE;
+    blur.hRgnBlur = region;
+    const bool ok = SUCCEEDED(DwmEnableBlurBehindWindow(hwnd, &blur));
+    DeleteObject(region);
+    m_applied = true;
+
+    const bool active = want && ok;
     if (active != m_blurActive) {
         m_blurActive = active;
         emit blurActiveChanged();

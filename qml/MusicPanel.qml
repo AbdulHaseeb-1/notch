@@ -71,16 +71,7 @@ Item {
     implicitWidth: 380
     implicitHeight: body.implicitHeight
 
-    // ---------------------------------------------------------------- card
-    Glass {
-        id: card
-        anchors.fill: parent
-        radius: panel.cardRadius
-        tint: panel.cardBg
-        edge: t.border
-        clip: true
-
-    }
+    // The glass card itself is the music flyout in Main.qml.
 
     DropArea {
         anchors.fill: parent
@@ -730,7 +721,6 @@ Item {
         height: optCol.implicitHeight + 12
         radius: 14
         tint: t.surface
-        edge: t.border
         opacity: panel.menuOpen ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 130 } }

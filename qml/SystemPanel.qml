@@ -1,20 +1,12 @@
 import QtQuick
 
-// CPU, memory, battery, disk and throughput. Same black card as settings.
+// CPU, memory, battery, disk and throughput: the System page of the hub.
 Item {
     id: panel
 
     signal closeRequested()
 
     Theme { id: t }
-
-    property date now: new Date()
-    Timer {
-        interval: 30000
-        running: true
-        repeat: true
-        onTriggered: panel.now = new Date()
-    }
 
     function fmtBytes(n) {
         if (!n || n <= 0)
@@ -88,7 +80,7 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 text: meter.value
-                color: meter.warn ? theme.danger : theme.white
+                color: meter.warn ? theme.danger : theme.ink
                 font.family: theme.font
                 font.pixelSize: 13
                 font.weight: Font.Bold
@@ -101,84 +93,25 @@ Item {
             Rectangle {
                 anchors.fill: parent
                 radius: 2.5
-                color: theme.border
+                color: theme.track
             }
             Rectangle {
                 width: Math.max(0, Math.min(1, meter.ratio)) * parent.width
                 height: parent.height
                 radius: 2.5
-                color: meter.warn ? theme.danger : theme.white
-                Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+                color: meter.warn ? theme.danger : theme.ink
+                Behavior on width { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
                 Behavior on color { ColorAnimation { duration: 200 } }
             }
         }
     }
 
-    implicitWidth: 332
+    implicitWidth: 348
     implicitHeight: body.implicitHeight
 
     Column {
         id: body
         width: parent.width
-
-        Item {
-            width: parent.width
-            height: 58
-
-            Column {
-                anchors.left: parent.left
-                anchors.leftMargin: 20
-                anchors.right: closeHit.left
-                anchors.rightMargin: 8
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 1
-                Text {
-                    text: "System"
-                    color: t.ink
-                    font.family: t.font
-                    font.pixelSize: 17
-                    font.weight: Font.ExtraBold
-                }
-                Text {
-                    text: Qt.formatDate(panel.now, "dddd, d MMMM")
-                    color: t.textDim
-                    font.family: t.font
-                    font.pixelSize: 12
-                    font.weight: Font.DemiBold
-                }
-            }
-
-            Item {
-                id: closeHit
-                anchors.right: parent.right
-                anchors.rightMargin: 12
-                anchors.verticalCenter: parent.verticalCenter
-                width: 28
-                height: 28
-                Rectangle {
-                    anchors.fill: parent
-                    radius: width / 2
-                    color: t.hover
-                    opacity: closeMouse.containsMouse ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 120 } }
-                }
-                Glyph {
-                    anchors.centerIn: parent
-                    name: "close"
-                    size: 15
-                    color: closeMouse.containsMouse ? t.ink : t.textDim
-                }
-                MouseArea {
-                    id: closeMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.closeRequested()
-                }
-            }
-        }
-
-        Rectangle { width: parent.width; height: 1; color: t.border }
 
         Item {
             width: parent.width

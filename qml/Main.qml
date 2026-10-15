@@ -14,7 +14,7 @@ Window {
     x: Screen.virtualX
     y: Screen.virtualY
     width: Screen.width
-    height: Math.min(Screen.height, 760)
+    height: Math.min(Screen.height, 960)
 
     Theme { id: t }
 
@@ -27,6 +27,7 @@ Window {
         property bool monoIcons: true
         property bool showClock: true
         property bool showStats: false
+        property int focusMinutes: 25
     }
 
     // ------------------------------------------------------------------ size
@@ -56,7 +57,8 @@ Window {
     // ---------------------------------------------------------- reveal logic
     property bool panelOpen: false
     property bool musicOpen: false
-    property bool systemOpen: false
+    property bool hubOpen: false
+    property int hubTab: 0
     property int menuIndex: -1
     property bool resizing: false
     property bool launchHold: false
@@ -64,15 +66,15 @@ Window {
     property bool revealed: true
 
     readonly property bool pointerInside: pillHover.hovered || peekZone.containsMouse
-                                          || grip.containsMouse || panelHover.hovered
-                                          || menuHover.hovered || musicHover.hovered
-                                          || systemHover.hovered || musicPillHover.hovered
-                                          || openRow.hovered || previewCard.hovered
+                                          || grip.containsMouse || panelItem.hovered
+                                          || menu.hovered || musicFlyout.hovered
+                                          || hubFlyout.hovered || musicPillHover.hovered
+                                          || openRow.hovered || previewCard.hovered || timerPill.hovered
     readonly property bool dragging: peekDrop.containsDrag || pillDrop.containsDrag
                                      || musicDrop.containsDrag
-    readonly property bool holdOpen: !cfg.autoHide || panelOpen || musicOpen || systemOpen
+    readonly property bool holdOpen: !cfg.autoHide || panelOpen || musicOpen || hubOpen
                                      || menuIndex >= 0 || resizing || launchHold || introHold
-                                     || dragging || fileDialog.visible || musicDialog.visible
+                                     || dragging || fileDialog.visible || musicDialog.visible || timerAlert
     readonly property bool wantVisible: pointerInside || holdOpen
 
     onWantVisibleChanged: syncReveal()
@@ -96,12 +98,15 @@ Window {
     Timer { id: launchHoldTimer; interval: 1400; onTriggered: root.launchHold = false }
 
     // 0 = tucked away, 1 = fully shown (overshoots a little on the way down).
+    // A spring rather than a fixed curve: it drops in with a lively overshoot
+    // and tucks away firmly, and it picks up from wherever it was if the
+    // pointer changes its mind part-way.
     property real progress: revealed ? 1 : 0
     Behavior on progress {
-        NumberAnimation {
-            duration: root.revealed ? 620 : 340
-            easing.type: root.revealed ? Easing.OutBack : Easing.InCubic
-            easing.overshoot: 1.35
+        SpringAnimation {
+            spring: root.revealed ? 2.7 : 5.2
+            damping: root.revealed ? 0.2 : 0.72
+            epsilon: root.revealed ? 0.0006 : 0.004
         }
     }
     readonly property bool fullyHidden: !revealed && progress <= 0.001
@@ -118,7 +123,7 @@ Window {
     readonly property string tipText: toast.length > 0 ? toast
         : (hoverIndex >= 0 && hoverIndex < apps.length ? apps[hoverIndex].name : hoverHint)
     readonly property bool tipVisible: revealed && !resizing && !panelOpen && !musicOpen
-                                       && !systemOpen && menuIndex < 0
+                                       && !hubOpen && menuIndex < 0
                                        && tipText.length > 0 && (toast.length > 0 || tipReady)
 
     Timer { id: tipTimer; interval: 380; onTriggered: root.tipReady = true }
@@ -138,7 +143,7 @@ Window {
         menuIndex = -1
         panelOpen = false
         musicOpen = false
-        systemOpen = false
+        hubOpen = false
         launchHold = true
         launchHoldTimer.restart()
         if (dock.launch(i))
@@ -151,7 +156,7 @@ Window {
     function openMenu(i, centerX) {
         panelOpen = false
         musicOpen = false
-        systemOpen = false
+        hubOpen = false
         menuX = centerX
         menuIndex = (menuIndex === i) ? -1 : i
     }
@@ -159,28 +164,44 @@ Window {
     function closeAll() {
         panelOpen = false
         musicOpen = false
-        systemOpen = false
+        hubOpen = false
         menuIndex = -1
     }
 
     function toggleMusic() {
         menuIndex = -1
         panelOpen = false
-        systemOpen = false
+        hubOpen = false
         musicOpen = !musicOpen
     }
 
-    function toggleSystem() {
+    // Opens the hub on a page (or closes it if that page is already showing).
+    // tab -1 means "wherever it was last".
+    function toggleHub(tab) {
         menuIndex = -1
         panelOpen = false
         musicOpen = false
-        systemOpen = !systemOpen
+        const page = tab < 0 ? hubTab : tab
+        if (hubOpen && hubTab === page) {
+            hubOpen = false
+        } else {
+            hubTab = page
+            hubOpen = true
+        }
+    }
+
+    function openHub(tab) {
+        menuIndex = -1
+        panelOpen = false
+        musicOpen = false
+        hubTab = tab
+        hubOpen = true
     }
 
     function toggleSettings() {
         menuIndex = -1
         musicOpen = false
-        systemOpen = false
+        hubOpen = false
         panelOpen = !panelOpen
     }
 
@@ -198,16 +219,20 @@ Window {
     // Only the visible parts of the window take the mouse; everything else
     // clicks through to the desktop.
     property real menuX: 0
-    readonly property bool panelVisible: panelItem.opacity > 0.01
-    readonly property bool menuVisible: menu.opacity > 0.01
-    readonly property bool musicVisible: musicFlyout.opacity > 0.01
-    readonly property bool systemVisible: systemFlyout.opacity > 0.01
+    readonly property bool panelVisible: panelItem.shown
+    readonly property bool menuVisible: menu.shown
+    readonly property bool musicVisible: musicFlyout.shown
+    readonly property bool hubVisible: hubFlyout.shown
+    // Flyout sizes for the mask are the sizes they are heading for, not the
+    // animated ones, so the mask is not rebuilt on every frame of an animation.
+    readonly property real panelTargetH: settings.targetHeight
+    readonly property real hubTargetH: hubPanel.targetHeight
     readonly property var maskKey: [fullyHidden, Math.round(pillW), Math.round(pillH), width,
-                                    Math.round(musicDock.width),
-                                    panelVisible, Math.round(panelItem.height), menuVisible,
+                                    Math.round(musicDock.width), Math.round(timerPill.width),
+                                    panelVisible, Math.round(panelTargetH), menuVisible,
                                     Math.round(menu.x), Math.round(menu.height),
                                     musicVisible, Math.round(musicFlyout.x), Math.round(musicFlyout.height),
-                                    systemVisible, Math.round(systemFlyout.height),
+                                    hubVisible, Math.round(hubTargetH),
                                     tipVisible, hudVisible,
                                     openRow.visible, Math.round(openRow.x),
                                     previewShown, Math.round(previewCard.x),
@@ -222,12 +247,14 @@ Window {
             const m = 22
             const notchLeft = (width - pillW * 1.04) / 2 - m
             const left = openRow.visible ? Math.min(notchLeft, openRow.x - m) : notchLeft
-            const right = (width + pillW) / 2 + musicGap + musicDock.width + m
+            const rightEdge = timerPill.visible ? timerPill.x + timerPill.width
+                                                : (width + pillW) / 2 + musicGap + musicDock.width
+            const right = Math.max(rightEdge, (width + pillW) / 2 + musicGap + musicDock.width) + m
             const below = (tipVisible || hudVisible) ? 56 : m
             r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 30 })
             if (panelVisible) {
                 r.push({ x: panelItem.x - m, y: panelItem.baseY - 16,
-                         width: panelItem.width + 2 * m, height: panelItem.height + m + 24, radius: 34 })
+                         width: panelItem.width + 2 * m, height: panelTargetH + m + 24, radius: 34 })
             }
             if (menuVisible) {
                 r.push({ x: menu.x - m, y: menu.baseY - 16,
@@ -237,9 +264,9 @@ Window {
                 r.push({ x: musicFlyout.x - m, y: musicFlyout.baseY - 16,
                          width: musicFlyout.width + 2 * m, height: musicFlyout.height + m + 24, radius: 34 })
             }
-            if (systemVisible) {
-                r.push({ x: systemFlyout.x - m, y: systemFlyout.baseY - 16,
-                         width: systemFlyout.width + 2 * m, height: systemFlyout.height + m + 24, radius: 34 })
+            if (hubVisible) {
+                r.push({ x: hubFlyout.x - m, y: hubFlyout.baseY - 16,
+                         width: hubFlyout.width + 2 * m, height: hubTargetH + m + 24, radius: 34 })
             }
             if (previewShown) {
                 r.push({ x: previewCard.x - m, y: previewCard.y - 16,
@@ -247,6 +274,48 @@ Window {
             }
         }
         overlay.setInteractiveRegions(r)
+        updateGlass()
+    }
+
+    // The visible glass shapes, for the optional real blur (Settings > Blur
+    // behind). Only worked out while that is on.
+    function glassShape(item, radius) {
+        const p = item.mapToItem(null, 0, 0)
+        return { x: p.x, y: p.y, width: item.width * item.scale, height: item.height * item.scale, radius: radius }
+    }
+
+    function updateGlass() {
+        if (!glassBackdrop.enabled)
+            return
+        const g = []
+        if (!fullyHidden) {
+            g.push({ x: pill.x, y: pill.y, width: pill.width, height: pill.height, radius: pill.height / 2 })
+            if (musicDock.visible)
+                g.push(glassShape(musicDock, musicDock.height / 2))
+            if (openRow.visible)
+                g.push(glassShape(openRow, openRow.height / 2))
+            if (timerPill.visible)
+                g.push(glassShape(timerPill, timerPill.height / 2))
+            if (panelVisible) g.push(glassShape(panelItem, 22))
+            if (menuVisible) g.push(glassShape(menu, 18))
+            if (musicVisible) g.push(glassShape(musicFlyout, 28))
+            if (hubVisible) g.push(glassShape(hubFlyout, 22))
+            if (previewShown) g.push(glassShape(previewCard, 22))
+        }
+        glassBackdrop.setShapes(g)
+    }
+
+    // While the blur is on, keep its shapes in step with the animations
+    // (a few updates a second is plenty; nothing runs when it is off).
+    Timer {
+        interval: 33
+        repeat: true
+        running: glassBackdrop.enabled && root.visible
+        onTriggered: root.updateGlass()
+    }
+    Connections {
+        target: glassBackdrop
+        function onEnabledChanged() { root.updateGlass() }
     }
 
     Component.onCompleted: updateMask()
@@ -289,16 +358,7 @@ Window {
             anchors.fill: parent
             radius: height / 2
             edge: root.dragging ? t.ink
-                : (root.fullyHidden && peekZone.containsMouse ? t.textDim : t.border)
-        }
-
-        // Hairline highlight along the top edge.
-        Rectangle {
-            x: bg.radius * 0.8
-            width: parent.width - 2 * x
-            y: 1
-            height: 1
-            color: t.hairline
+                : (root.fullyHidden && peekZone.containsMouse ? t.textDim : "transparent")
         }
 
         // Grab bar shown at the bottom edge while tucked away.
@@ -429,9 +489,9 @@ Window {
                     s: root.s
                     showClock: cfg.showClock
                     showStats: cfg.showStats
-                    active: root.systemOpen
+                    active: root.hubOpen
                     appear: root.itemAppear(root.apps.length + 1)
-                    onClicked: root.toggleSystem()
+                    onClicked: root.toggleHub(-1)
                     onSettingsRequested: root.toggleSettings()
                     onHintRequested: (text) => {
                         root.hoverHint = text
@@ -468,7 +528,7 @@ Window {
         if (added > 0) {
             root.showToast(added === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(added))
             root.panelOpen = false
-            root.systemOpen = false
+            root.hubOpen = false
             root.menuIndex = -1
             root.musicOpen = true
         } else if (pinned > 0) {
@@ -518,6 +578,52 @@ Window {
         }
     }
 
+    // ------------------------------------------------------------ focus timer
+    // The timer keeps running when its panel is closed; while a session is
+    // on, a live pill beside the music pill shows the time left.
+    FocusTimer {
+        id: sessionTimer
+        objectName: "sessionTimer"
+        minutes: cfg.focusMinutes
+        onMinutesChanged: if (cfg.focusMinutes !== minutes) cfg.focusMinutes = minutes
+        onDone: {
+            root.timerAlert = true
+            root.showToast(qsTr("Focus session finished"))
+            alertTimer.restart()
+        }
+    }
+    property bool timerAlert: false
+    Timer { id: alertTimer; interval: 12000; onTriggered: root.timerAlert = false }
+
+    TimerPill {
+        id: timerPill
+        timer: sessionTimer
+        s: root.s
+        appear: root.clamp01(root.progress * 1.4 - 0.2)
+        x: Math.round(musicDock.x + musicDock.width + root.musicGap)
+        y: pill.y
+        transformOrigin: Item.Left
+
+        onClicked: {
+            root.timerAlert = false
+            if (sessionTimer.finished)
+                sessionTimer.reset()
+            root.openHub(1)
+        }
+        onHintRequested: (text) => {
+            root.hoverHint = text
+            root.hoverIndex = -1
+            root.tipX = timerPill.mapToItem(root.contentItem, timerPill.width / 2, 0).x
+            if (!root.tipReady)
+                tipTimer.restart()
+        }
+        onHintCleared: {
+            root.hoverHint = ""
+            tipTimer.stop()
+            tipGrace.restart()
+        }
+    }
+
     // ------------------------------------------------------------ open apps
     // Programs with a window open: their own pill on the left of the notch,
     // mirroring the music pill on the right. Pinned apps stay in the notch.
@@ -530,7 +636,7 @@ Window {
     property real previewCenterX: 0
     property real previewStamp: 0
     readonly property bool previewShown: revealed && previewOpen && previewWindows.length > 0
-                                         && !panelOpen && !musicOpen && !systemOpen && menuIndex < 0
+                                         && !panelOpen && !musicOpen && !hubOpen && menuIndex < 0
 
     function openPreview(exe, centerX) {
         const windows = openApps.windowsFor(exe)
@@ -683,19 +789,19 @@ Window {
         width: tipLabel.implicitWidth + 20
         height: 26
         radius: 13
-        color: showHud ? t.raised : t.ink
+        color: showHud ? t.surface : t.ink
         border.width: showHud ? 1 : 0
-        border.color: t.border
+        border.color: t.borderStrong
         x: Math.round((showHud || root.toast.length > 0 ? root.width / 2 : root.tipX) - width / 2)
         y: Math.round(root.shownY + root.pillH + 12 + (shown ? 0 : -6))
         opacity: shown ? 1 : 0
         scale: shown ? 1 : 0.9
         readonly property bool shown: showHud || root.tipVisible
 
-        Behavior on opacity { NumberAnimation { duration: 150 } }
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
-        Behavior on y { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on x { enabled: tip.opacity > 0.5; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+        Behavior on scale { SpringAnimation { spring: 6; damping: 0.34; epsilon: 0.0005 } }
+        Behavior on y { SpringAnimation { spring: 6; damping: 0.5; epsilon: 0.05 } }
+        Behavior on x { enabled: tip.opacity > 0.5; SpringAnimation { spring: 7; damping: 0.6; epsilon: 0.1 } }
 
         Text {
             id: tipLabel
@@ -709,13 +815,14 @@ Window {
     }
 
     // ------------------------------------------------------------ app context menu
-    Item {
+    Flyout {
         id: menu
-        readonly property bool open: root.menuIndex >= 0
+        open: root.menuIndex >= 0
+        radius: 18
+        baseY: root.shownY + root.pillH + 10
         property int shownIndex: -1
         property bool renaming: false
         readonly property var app: shownIndex >= 0 && shownIndex < root.apps.length ? root.apps[shownIndex] : null
-        readonly property real baseY: root.shownY + root.pillH + 10
 
         onOpenChanged: {
             if (open) {
@@ -736,39 +843,6 @@ Window {
         width: 280
         height: menuCol.implicitHeight + 12
         x: Math.round(Math.max(12, Math.min(root.width - width - 12, root.menuX - width / 2)))
-        y: baseY + (open ? 0 : -8)
-        opacity: open ? 1 : 0
-        scale: open ? 1 : 0.94
-        transformOrigin: Item.Top
-        visible: opacity > 0.01
-
-        Behavior on opacity { NumberAnimation { duration: 140 } }
-        Behavior on y { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-        HoverHandler { id: menuHover }
-
-        Glass {
-            id: menuBg
-            anchors.fill: parent
-            radius: 18
-            tint: t.surface
-            edge: t.border
-            clip: true
-
-            Image {
-                anchors.right: parent.right
-                anchors.rightMargin: 12
-                anchors.top: parent.top
-                anchors.topMargin: 20
-                width: 130
-                height: 130
-                source: "assets/cube-mark.svg"
-                opacity: 0.12
-                fillMode: Image.PreserveAspectFit
-                smooth: true
-            }
-        }
 
         Column {
             id: menuCol
@@ -889,31 +963,15 @@ Window {
     }
 
     // ------------------------------------------------------------ settings panel
-    Item {
+    Flyout {
         id: panelItem
-        readonly property real baseY: root.shownY + root.pillH + 12
+        open: root.panelOpen
+        radius: 22
+        baseY: root.shownY + root.pillH + 12
 
         width: settings.implicitWidth
         height: settings.implicitHeight
         x: Math.round((root.width - width) / 2)
-        y: baseY + (root.panelOpen ? 0 : -10)
-        opacity: root.panelOpen ? 1 : 0
-        scale: root.panelOpen ? 1 : 0.96
-        transformOrigin: Item.Top
-        visible: opacity > 0.01
-
-        Behavior on opacity { NumberAnimation { duration: 170 } }
-        Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-
-        HoverHandler { id: panelHover }
-
-        Glass {
-            id: panelBg
-            anchors.fill: parent
-            radius: 22
-            edge: t.border
-        }
 
         SettingsPanel {
             id: settings
@@ -924,6 +982,9 @@ Window {
             version: dock.version
             startupSupported: dock.startupSupported
             launchAtStartup: dock.launchAtStartup
+            blurSupported: glassBackdrop.supported
+            blurBehind: glassBackdrop.enabled
+            maxBodyHeight: root.height - (root.shownY + root.pillH + 12) - 56 - 44 - 1 - 50 - 20
 
             onCloseRequested: root.panelOpen = false
             onAddRequested: fileDialog.open()
@@ -932,38 +993,24 @@ Window {
             onUnpinRequested: (i) => dock.unpin(i)
             onMoveRequested: (from, to) => dock.move(from, to)
             onStartupToggled: (on) => dock.launchAtStartup = on
+            onBlurToggled: (on) => glassBackdrop.enabled = on
             lightTheme: appearance.light
             onThemeToggled: (on) => appearance.light = on
             onLaunchRequested: (i) => root.launchApp(i)
         }
     }
 
-    Item {
+    // ------------------------------------------------------------ music player
+    Flyout {
         id: musicFlyout
-        readonly property real baseY: root.shownY + root.pillH + 12
+        objectName: "musicFlyout"
+        open: root.musicOpen
+        radius: 28
+        baseY: root.shownY + root.pillH + 12
 
         width: musicPanel.implicitWidth
         height: musicPanel.implicitHeight
         x: Math.round(Math.max(12, (root.width - width) / 2))
-        y: baseY + (root.musicOpen ? 0 : -10)
-        opacity: root.musicOpen ? 1 : 0
-        scale: root.musicOpen ? 1 : 0.96
-        transformOrigin: Item.Top
-        visible: opacity > 0.01
-
-        Behavior on opacity { NumberAnimation { duration: 170 } }
-        Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-
-        HoverHandler { id: musicHover }
-
-        Glass {
-            id: musicBg
-            anchors.fill: parent
-            radius: 28
-            tint: t.surface
-            edge: t.border
-        }
 
         MusicPanel {
             id: musicPanel
@@ -974,36 +1021,27 @@ Window {
         }
     }
 
-    Item {
-        id: systemFlyout
-        readonly property real baseY: root.shownY + root.pillH + 12
+    // ------------------------------------------------------------ hub
+    // System, Timer and Clipboard in one card, opened from the clock.
+    Flyout {
+        id: hubFlyout
+        objectName: "hubFlyout"
+        open: root.hubOpen
+        radius: 22
+        baseY: root.shownY + root.pillH + 12
 
-        width: systemPanel.implicitWidth
-        height: systemPanel.implicitHeight
+        width: hubPanel.implicitWidth
+        height: hubPanel.implicitHeight
         x: Math.round(Math.max(12, (root.width - width) / 2))
-        y: baseY + (root.systemOpen ? 0 : -10)
-        opacity: root.systemOpen ? 1 : 0
-        scale: root.systemOpen ? 1 : 0.96
-        transformOrigin: Item.Top
-        visible: opacity > 0.01
 
-        Behavior on opacity { NumberAnimation { duration: 170 } }
-        Behavior on y { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
-
-        HoverHandler { id: systemHover }
-
-        Glass {
-            id: systemBg
+        HubPanel {
+            id: hubPanel
             anchors.fill: parent
-            radius: 22
-            edge: t.border
-        }
-
-        SystemPanel {
-            id: systemPanel
-            anchors.fill: parent
-            onCloseRequested: root.systemOpen = false
+            tab: root.hubTab
+            focusTimer: sessionTimer
+            onCloseRequested: root.hubOpen = false
+            onTabPicked: (i) => root.hubTab = i
+            onToastRequested: (text) => root.showToast(text)
         }
     }
 
@@ -1034,7 +1072,7 @@ Window {
             if (n > 0) {
                 root.showToast(n === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(n))
                 root.panelOpen = false
-                root.systemOpen = false
+                root.hubOpen = false
                 root.menuIndex = -1
                 root.musicOpen = true
             }
