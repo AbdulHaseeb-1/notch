@@ -1,4 +1,4 @@
-﻿import QtQuick
+import QtQuick
 
 // One app in the notch: real app icon (mono or colour), hover magnification,
 // launch bounce, running indicator.
@@ -33,8 +33,14 @@ Item {
     readonly property real centerX: x + width / 2
     readonly property real magnetTarget: pointerX < 0 ? 0
         : Math.exp(-Math.pow((pointerX - centerX) / (cellW * 0.95), 2))
+    // Springy rather than eased: icons swell toward the pointer, overshoot a
+    // touch, and settle, which is what makes the row feel alive.
     property real magnet: magnetTarget
-    Behavior on magnet { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
+    Behavior on magnet { SpringAnimation { spring: 6; damping: 0.36; epsilon: 0.001 } }
+
+    // Press squash, also a spring so a quick tap still bounces back.
+    property real press: tap.pressed ? 0.84 : 1
+    Behavior on press { SpringAnimation { spring: 8; damping: 0.3; epsilon: 0.001 } }
 
     // ---- launch bounce
     property real jump: 0
@@ -74,9 +80,9 @@ Item {
         border.width: 1
         border.color: item.menuActive ? t.borderStrong : t.tileEdge
         opacity: item.highlighted ? item.appear : 0
-        scale: item.highlighted ? 1 : 0.85
+        scale: item.highlighted ? 1 : 0.8
         Behavior on opacity { NumberAnimation { duration: 140 } }
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        Behavior on scale { SpringAnimation { spring: 6; damping: 0.34; epsilon: 0.001 } }
     }
 
     Item {
@@ -85,15 +91,14 @@ Item {
         height: item.iconSize
         anchors.centerIn: parent
         anchors.verticalCenterOffset: -Math.round(2 * item.s)
-                                      - item.magnet * 2 * item.s
+                                      - item.magnet * 4 * item.s
                                       - item.jump * 10 * item.s
                                       - (1 - item.appear) * 10 * item.s
 
         opacity: item.appear
         scale: (0.55 + 0.45 * item.appear)
-               * (1 + 0.1 * item.magnet)
-               * (tap.pressed ? 0.88 : 1)
-        Behavior on scale { enabled: !tap.pressed; NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
+               * (1 + 0.34 * item.magnet)
+               * item.press
 
         Image {
             id: icon
@@ -140,7 +145,7 @@ Item {
         property real shown: item.running || item.launching ? 1 : 0
         property real pulse: 1
         opacity: shown * pulse * item.appear
-        Behavior on width { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+        Behavior on width { SpringAnimation { spring: 5; damping: 0.4; epsilon: 0.1 } }
         Behavior on shown { NumberAnimation { duration: 220 } }
         Behavior on color { ColorAnimation { duration: 160 } }
 

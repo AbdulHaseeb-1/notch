@@ -11,6 +11,10 @@ Item {
     property bool startupSupported: false
     property bool launchAtStartup: false
     property bool lightTheme: false
+    property bool blurSupported: false
+    property bool blurBehind: false
+    // Tallest the tab content may grow before it scrolls (so the card always fits the screen).
+    property real maxBodyHeight: 100000
     property string version: ""
 
     signal closeRequested()
@@ -21,6 +25,7 @@ Item {
     signal moveRequested(int from, int to)
     signal startupToggled(bool enabled)
     signal themeToggled(bool light)
+    signal blurToggled(bool on)
     signal launchRequested(int index)
 
     Theme { id: t }
@@ -29,6 +34,10 @@ Item {
 
     implicitWidth: 348
     implicitHeight: body.implicitHeight
+    // Where the card is heading, for the click-through mask (the animated
+    // height would rebuild the window mask on every frame).
+    readonly property real naturalBodyHeight: tab === 0 ? general.implicitHeight : apps.implicitHeight
+    readonly property real targetHeight: 56 + 44 + Math.min(naturalBodyHeight, maxBodyHeight) + 1 + 50
 
     // ---------- reusable rows
     component SectionLabel: Text {
@@ -102,7 +111,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: ib.danger ? "#26f4212e" : t.hover
+            color: ib.danger ? t.dangerSoft : t.hover
             opacity: ibHit.containsMouse ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
@@ -283,7 +292,7 @@ Item {
                 width: 56
                 color: t.ink
                 x: panel.tab * (parent.width / 2) + (parent.width / 2 - width) / 2
-                Behavior on x { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+                Behavior on x { SpringAnimation { spring: 5.5; damping: 0.42; epsilon: 0.2 } }
             }
         }
 
@@ -291,15 +300,24 @@ Item {
         Item {
             id: content
             width: parent.width
-            height: panel.tab === 0 ? general.implicitHeight : apps.implicitHeight
+            height: Math.min(panel.naturalBodyHeight, panel.maxBodyHeight)
             clip: true
-            Behavior on height { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+            Behavior on height { SpringAnimation { spring: 4.2; damping: 0.5; epsilon: 0.3 } }
 
-            // ---- General
+            // ---- General (scrolls when the screen is too short for it)
+            Flickable {
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: general.implicitHeight
+                interactive: contentHeight > height + 1
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                visible: panel.tab === 0 || general.opacity > 0
+
             Column {
                 id: general
                 x: 20 - (panel.tab === 0 ? 0 : 24)
-                width: parent.width - 40
+                width: content.width - 40
                 topPadding: 16
                 bottomPadding: 8
                 spacing: 6
@@ -406,6 +424,13 @@ Item {
                     onToggled: (c) => panel.themeToggled(c)
                 }
                 ToggleRow {
+                    visible: panel.blurSupported
+                    label: "Blur behind (beta)"
+                    sub: "Blurs the desktop behind the glass. If anything looks off, turn it back off."
+                    checked: panel.blurBehind
+                    onToggled: (c) => panel.blurToggled(c)
+                }
+                ToggleRow {
                     label: "Show clock"
                     checked: panel.prefs.showClock
                     onToggled: (c) => panel.prefs.showClock = c
@@ -422,6 +447,7 @@ Item {
                     checked: panel.launchAtStartup
                     onToggled: (c) => panel.startupToggled(c)
                 }
+            }
             }
 
             // ---- Apps

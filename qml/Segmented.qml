@@ -38,7 +38,7 @@ Item {
         x: 3 + Math.max(0, seg.currentIndex) * seg.cellW
         radius: height / 2
         color: t.ink
-        Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+        Behavior on x { SpringAnimation { spring: 5.5; damping: 0.42; epsilon: 0.2 } }
     }
 
     Row {

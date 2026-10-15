@@ -24,14 +24,14 @@ Item {
         scale: hit.pressed ? 0.9 : 1
         Behavior on opacity { NumberAnimation { duration: 140 } }
         Behavior on color { ColorAnimation { duration: 140 } }
-        Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        Behavior on scale { SpringAnimation { spring: 8; damping: 0.35; epsilon: 0.001 } }
     }
 
     Row {
         anchors.centerIn: parent
         spacing: Math.max(2, Math.round(3 * more.s))
         rotation: more.active ? 90 : 0
-        Behavior on rotation { NumberAnimation { duration: 280; easing.type: Easing.OutBack } }
+        Behavior on rotation { SpringAnimation { spring: 4; damping: 0.28; epsilon: 0.1 } }
         Repeater {
             model: 3
             Rectangle {

@@ -1,4 +1,4 @@
-﻿import QtQuick
+import QtQuick
 
 // Music pill beside the notch, separate from the app dock.
 //   - Stopped: a round note icon.
@@ -35,7 +35,7 @@ Item {
     height: pillH
     opacity: appear
 
-    Behavior on width { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+    Behavior on width { SpringAnimation { spring: 4.6; damping: 0.55; epsilon: 0.3 } }
 
     // One round transport button. Filled buttons (play/pause) are solid ink.
     component TransportButton: Item {
@@ -98,8 +98,7 @@ Item {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        edge: chip.highlight || chip.active ? t.ink
-            : (pillHover.hovered ? t.borderStrong : t.border)
+        edge: chip.highlight || chip.active ? t.ink : "transparent"
     }
 
     // Soft gradient wash across the pill while music plays.

@@ -1,50 +1,65 @@
 import QtQuick
 
-// Colour tokens for the whole app. Dark is the notch's black glass; light is
-// the same layout on pale glass. Components read these tokens instead of
-// hard-coding colours, so Settings > Light theme switches everything at once.
+// Colour and motion tokens for the whole app. Dark is the notch's black glass;
+// light is the same layout on pale glass. Components read these tokens instead
+// of hard-coding colours, so Settings > Light theme switches everything at once.
+//
+// Controls sit *on* the glass, so their fills are translucent white (dark) or
+// translucent black (light) rather than fixed greys: they pick up whatever the
+// surface is and stay consistent in both themes, the way Apple's materials do.
 QtObject {
     readonly property bool light: appearance.light
 
     // Foreground. "ink" is the high-contrast colour: primary text and accent
     // fills. "inverse" is what sits on top of an ink fill.
-    readonly property color ink: light ? "#14171c" : "#ffffff"
+    readonly property color ink: light ? "#1d1d1f" : "#ffffff"
     readonly property color inverse: light ? "#ffffff" : "#000000"
-    readonly property color inkSoft: light ? "#2c3139" : "#d7dbdc"
-    readonly property color text: light ? "#1d2128" : "#edf0f2"
-    readonly property color textDim: light ? "#646b76" : "#7c8288"
-    readonly property color textFaint: light ? "#9aa1ab" : "#4d5257"
+    readonly property color inkSoft: light ? "#3a3a3d" : "#e3e3e6"
+    readonly property color text: light ? "#1d1d1f" : "#f2f2f4"
+    readonly property color textDim: light ? "#6e6e73" : "#98989f"
+    readonly property color textFaint: light ? "#a1a1a6" : "#636368"
 
-    // Glass and surfaces
-    readonly property color surface: light ? "#f7f8fa" : "#0d0f13"
-    readonly property color raised: light ? "#eceef2" : "#141619"
-    readonly property color hover: light ? "#e1e4ea" : "#1d2025"
-    readonly property color press: light ? "#d4d9e0" : "#262a30"
-    readonly property color frame: light ? "#e4e7ec" : "#0b0c0f"
-    readonly property color track: light ? "#dde1e7" : "#2a2b30"
-    readonly property color tile: light ? "#e6e9ee" : "#1a1c20"
-    readonly property color tileEdge: light ? "#d3d8df" : "#26292e"
-    readonly property color tileActive: light ? "#d6dae1" : "#24262b"
+    // Glass body. Opaque enough to read on any wallpaper without the blur.
+    readonly property color surface: light ? "#f6f6f8" : "#0c0c0e"
 
-    // Lines and light
-    readonly property color border: light ? "#d2d7de" : "#2b2f33"
-    readonly property color borderSoft: light ? "#e4e7eb" : "#1c1f23"
-    readonly property color borderStrong: light ? "#b9c0ca" : "#3a3d44"
-    readonly property color hairline: light ? "#cdffffff" : "#18ffffff"
-    readonly property color sheen: light ? "#73ffffff" : "#24ffffff"
-    readonly property color shade: light ? "#0f1c2433" : "#14000000"
+    // Control fills (translucent, drawn over the glass)
+    readonly property color raised: light ? "#0d000000" : "#0fffffff"
+    readonly property color hover: light ? "#14000000" : "#1affffff"
+    readonly property color press: light ? "#1f000000" : "#26ffffff"
+    readonly property color tile: light ? "#0d000000" : "#14ffffff"
+    readonly property color tileEdge: light ? "#14000000" : "#1fffffff"
+    readonly property color tileActive: light ? "#1a000000" : "#24ffffff"
+    readonly property color track: light ? "#1a000000" : "#29ffffff"
+    readonly property color frame: light ? "#e6e6ea" : "#0a0a0c"
 
-    // How much the glass tint shows: thinner when the real blur is behind it,
-    // denser when it is not (so text stays readable).
-    readonly property real glassFrosted: light ? 0.42 : 0.22
-    readonly property real glassSolid: light ? 0.86 : 0.74
+    // Lines
+    readonly property color border: light ? "#1f000000" : "#1fffffff"
+    readonly property color borderSoft: light ? "#0f000000" : "#12ffffff"
+    readonly property color borderStrong: light ? "#38000000" : "#40ffffff"
+    readonly property color hairline: light ? "#cdffffff" : "#2effffff"
+
+    // Glass rim: a 1px ring that is lit from above. Brightest at the top edge,
+    // faint down the sides, a touch of light returning along the bottom.
+    readonly property color rimTop: light ? "#f2ffffff" : "#52ffffff"
+    readonly property color rimMid: light ? "#26000000" : "#14ffffff"
+    readonly property color rimBottom: light ? "#1a000000" : "#24ffffff"
+    // Light falling across the upper part of the surface.
+    readonly property color sheen: light ? "#80ffffff" : "#0dffffff"
+    readonly property color shadow: light ? "#3d1c2433" : "#99000000"
+
+    // Glass opacity: thinner when the real blur is behind it, denser when it
+    // is not (so text stays readable on any wallpaper).
+    readonly property real glassFrosted: light ? 0.62 : 0.58
+    readonly property real glassSolid: light ? 0.94 : 0.92
 
     // Which monochrome icon variant suits the background.
     readonly property string iconMono: light ? "monoLight" : "mono"
 
     // Status
-    readonly property color danger: light ? "#e11d2a" : "#f4212e"
-    readonly property color success: light ? "#059669" : "#10b981"
+    readonly property color danger: light ? "#e11d2a" : "#ff453a"
+    readonly property color dangerSoft: light ? "#1fe11d2a" : "#26ff453a"
+    readonly property color success: light ? "#1f9d55" : "#32d74b"
+    readonly property color accent: light ? "#0a84ff" : "#0a84ff"
 
     readonly property string font: "Segoe UI"
 }
