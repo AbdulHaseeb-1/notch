@@ -37,6 +37,8 @@ public:
     Q_INVOKABLE bool launch(int index);
     Q_INVOKABLE bool pinUrl(const QUrl &url);
     Q_INVOKABLE bool pinPath(const QString &path);
+    Q_INVOKABLE bool pinApp(const QString &name, const QString &path);
+    Q_INVOKABLE bool isPinned(const QString &path, const QString &exe = QString()) const;
     Q_INVOKABLE void unpin(int index);
     Q_INVOKABLE void move(int from, int to);
     Q_INVOKABLE void revealInFolder(int index);

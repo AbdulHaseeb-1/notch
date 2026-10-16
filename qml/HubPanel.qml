@@ -7,6 +7,7 @@ Item {
 
     property int tab: 0                 // 0 System, 1 Timer, 2 Clipboard
     property var focusTimer             // FocusTimer
+    property real maxBodyHeight: 100000
     readonly property real headerH: 58
 
     signal closeRequested()
@@ -15,10 +16,11 @@ Item {
 
     Theme { id: t }
 
-    implicitWidth: 348
+    implicitWidth: 368
     // The size the card is heading for, for the click-through mask: using the
     // animated height would rebuild the window mask on every frame.
-    readonly property real targetHeight: headerH + 1 + pageHeight(tab)
+    readonly property real targetBodyHeight: Math.min(pageHeight(tab), maxBodyHeight)
+    readonly property real targetHeight: headerH + 1 + targetBodyHeight
     implicitHeight: headerH + 1 + content.height
 
     function pageHeight(i) {
@@ -53,13 +55,6 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: 28
             height: 28
-            Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                color: t.hover
-                opacity: closeHit.containsMouse ? 1 : 0
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-            }
             Glyph {
                 anchors.centerIn: parent
                 name: "close"
@@ -88,46 +83,58 @@ Item {
         id: content
         anchors.top: rule.bottom
         width: parent.width
-        height: hub.pageHeight(hub.tab)
+        height: hub.targetBodyHeight
         clip: true
         Behavior on height {
-            SpringAnimation { spring: 4.2; damping: 0.5; epsilon: 0.3 }
+            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
 
-        SystemPanel {
-            id: system
-            width: parent.width
-            x: hub.tab === 0 ? 0 : -28
-            opacity: hub.tab === 0 ? 1 : 0
-            visible: opacity > 0.01
-            enabled: hub.tab === 0
-            Behavior on opacity { NumberAnimation { duration: 200 } }
-            Behavior on x { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-            onCloseRequested: hub.closeRequested()
+        Flickable {
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: system.implicitHeight
+            interactive: contentHeight > height + 1
+            boundsBehavior: Flickable.StopAtBounds
+            clip: true
+            visible: system.opacity > 0.01
+            z: hub.tab === 0 ? 1 : 0
+
+            SystemPanel {
+                id: system
+                width: parent.width
+                x: hub.tab === 0 ? 0 : -20
+                opacity: hub.tab === 0 ? 1 : 0
+                enabled: hub.tab === 0
+                Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                onCloseRequested: hub.closeRequested()
+            }
         }
 
         TimerView {
             id: timerPage
             width: parent.width
             timer: hub.focusTimer
-            x: hub.tab === 1 ? 0 : (hub.tab < 1 ? 28 : -28)
+            x: hub.tab === 1 ? 0 : (hub.tab < 1 ? 20 : -20)
             opacity: hub.tab === 1 ? 1 : 0
             visible: opacity > 0.01
             enabled: hub.tab === 1
-            Behavior on opacity { NumberAnimation { duration: 200 } }
-            Behavior on x { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+            z: hub.tab === 1 ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
+            Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
             onToastRequested: (text) => hub.toastRequested(text)
         }
 
         ClipboardView {
             id: clip
             width: parent.width
-            x: hub.tab === 2 ? 0 : 28
+            x: hub.tab === 2 ? 0 : 20
             opacity: hub.tab === 2 ? 1 : 0
             visible: opacity > 0.01
             enabled: hub.tab === 2
-            Behavior on opacity { NumberAnimation { duration: 200 } }
-            Behavior on x { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+            z: hub.tab === 2 ? 1 : 0
+            Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
+            Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
             onToastRequested: (text) => hub.toastRequested(text)
         }
     }

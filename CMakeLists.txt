@@ -39,6 +39,27 @@ qt_add_executable(noch
     src/Appearance.h
     src/ClipboardHistory.cpp
     src/ClipboardHistory.h
+    src/WinRtAbi.h
+    src/SmtcMedia.cpp
+    src/SmtcMedia.h
+    src/MediaHub.cpp
+    src/MediaHub.h
+    src/AudioDevices.cpp
+    src/AudioDevices.h
+    src/Radios.cpp
+    src/Radios.h
+    src/NightLight.cpp
+    src/NightLight.h
+    src/PowerActions.cpp
+    src/PowerActions.h
+    src/FullscreenWatcher.cpp
+    src/FullscreenWatcher.h
+    src/GlobalHotkey.cpp
+    src/GlobalHotkey.h
+    src/Calc.h
+    src/AppSearch.cpp
+    src/AppSearch.h
+    src/ImageAlpha.h
     src/ShapeRegion.h
 )
 
@@ -73,6 +94,15 @@ qt_add_qml_module(noch
         qml/TimerView.qml
         qml/TimerPill.qml
         qml/ClipboardView.qml
+        qml/PaletteCard.qml
+        qml/Buddy.qml
+        qml/BuddyRouter.qml
+        qml/BuddyInputBar.qml
+        qml/BuddyPanel.qml
+        qml/BuddyChartCard.qml
+        qml/BuddyResearchCard.qml
+        qml/BuddyTasksCard.qml
+        qml/BuddyHelpCard.qml
 )
 
 target_link_libraries(noch PRIVATE
@@ -83,7 +113,7 @@ target_link_libraries(noch PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(noch PRIVATE user32 shell32 iphlpapi dwmapi)
+    target_link_libraries(noch PRIVATE user32 shell32 iphlpapi dwmapi ole32 powrprof)
 endif()
 
 set_target_properties(noch PROPERTIES

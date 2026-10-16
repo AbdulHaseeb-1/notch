@@ -69,12 +69,14 @@ QVariantList ClipboardHistory::items() const
     QVariantList list;
     list.reserve(m_entries.size());
     for (const Entry &entry : m_entries) {
-        const int lines = int(entry.text.count(QLatin1Char('\n'))) + 1;
+        int lineCount = int(entry.text.count(QLatin1Char('\n'))) + 1;
+        if (entry.text.endsWith(QLatin1Char('\n')))
+            --lineCount; // a trailing newline is not an extra line
         QVariantMap map;
         map.insert(QStringLiteral("text"), entry.text);
         map.insert(QStringLiteral("preview"), previewOf(entry.text));
         map.insert(QStringLiteral("chars"), int(entry.text.size()));
-        map.insert(QStringLiteral("lines"), lines);
+        map.insert(QStringLiteral("lines"), lineCount);
         map.insert(QStringLiteral("pinned"), entry.pinned);
         map.insert(QStringLiteral("when"), entry.when);
         list.append(map);
@@ -90,8 +92,14 @@ bool ClipboardHistory::isPrivate(const QMimeData *data) const
             return true;
         // "CanIncludeInClipboardHistory" carries a DWORD: 0 means keep it out.
         if (format.contains(QLatin1String("CanIncludeInClipboardHistory"), Qt::CaseInsensitive)) {
+            // Some apps send fewer than four bytes; read what is there
+            // little-endian and treat missing bytes as zero.
             const QByteArray value = data->data(format);
-            if (!value.isEmpty() && value.at(0) == 0)
+            quint32 dword = 0;
+            const int n = qMin<int>(4, value.size());
+            for (int i = 0; i < n; ++i)
+                dword |= quint32(quint8(value.at(i))) << (8 * i);
+            if (!value.isEmpty() && dword == 0)
                 return true;
         }
     }
@@ -118,6 +126,13 @@ void ClipboardHistory::record(const QString &text)
     if (it != m_entries.end()) {
         it->when = QDateTime::currentDateTime();
         if (!it->pinned) {
+            // Re-copying the newest unpinned entry (the usual echo of our own
+            // copy()) must not rebuild the whole list for no visible change.
+            int firstUnpinned = 0;
+            while (firstUnpinned < m_entries.size() && m_entries.at(firstUnpinned).pinned)
+                ++firstUnpinned;
+            if (it - m_entries.begin() == firstUnpinned)
+                return;
             const Entry moved = *it;
             m_entries.erase(it);
             m_entries.prepend(moved);
@@ -152,8 +167,21 @@ bool ClipboardHistory::copy(int index)
 {
     if (!m_clipboard || index < 0 || index >= m_entries.size())
         return false;
-    // setText fires dataChanged, which moves this entry to the top.
-    m_clipboard->setText(m_entries.at(index).text);
+    const Entry entry = m_entries.at(index);
+    // setText normally fires dataChanged and record() re-promotes the entry,
+    // but nothing guarantees that echo arrives unchanged, so move it up
+    // front and only let the echo be a no-op.
+    if (!entry.pinned) {
+        int firstUnpinned = 0;
+        while (firstUnpinned < m_entries.size() && m_entries.at(firstUnpinned).pinned)
+            ++firstUnpinned;
+        if (index != firstUnpinned) {
+            m_entries.removeAt(index);
+            m_entries.insert(firstUnpinned, entry);
+            emit itemsChanged();
+        }
+    }
+    m_clipboard->setText(entry.text);
     return true;
 }
 

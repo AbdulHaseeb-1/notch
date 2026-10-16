@@ -13,7 +13,12 @@ Item {
     implicitWidth: 200
     implicitHeight: 24
 
-    readonly property real ratio: Math.max(0, Math.min(1, (value - from) / (to - from)))
+    readonly property real targetRatio: Math.max(0, Math.min(1, (value - from) / Math.max(0.0001, to - from)))
+    property real ratio: targetRatio
+    Behavior on ratio {
+        enabled: !slider.dragging
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
     readonly property bool active: hit.containsMouse || hit.pressed
     readonly property bool dragging: hit.pressed
 
@@ -36,15 +41,15 @@ Item {
 
     Rectangle {
         id: knob
-        width: slider.active ? 18 : 14
+        width: slider.active ? 16 : 13
         height: width
         radius: width / 2
         anchors.verticalCenter: parent.verticalCenter
         x: slider.ratio * (slider.width - width)
         color: t.ink
-        border.width: hit.pressed ? 4 : 0
+        border.width: hit.pressed ? 3 : 0
         border.color: t.hairline
-        Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+        Behavior on width { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
     }
 
     MouseArea {

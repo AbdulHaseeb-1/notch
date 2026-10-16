@@ -16,21 +16,21 @@ Item {
     readonly property bool hovered: hover.hovered
     readonly property bool shown: opacity > 0.01
 
-    // 0 = away, 1 = in place (overshoots a little while opening).
+    // 0 = away, 1 = in place. Critically-damped motion so cards glide smoothly
+    // without oscillating or blurring text while settling.
     property real p: open ? 1 : 0
     Behavior on p {
-        SpringAnimation {
-            spring: fly.open ? 3.4 : 5.6
-            damping: fly.open ? 0.26 : 0.62
-            epsilon: 0.0005
+        NumberAnimation {
+            duration: fly.open ? 210 : 150
+            easing.type: fly.open ? Easing.OutQuint : Easing.InCubic
         }
     }
     readonly property real pc: Math.max(0, Math.min(1, p))
 
-    y: baseY - 16 * (1 - p)
-    opacity: Math.min(1, pc * 2.6)
-    scale: 0.9 + 0.1 * p
-    visible: opacity > 0.01
+    y: baseY - 10 * (1 - p)
+    opacity: Math.min(1, pc * 1.8)
+    scale: 0.95 + 0.05 * p
+    visible: opacity > 0.005
     transformOrigin: Item.Top
 
     HoverHandler { id: hover }
@@ -44,6 +44,6 @@ Item {
     Item {
         id: holder
         anchors.fill: parent
-        opacity: Math.max(0, Math.min(1, (fly.pc - 0.2) * 2))
+        opacity: Math.max(0, Math.min(1, (fly.pc - 0.05) * 1.35))
     }
 }

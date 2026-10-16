@@ -136,13 +136,6 @@ Item {
                         required property var modelData
                         width: linkText.implicitWidth + 16
                         height: 26
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 13
-                            color: t.raised
-                            opacity: linkHit.containsMouse ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 110 } }
-                        }
                         Text {
                             id: linkText
                             anchors.centerIn: parent
@@ -211,18 +204,6 @@ Item {
 
                 HoverHandler { id: rowHover; cursorShape: Qt.PointingHandCursor }
 
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.leftMargin: 8
-                    anchors.rightMargin: 8
-                    anchors.topMargin: 2
-                    anchors.bottomMargin: 2
-                    radius: 12
-                    color: rowTap.pressed ? t.press : t.hover
-                    opacity: row.hot ? 1 : 0
-                    Behavior on opacity { NumberAnimation { duration: 110 } }
-                }
-
                 Column {
                     anchors.left: parent.left
                     anchors.leftMargin: 20
@@ -290,6 +271,9 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
+                            // Hidden must mean unhittable: without this the
+                            // transparent action spots swallow clicks.
+                            enabled: parent.opacity > 0.5
                             onClicked: clipboard.togglePin(row.index)
                         }
                     }
@@ -310,6 +294,7 @@ Item {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
+                            enabled: parent.opacity > 0.5
                             onClicked: clipboard.remove(row.index)
                         }
                     }

@@ -11,15 +11,20 @@ Item {
 
     Theme { id: t }
 
-    readonly property bool running: timer.running
-    readonly property bool finished: timer.finished
+    // Null-safe flows (the timer is always wired today, but these mirror
+    // TimerPill so a mis-wire can never throw at paint time).
+    readonly property bool running: timer ? timer.running : false
+    readonly property bool finished: timer ? timer.finished : false
+    readonly property int timerMinutes: timer ? timer.minutes : 25
+    readonly property string timerLabel: timer ? timer.label : "--:--"
+    readonly property bool timerActive: timer ? timer.active : false
     readonly property real ringSize: 168
 
-    implicitWidth: 348
+    implicitWidth: 368
     implicitHeight: col.implicitHeight
 
     // Ring progress, smoothed between the timer's ticks.
-    property real shownRatio: timer.ratio
+    property real shownRatio: timer ? timer.ratio : 0
     Behavior on shownRatio { NumberAnimation { duration: 220; easing.type: Easing.Linear } }
 
     component RoundButton: Item {
@@ -33,16 +38,15 @@ Item {
         width: primary ? 64 : 44
         height: width
         opacity: enabled2 ? 1 : 0.35
-        scale: rbHit.pressed ? 0.9 : (rbHit.containsMouse ? 1.06 : 1)
-        Behavior on scale { SpringAnimation { spring: 6; damping: 0.32; epsilon: 0.0005 } }
+        scale: rbHit.pressed ? 0.92 : (rbHit.containsMouse ? 1.04 : 1)
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: rb.primary ? t.ink : (rbHit.containsMouse ? t.hover : t.raised)
+            color: rb.primary ? t.ink : t.raised
             border.width: rb.primary ? 0 : 1
             border.color: t.borderSoft
-            Behavior on color { ColorAnimation { duration: 140 } }
         }
         Glyph {
             anchors.centerIn: parent
@@ -107,7 +111,7 @@ Item {
                 spacing: 2
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: view.timer.label
+                    text: view.timerLabel
                     color: view.finished ? t.success : t.ink
                     font.family: t.font
                     font.pixelSize: 38
@@ -117,7 +121,7 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: view.finished ? qsTr("Session finished")
-                        : (view.running ? qsTr("Focusing") : (view.timer.active ? qsTr("Paused") : qsTr("Ready")))
+                        : (view.running ? qsTr("Focusing") : (view.timerActive ? qsTr("Paused") : qsTr("Ready")))
                     color: t.textDim
                     font.family: t.font
                     font.pixelSize: 12
@@ -134,7 +138,7 @@ Item {
             RoundButton {
                 anchors.verticalCenter: parent.verticalCenter
                 icon: "reset"
-                enabled2: view.timer.active
+                enabled2: view.timerActive
                 onClicked: view.timer.reset()
             }
             RoundButton {
@@ -148,8 +152,10 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 icon: "plus"
                 onClicked: {
-                    view.timer.setMinutes(view.timer.minutes + 5)
-                    view.toastRequested(qsTr("%1 min").arg(view.timer.minutes))
+                    if (!view.timer)
+                        return
+                    view.timer.setMinutes(view.timerMinutes + 5)
+                    view.toastRequested(qsTr("%1 min").arg(view.timerMinutes))
                 }
             }
         }
@@ -165,7 +171,7 @@ Item {
                 { label: "45", value: 45 },
                 { label: "60", value: 60 }
             ]
-            value: view.timer.minutes
+            value: view.timerMinutes
             onPicked: (v) => view.timer.setMinutes(v)
         }
 

@@ -1,7 +1,8 @@
 import QtQuick
 
-// Settings flyout under the notch. Two tabs (General / Apps), X-style tab
-// strip with a white indicator.
+// Settings flyout under the notch. Unified header with a segmented switcher
+// (General / Apps), grouped setting cards on the General tab, and a dedicated
+// "Pinned in Notch" + searchable "Add Apps" list on the Apps tab.
 Item {
     id: panel
 
@@ -19,6 +20,7 @@ Item {
 
     signal closeRequested()
     signal addRequested()
+    signal pinAppRequested(string name, string path)
     signal resetRequested()
     signal quitRequested()
     signal unpinRequested(int index)
@@ -26,32 +28,107 @@ Item {
     signal startupToggled(bool enabled)
     signal themeToggled(bool light)
     signal blurToggled(bool on)
-    signal launchRequested(int index)
 
     Theme { id: t }
 
     property int tab: 0
+    property string appFilter: ""
+    property var availableList: []
 
-    implicitWidth: 348
-    implicitHeight: body.implicitHeight
+    readonly property real headerH: 58
+    readonly property real footerH: 46
+
+    implicitWidth: 388
+    implicitHeight: headerH + 1 + content.height + 1 + footerH
     // Where the card is heading, for the click-through mask (the animated
     // height would rebuild the window mask on every frame).
-    readonly property real naturalBodyHeight: tab === 0 ? general.implicitHeight : apps.implicitHeight
-    readonly property real targetHeight: 56 + 44 + Math.min(naturalBodyHeight, maxBodyHeight) + 1 + 50
+    readonly property real naturalBodyHeight: tab === 0 ? general.implicitHeight : appsCol.implicitHeight
+    readonly property real targetBodyHeight: Math.min(naturalBodyHeight, maxBodyHeight)
+    readonly property real targetHeight: headerH + 1 + targetBodyHeight + 1 + footerH
 
-    // ---------- reusable rows
-    component SectionLabel: Text {
-        readonly property Theme t: Theme {}
-        color: t.textDim
-        font.family: t.font
-        font.pixelSize: 12
-        font.weight: Font.DemiBold
-        font.letterSpacing: 0.2
+    function refreshAvailableApps() {
+        const raw = search.availableApps(panel.appFilter)
+        const filtered = []
+        for (let i = 0; i < raw.length; ++i) {
+            const item = raw[i]
+            if (!dock.isPinned(item.path || "", item.exe || ""))
+                filtered.push(item)
+        }
+        panel.availableList = filtered
+    }
+
+    onDockModelChanged: refreshAvailableApps()
+    onRunningListChanged: if (panel.visible) refreshAvailableApps()
+    onAppFilterChanged: refreshAvailableApps()
+    onTabChanged: if (tab === 1) refreshAvailableApps()
+    Component.onCompleted: refreshAvailableApps()
+
+    // The Start Menu index lands asynchronously now; refresh when it does.
+    Connections {
+        target: search
+        function onIndexReady() {
+            if (panel.visible)
+                panel.refreshAvailableApps()
+        }
+    }
+
+    // ---------- reusable components
+    component SectionHeader: Item {
+        property string title
+        property string rightText: ""
+        width: parent ? parent.width : 300
+        height: 20
+
+        Text {
+            anchors.left: parent.left
+            anchors.leftMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            text: parent.title.toUpperCase()
+            color: t.textDim
+            font.family: t.font
+            font.pixelSize: 11
+            font.weight: Font.Bold
+            font.letterSpacing: 0.8
+        }
+        Text {
+            visible: parent.rightText.length > 0
+            anchors.right: parent.right
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            text: parent.rightText
+            color: t.textFaint
+            font.family: t.font
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+        }
+    }
+
+    component GroupCard: Rectangle {
+        default property alias cardContent: innerCol.data
+        width: parent ? parent.width : 340
+        implicitHeight: innerCol.implicitHeight + 20
+        radius: 14
+        color: t.raised
+        border.width: 1
+        border.color: t.borderSoft
+
+        Column {
+            id: innerCol
+            x: 14
+            y: 10
+            width: parent.width - 28
+            spacing: 8
+        }
+    }
+
+    component CardDivider: Rectangle {
+        width: parent ? parent.width : 300
+        height: 1
+        color: t.borderSoft
     }
 
     component ToggleRow: Item {
         id: tr
-        Theme { id: t }
         property string label
         property string sub
         property bool checked
@@ -59,12 +136,13 @@ Item {
         signal toggled(bool checked)
 
         width: parent ? parent.width : 300
-        implicitHeight: sub.length > 0 ? 58 : 42
+        implicitHeight: Math.max(36, textCol.implicitHeight + 6)
 
         Column {
+            id: textCol
             anchors.left: parent.left
             anchors.right: sw.left
-            anchors.rightMargin: 16
+            anchors.rightMargin: 14
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
             opacity: tr.enabled2 ? 1 : 0.45
@@ -73,7 +151,7 @@ Item {
                 text: tr.label
                 color: t.text
                 font.family: t.font
-                font.pixelSize: 14
+                font.pixelSize: 13
                 font.weight: Font.DemiBold
             }
             Text {
@@ -82,9 +160,9 @@ Item {
                 text: tr.sub
                 color: t.textDim
                 font.family: t.font
-                font.pixelSize: 12
+                font.pixelSize: 11
                 wrapMode: Text.WordWrap
-                lineHeight: 1.1
+                lineHeight: 1.12
             }
         }
 
@@ -100,27 +178,21 @@ Item {
 
     component IconButton: Item {
         id: ib
-        Theme { id: t }
         property string icon
-        property real glyphSize: 15
+        property real glyphSize: 14
         property bool danger: false
         signal clicked()
-        width: 28
-        height: 28
+        width: 26
+        height: 26
 
-        Rectangle {
-            anchors.fill: parent
-            radius: width / 2
-            color: ib.danger ? t.dangerSoft : t.hover
-            opacity: ibHit.containsMouse ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 120 } }
-        }
         Glyph {
             anchors.centerIn: parent
             name: ib.icon
             size: ib.glyphSize
             color: ib.danger && ibHit.containsMouse ? t.danger
                  : ibHit.containsMouse ? t.ink : t.textDim
+            scale: ibHit.pressed ? 0.86 : 1
+            Behavior on scale { NumberAnimation { duration: 100 } }
         }
         MouseArea {
             id: ibHit
@@ -131,423 +203,444 @@ Item {
         }
     }
 
-    component PillButton: Item {
-        id: pb
-        Theme { id: t }
+    component SmallPillButton: Item {
+        id: spb
         property string label
-        property string icon
+        property string icon: ""
         property bool primary: false
+        property bool danger: false
         signal clicked()
-        implicitWidth: pbRow.implicitWidth + 32
-        implicitHeight: 36
+        implicitWidth: spbRow.implicitWidth + 20
+        implicitHeight: 28
 
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: pb.primary ? (pbHit.containsMouse ? t.inkSoft : t.ink)
-                              : (pbHit.containsMouse ? t.raised : "transparent")
-            border.width: pb.primary ? 0 : 1
-            border.color: t.border
-            scale: pbHit.pressed ? 0.96 : 1
-            Behavior on color { ColorAnimation { duration: 120 } }
-            Behavior on scale { NumberAnimation { duration: 120 } }
+            color: spb.primary ? t.ink
+                 : spb.danger ? "transparent"
+                 : t.raised
+            border.width: spb.primary ? 0 : 1
+            border.color: spb.danger && spbHit.containsMouse ? t.danger : t.border
+            scale: spbHit.pressed ? 0.95 : 1
+            Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
         }
         Row {
-            id: pbRow
+            id: spbRow
             anchors.centerIn: parent
-            spacing: 6
+            spacing: 5
             Glyph {
-                visible: pb.icon.length > 0
+                visible: spb.icon.length > 0
                 anchors.verticalCenter: parent.verticalCenter
-                name: pb.icon
-                size: 15
+                name: spb.icon
+                size: 12
                 stroke: 2.1
-                color: pb.primary ? t.inverse : t.text
+                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.text)
             }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: pb.label
-                color: pb.primary ? t.inverse : t.text
+                text: spb.label
+                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.text)
                 font.family: t.font
-                font.pixelSize: 14
+                font.pixelSize: 12
                 font.weight: Font.Bold
             }
         }
         MouseArea {
-            id: pbHit
+            id: spbHit
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: pb.clicked()
+            onClicked: spb.clicked()
         }
     }
 
-    // ---------- layout
-    Column {
-        id: body
+    // ---------- header (matches HubPanel structure)
+    Item {
+        id: header
         width: parent.width
+        height: panel.headerH
 
-        // Header
-        Item {
-            width: parent.width
-            height: 56
-
-            Row {
-                anchors.left: parent.left
-                anchors.leftMargin: 20
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 8
-
-                Text {
-                    text: "Noch"
-                    color: t.ink
-                    font.family: t.font
-                    font.pixelSize: 19
-                    font.weight: Font.ExtraBold
-                }
-                Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: verText.implicitWidth + 12
-                    height: 20
-                    radius: 10
-                    color: t.raised
-                    border.width: 1
-                    border.color: t.borderSoft
-                    Text {
-                        id: verText
-                        anchors.centerIn: parent
-                        text: "v" + panel.version
-                        color: t.textDim
-                        font.family: t.font
-                        font.pixelSize: 11
-                        font.weight: Font.DemiBold
-                    }
-                }
-            }
-
-            IconButton {
-                anchors.right: parent.right
-                anchors.rightMargin: 12
-                anchors.verticalCenter: parent.verticalCenter
-                icon: "close"
-                onClicked: panel.closeRequested()
-            }
+        Segmented {
+            anchors.left: parent.left
+            anchors.leftMargin: 16
+            anchors.right: closeBtn.left
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            height: 34
+            options: [
+                { label: qsTr("General"), value: 0 },
+                { label: qsTr("Apps (%1)").arg(panel.dockModel.length), value: 1 }
+            ]
+            value: panel.tab
+            onPicked: (v) => panel.tab = v
         }
 
-        // Tabs
-        Item {
-            width: parent.width
-            height: 44
-
-            Row {
-                id: tabRow
-                anchors.fill: parent
-                Repeater {
-                    model: ["General", "Apps"]
-                    delegate: Item {
-                        id: tabCell
-                        required property int index
-                        required property string modelData
-                        width: tabRow.width / 2
-                        height: tabRow.height
-                        readonly property bool current: panel.tab === index
-
-                        Rectangle {
-                            anchors.fill: parent
-                            color: t.ink
-                            opacity: tabHit.containsMouse && !tabCell.current ? 0.03 : 0
-                        }
-                        Text {
-                            id: tabLabel
-                            anchors.centerIn: parent
-                            text: tabCell.modelData + (tabCell.index === 1 ? "  " + panel.dockModel.length : "")
-                            color: tabCell.current ? t.text : t.textDim
-                            font.family: t.font
-                            font.pixelSize: 14
-                            font.weight: tabCell.current ? Font.Bold : Font.Medium
-                        }
-                        MouseArea {
-                            id: tabHit
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: panel.tab = tabCell.index
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: t.border
-            }
-
-            Rectangle {
-                id: indicator
-                anchors.bottom: parent.bottom
-                height: 4
-                radius: 2
-                width: 56
-                color: t.ink
-                x: panel.tab * (parent.width / 2) + (parent.width / 2 - width) / 2
-                Behavior on x { SpringAnimation { spring: 5.5; damping: 0.42; epsilon: 0.2 } }
-            }
+        IconButton {
+            id: closeBtn
+            anchors.right: parent.right
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            width: 28
+            height: 28
+            icon: "close"
+            glyphSize: 15
+            onClicked: panel.closeRequested()
         }
+    }
 
-        // Tab content
-        Item {
-            id: content
-            width: parent.width
-            height: Math.min(panel.naturalBodyHeight, panel.maxBodyHeight)
+    Rectangle {
+        id: topRule
+        anchors.top: header.bottom
+        width: parent.width
+        height: 1
+        color: t.borderSoft
+    }
+
+    // ---------- body
+    Item {
+        id: content
+        anchors.top: topRule.bottom
+        width: parent.width
+        height: panel.targetBodyHeight
+        clip: true
+        Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+
+        // ---- Tab 0: General
+        Flickable {
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: general.implicitHeight
+            interactive: contentHeight > height + 1
+            boundsBehavior: Flickable.StopAtBounds
+            flickDeceleration: 3500
             clip: true
-            Behavior on height { SpringAnimation { spring: 4.2; damping: 0.5; epsilon: 0.3 } }
-
-            // ---- General (scrolls when the screen is too short for it)
-            Flickable {
-                anchors.fill: parent
-                contentWidth: width
-                contentHeight: general.implicitHeight
-                interactive: contentHeight > height + 1
-                boundsBehavior: Flickable.StopAtBounds
-                clip: true
-                visible: panel.tab === 0 || general.opacity > 0
+            visible: panel.tab === 0 || general.opacity > 0.01
+            // The active tab fades in above the one fading out; without this
+            // the apps tab stayed drawn on top during the fade back.
+            z: panel.tab === 0 ? 1 : 0
 
             Column {
                 id: general
-                x: 20 - (panel.tab === 0 ? 0 : 24)
-                width: content.width - 40
-                topPadding: 16
-                bottomPadding: 8
-                spacing: 6
+                x: 18 - (panel.tab === 0 ? 0 : 18)
+                width: content.width - 36
+                topPadding: 14
+                bottomPadding: 14
+                spacing: 10
                 opacity: panel.tab === 0 ? 1 : 0
-                visible: opacity > 0
-                Behavior on opacity { NumberAnimation { duration: 180 } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                enabled: panel.tab === 0
+                Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
-                Item {
-                    width: parent.width
-                    height: 22
-                    SectionLabel { text: "Size"; anchors.verticalCenter: parent.verticalCenter }
-                    Text {
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: Math.round(panel.prefs.sizeScale * 100) + "%"
-                        color: t.text
-                        font.family: t.font
-                        font.pixelSize: 12
-                        font.weight: Font.Bold
-                    }
+                SectionHeader {
+                    title: qsTr("Size & Scale")
+                    rightText: Math.round(panel.prefs.sizeScale * 100) + "%"
                 }
 
-                Segmented {
-                    width: parent.width
-                    options: [
-                        { label: "S", value: 0.8 },
-                        { label: "M", value: 1.0 },
-                        { label: "L", value: 1.2 },
-                        { label: "XL", value: 1.4 }
-                    ]
-                    value: panel.prefs.sizeScale
-                    onPicked: (v) => panel.prefs.sizeScale = v
-                }
-
-                SizeSlider {
-                    width: parent.width
-                    from: 0.7
-                    to: 1.6
-                    value: panel.prefs.sizeScale
-                    onMoved: (v) => panel.prefs.sizeScale = Math.round(v * 100) / 100
-                }
-
-                Text {
-                    width: parent.width
-                    text: "Tip: drag the handle under the notch, or Ctrl + scroll on it."
-                    color: t.textFaint
-                    font.family: t.font
-                    font.pixelSize: 11
-                    wrapMode: Text.WordWrap
-                    bottomPadding: 6
-                }
-
-                Rectangle { width: parent.width; height: 1; color: t.borderSoft }
-
-                ToggleRow {
-                    label: "Auto-hide"
-                    sub: "Slides up and leaves a 5% edge. Hover the top of the screen to pull it back."
-                    checked: panel.prefs.autoHide
-                    onToggled: (c) => panel.prefs.autoHide = c
-                }
-
-                Item {
-                    width: parent.width
-                    height: 34
-                    opacity: panel.prefs.autoHide ? 1 : 0.4
-                    enabled: panel.prefs.autoHide
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Hide after"
-                        color: t.text
-                        font.family: t.font
-                        font.pixelSize: 13
-                        font.weight: Font.Medium
-                    }
+                GroupCard {
                     Segmented {
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 196
+                        width: parent.width
                         height: 30
                         options: [
-                            { label: "0.3s", value: 300 },
-                            { label: "0.8s", value: 800 },
-                            { label: "1.5s", value: 1500 },
-                            { label: "3s", value: 3000 }
+                            { label: "S", value: 0.8 },
+                            { label: "M", value: 1.0 },
+                            { label: "L", value: 1.2 },
+                            { label: "XL", value: 1.4 }
                         ]
-                        value: panel.prefs.hideDelay
-                        onPicked: (v) => panel.prefs.hideDelay = v
+                        value: panel.prefs.sizeScale
+                        onPicked: (v) => panel.prefs.sizeScale = v
+                    }
+
+                    SizeSlider {
+                        width: parent.width
+                        from: 0.7
+                        to: 1.6
+                        value: panel.prefs.sizeScale
+                        onMoved: (v) => panel.prefs.sizeScale = Math.round(v * 100) / 100
+                    }
+
+                    Text {
+                        width: parent.width
+                        text: qsTr("Drag the handle below the notch or Ctrl + scroll on it.")
+                        color: t.textFaint
+                        font.family: t.font
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
                     }
                 }
 
-                Item { width: 1; height: 4 }
-                Rectangle { width: parent.width; height: 1; color: t.borderSoft }
+                SectionHeader { title: qsTr("Appearance & Bar") }
 
-                ToggleRow {
-                    label: "Black & white icons"
-                    checked: panel.prefs.monoIcons
-                    onToggled: (c) => panel.prefs.monoIcons = c
+                GroupCard {
+                    ToggleRow {
+                        label: qsTr("Light theme")
+                        sub: qsTr("Pale frosted glass instead of dark glass.")
+                        checked: panel.lightTheme
+                        onToggled: (c) => panel.themeToggled(c)
+                    }
+                    CardDivider {}
+                    ToggleRow {
+                        label: qsTr("Monochrome icons")
+                        sub: qsTr("Render dock icons in high-contrast monochrome.")
+                        checked: panel.prefs.monoIcons
+                        onToggled: (c) => panel.prefs.monoIcons = c
+                    }
+                    CardDivider { visible: panel.blurSupported }
+                    ToggleRow {
+                        visible: panel.blurSupported
+                        label: qsTr("Blur behind (beta)")
+                        sub: qsTr("Real desktop blur behind the glass surface.")
+                        checked: panel.blurBehind
+                        onToggled: (c) => panel.blurToggled(c)
+                    }
+                    CardDivider {}
+                    ToggleRow {
+                        label: qsTr("Show clock")
+                        checked: panel.prefs.showClock
+                        onToggled: (c) => panel.prefs.showClock = c
+                    }
+                    CardDivider {}
+                    ToggleRow {
+                        label: qsTr("System stats")
+                        sub: qsTr("Show live CPU, RAM and battery next to the clock.")
+                        checked: panel.prefs.showStats
+                        onToggled: (c) => panel.prefs.showStats = c
+                    }
                 }
-                ToggleRow {
-                    label: "Light theme"
-                    sub: "Pale glass instead of black. Changes everything at once."
-                    checked: panel.lightTheme
-                    onToggled: (c) => panel.themeToggled(c)
-                }
-                ToggleRow {
-                    visible: panel.blurSupported
-                    label: "Blur behind (beta)"
-                    sub: "Blurs the desktop behind the glass. If anything looks off, turn it back off."
-                    checked: panel.blurBehind
-                    onToggled: (c) => panel.blurToggled(c)
-                }
-                ToggleRow {
-                    label: "Show clock"
-                    checked: panel.prefs.showClock
-                    onToggled: (c) => panel.prefs.showClock = c
-                }
-                ToggleRow {
-                    label: "System stats"
-                    sub: "CPU, memory and battery beside the clock. Click them for the full monitor."
-                    checked: panel.prefs.showStats
-                    onToggled: (c) => panel.prefs.showStats = c
-                }
-                ToggleRow {
-                    visible: panel.startupSupported
-                    label: "Launch at startup"
-                    checked: panel.launchAtStartup
-                    onToggled: (c) => panel.startupToggled(c)
+
+                SectionHeader { title: qsTr("Behavior & System") }
+
+                GroupCard {
+                    ToggleRow {
+                        label: qsTr("Auto-hide notch")
+                        sub: qsTr("Tucks into the top edge; hover the top of the screen to reveal.")
+                        checked: panel.prefs.autoHide
+                        onToggled: (c) => panel.prefs.autoHide = c
+                    }
+
+                    Item {
+                        visible: panel.prefs.autoHide
+                        width: parent.width
+                        height: 30
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Hide delay")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                        }
+                        Segmented {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 232
+                            height: 28
+                            options: [
+                                { label: "0.3s", value: 300 },
+                                { label: "0.8s", value: 800 },
+                                { label: "1.2s", value: 1200 },
+                                { label: "1.5s", value: 1500 },
+                                { label: "3s", value: 3000 }
+                            ]
+                            value: panel.prefs.hideDelay
+                            onPicked: (v) => panel.prefs.hideDelay = v
+                        }
+                    }
+
+                    CardDivider {}
+                    ToggleRow {
+                        label: qsTr("Quiet in fullscreen")
+                        sub: qsTr("Ignore top-edge hover while a game or fullscreen video is active.")
+                        checked: panel.prefs.suppressInFullscreen
+                        onToggled: (c) => panel.prefs.suppressInFullscreen = c
+                    }
+                    CardDivider {}
+                    ToggleRow {
+                        label: qsTr("Desktop buddy")
+                        sub: qsTr("A little helper on a rope at the top edge. Click it for plans, demo charts and research notes.")
+                        checked: panel.prefs.buddyEnabled
+                        onToggled: (c) => panel.prefs.buddyEnabled = c
+                    }
+                    CardDivider {}
+                    ToggleRow {
+                        label: qsTr("Command palette hotkey")
+                        sub: !panel.prefs.hotkeyPalette
+                             ? qsTr("Off. Ctrl + Alt + Space summons search from anywhere.")
+                             : (!hotkey.registered
+                                ? qsTr("Shortcut unavailable on this PC.")
+                                : (hotkey.preferred
+                                   ? qsTr("Press Ctrl + Alt + Space anywhere to search.")
+                                   : qsTr("Active on %1.").arg(hotkey.shortcut)))
+                        checked: panel.prefs.hotkeyPalette
+                        onToggled: (c) => panel.prefs.hotkeyPalette = c
+                    }
+                    CardDivider { visible: panel.startupSupported }
+                    ToggleRow {
+                        visible: panel.startupSupported
+                        label: qsTr("Launch at startup")
+                        checked: panel.launchAtStartup
+                        onToggled: (c) => panel.startupToggled(c)
+                    }
                 }
             }
-            }
+        }
 
-            // ---- Apps
+        // ---- Tab 1: Apps (Pinned in Notch + List of Installed Apps to Add)
+        Flickable {
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: appsCol.implicitHeight
+            interactive: contentHeight > height + 1
+            boundsBehavior: Flickable.StopAtBounds
+            clip: true
+            visible: panel.tab === 1 || appsCol.opacity > 0.01
+            z: panel.tab === 1 ? 1 : 0
+
             Column {
-                id: apps
-                x: 20 + (panel.tab === 1 ? 0 : 24)
-                width: parent.width - 40
-                topPadding: 12
-                bottomPadding: 12
-                spacing: 12
+                id: appsCol
+                x: 18 + (panel.tab === 1 ? 0 : 18)
+                width: content.width - 36
+                topPadding: 14
+                bottomPadding: 14
+                spacing: 10
                 opacity: panel.tab === 1 ? 1 : 0
-                visible: opacity > 0
-                Behavior on opacity { NumberAnimation { duration: 180 } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                enabled: panel.tab === 1
+                Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
-                ListView {
-                    id: appList
+                // ── Section 1: Pinned in Notch ──────────────────────────────
+                Item {
                     width: parent.width
-                    height: Math.min(contentHeight, 6 * 44)
+                    height: 26
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 4
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: qsTr("PINNED IN NOTCH (%1)").arg(panel.dockModel.length)
+                        color: t.textDim
+                        font.family: t.font
+                        font.pixelSize: 11
+                        font.weight: Font.Bold
+                        font.letterSpacing: 0.8
+                    }
+
+                    Row {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+
+                        SmallPillButton {
+                            icon: "reset"
+                            label: qsTr("Defaults")
+                            onClicked: panel.resetRequested()
+                        }
+                        SmallPillButton {
+                            icon: "folder"
+                            label: qsTr("Browse…")
+                            onClicked: panel.addRequested()
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: panel.dockModel.length === 0 ? 52 : Math.min(pinnedList.contentHeight, 4 * 40) + 8
+                    radius: 14
+                    color: t.raised
+                    border.width: 1
+                    border.color: t.borderSoft
                     clip: true
-                    interactive: contentHeight > height
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: panel.dockModel
-                    spacing: 0
+                    Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
-                    displaced: Transition { NumberAnimation { properties: "y"; duration: 200; easing.type: Easing.OutCubic } }
+                    Text {
+                        visible: panel.dockModel.length === 0
+                        anchors.centerIn: parent
+                        text: qsTr("No apps pinned — click + Add below to pin apps")
+                        color: t.textDim
+                        font.family: t.font
+                        font.pixelSize: 12
+                    }
 
-                    delegate: Item {
-                        id: appRow
-                        required property int index
-                        required property var modelData
-                        width: appList.width
-                        height: 44
+                    ListView {
+                        id: pinnedList
+                        visible: panel.dockModel.length > 0
+                        x: 6
+                        y: 4
+                        width: parent.width - 12
+                        height: parent.height - 8
+                        clip: true
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: panel.dockModel
+                        spacing: 0
 
-                        readonly property bool isRunning: panel.runningList.indexOf(modelData.exe) >= 0
-
-                        HoverHandler { id: rowHover }
-
-                        Rectangle {
-                            anchors.fill: parent
-                            anchors.leftMargin: -8
-                            anchors.rightMargin: -8
-                            radius: 12
-                            color: t.raised
-                            opacity: rowHover.hovered ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 110 } }
+                        displaced: Transition {
+                            NumberAnimation { properties: "y"; duration: 180; easing.type: Easing.OutCubic }
                         }
 
-                        Item {
-                            id: rowIcon
-                            width: 24
-                            height: 24
-                            anchors.verticalCenter: parent.verticalCenter
+                        delegate: Item {
+                            id: appRow
+                            required property int index
+                            required property var modelData
+                            width: pinnedList.width
+                            height: 40
 
-                            Image {
-                                id: rowImg
-                                anchors.fill: parent
-                                source: appRow.modelData.iconId
-                                        ? "image://appicon/" + (panel.prefs.monoIcons ? t.iconMono : "color") + "/" + appRow.modelData.iconId
-                                        : ""
-                                sourceSize: Qt.size(128, 128)
-                                mipmap: true
-                                smooth: true
-                                fillMode: Image.PreserveAspectFit
-                                visible: status === Image.Ready
-                            }
-                            Rectangle {
-                                anchors.fill: parent
-                                visible: rowImg.status !== Image.Ready
-                                radius: 7
-                                color: t.raised
-                                border.width: 1
-                                border.color: t.border
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: (appRow.modelData.name || "?").charAt(0).toUpperCase()
-                                    color: t.text
-                                    font.family: t.font
-                                    font.pixelSize: 12
-                                    font.weight: Font.Bold
+                            readonly property bool isRunning: panel.runningList.indexOf(modelData.exe) >= 0
+
+                            HoverHandler { id: rowHover }
+
+                            Item {
+                                id: rowIcon
+                                x: 10
+                                width: 22
+                                height: 22
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Image {
+                                    id: rowImg
+                                    anchors.fill: parent
+                                    source: appRow.modelData.iconId
+                                            ? "image://appicon/" + (panel.prefs.monoIcons ? t.iconMono : "color") + "/" + appRow.modelData.iconId
+                                            : ""
+                                    sourceSize: Qt.size(96, 96)
+                                    mipmap: true
+                                    smooth: true
+                                    fillMode: Image.PreserveAspectFit
+                                    visible: status === Image.Ready
+                                }
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: rowImg.status !== Image.Ready
+                                    radius: 6
+                                    color: t.raised
+                                    border.width: 1
+                                    border.color: t.border
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: (appRow.modelData.name || "?").charAt(0).toUpperCase()
+                                        color: t.text
+                                        font.family: t.font
+                                        font.pixelSize: 11
+                                        font.weight: Font.Bold
+                                    }
                                 }
                             }
-                        }
-
-                        Column {
-                            anchors.left: rowIcon.right
-                            anchors.leftMargin: 12
-                            anchors.right: rowActions.left
-                            anchors.rightMargin: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 1
 
                             Row {
+                                anchors.left: rowIcon.right
+                                anchors.leftMargin: 10
+                                anchors.right: rowActions.left
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
                                 spacing: 6
+
                                 Text {
                                     text: appRow.modelData.name
                                     color: t.text
+                                    elide: Text.ElideRight
                                     font.family: t.font
-                                    font.pixelSize: 14
-                                    font.weight: Font.Bold
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
                                 }
                                 Rectangle {
                                     visible: appRow.isRunning
@@ -555,100 +648,315 @@ Item {
                                     width: 6
                                     height: 6
                                     radius: 3
-                                    color: t.ink
+                                    color: t.success
                                 }
                             }
-                            Text {
-                                width: parent.width
-                                text: appRow.modelData.exists === false && appRow.modelData.path
-                                      ? "Missing - " + appRow.modelData.path
-                                      : (appRow.modelData.path || "Not installed")
-                                color: appRow.modelData.exists === false && appRow.modelData.path ? t.danger : t.textDim
-                                elide: Text.ElideMiddle
-                                font.family: t.font
-                                font.pixelSize: 11
-                            }
-                        }
 
-                        Row {
-                            id: rowActions
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 0
-                            opacity: rowHover.hovered ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: 110 } }
+                            Row {
+                                id: rowActions
+                                anchors.right: parent.right
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 2
+                                opacity: rowHover.hovered ? 1 : 0.55
+                                Behavior on opacity { NumberAnimation { duration: 110 } }
 
-                            IconButton {
-                                icon: "left"
-                                visible: appRow.index > 0
-                                onClicked: panel.moveRequested(appRow.index, appRow.index - 1)
-                            }
-                            IconButton {
-                                icon: "right"
-                                visible: appRow.index < panel.dockModel.length - 1
-                                onClicked: panel.moveRequested(appRow.index, appRow.index + 1)
-                            }
-                            IconButton {
-                                icon: "close"
-                                danger: true
-                                onClicked: panel.unpinRequested(appRow.index)
+                                IconButton {
+                                    icon: "up"
+                                    glyphSize: 13
+                                    visible: appRow.index > 0
+                                    onClicked: panel.moveRequested(appRow.index, appRow.index - 1)
+                                }
+                                IconButton {
+                                    icon: "down"
+                                    glyphSize: 13
+                                    visible: appRow.index < panel.dockModel.length - 1
+                                    onClicked: panel.moveRequested(appRow.index, appRow.index + 1)
+                                }
+                                IconButton {
+                                    icon: "close"
+                                    glyphSize: 13
+                                    danger: true
+                                    onClicked: panel.unpinRequested(appRow.index)
+                                }
                             }
                         }
                     }
                 }
 
-                Text {
-                    visible: panel.dockModel.length === 0
+                // ── Section 2: Installed Apps List to Add ───────────────────
+                SectionHeader {
+                    title: qsTr("Add Apps")
+                    rightText: qsTr("%1 available").arg(panel.availableList.length)
+                }
+
+                // Search / Filter bar for installed apps
+                Rectangle {
                     width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    topPadding: 18
-                    bottomPadding: 6
-                    text: "No apps pinned yet."
+                    height: 36
+                    radius: 11
+                    color: t.raised
+                    border.width: 1
+                    border.color: filterInput.activeFocus ? t.borderStrong : t.borderSoft
+                    Behavior on border.color { ColorAnimation { duration: 130 } }
+
+                    Glyph {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "search"
+                        size: 14
+                        stroke: 2
+                        color: filterInput.activeFocus ? t.ink : t.textDim
+                    }
+
+                    TextInput {
+                        id: filterInput
+                        anchors.left: parent.left
+                        anchors.leftMargin: 34
+                        anchors.right: clearFilterBtn.visible ? clearFilterBtn.left : parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: t.ink
+                        selectionColor: t.ink
+                        selectedTextColor: t.inverse
+                        font.family: t.font
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                        clip: true
+                        selectByMouse: true
+                        onTextChanged: panel.appFilter = text
+
+                        Text {
+                            anchors.fill: parent
+                            visible: filterInput.text.length === 0
+                            verticalAlignment: TextInput.AlignVCenter
+                            text: qsTr("Search installed apps to add…")
+                            color: t.textFaint
+                            font: filterInput.font
+                        }
+                    }
+
+                    IconButton {
+                        id: clearFilterBtn
+                        visible: filterInput.text.length > 0
+                        anchors.right: parent.right
+                        anchors.rightMargin: 5
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 24
+                        height: 24
+                        icon: "close"
+                        glyphSize: 11
+                        onClicked: {
+                            filterInput.text = ""
+                            filterInput.forceActiveFocus()
+                        }
+                    }
+                }
+
+                // Scrollable list of installed apps ready to add
+                Rectangle {
+                    width: parent.width
+                    height: panel.availableList.length === 0 ? 64 : Math.min(addList.contentHeight + 8, 5 * 44 + 8)
+                    radius: 14
+                    color: t.raised
+                    border.width: 1
+                    border.color: t.borderSoft
+                    clip: true
+                    Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+                    Text {
+                        visible: panel.availableList.length === 0
+                        anchors.centerIn: parent
+                        text: filterInput.text.length > 0
+                              ? qsTr("No matching unpinned apps found")
+                              : qsTr("All detected apps are already pinned")
+                        color: t.textDim
+                        font.family: t.font
+                        font.pixelSize: 12
+                    }
+
+                    ListView {
+                        id: addList
+                        visible: panel.availableList.length > 0
+                        x: 6
+                        y: 4
+                        width: parent.width - 12
+                        height: parent.height - 8
+                        clip: true
+                        interactive: contentHeight > height
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: panel.availableList
+                        spacing: 2
+
+                        displaced: Transition {
+                            NumberAnimation { properties: "y"; duration: 180; easing.type: Easing.OutCubic }
+                        }
+
+                        delegate: Item {
+                            id: candRow
+                            required property int index
+                            required property var modelData
+                            width: addList.width
+                            height: 42
+
+                            HoverHandler { id: candHover }
+
+                            Item {
+                                id: candIcon
+                                x: 10
+                                width: 24
+                                height: 24
+                                anchors.verticalCenter: parent.verticalCenter
+
+                                Image {
+                                    id: candImg
+                                    anchors.fill: parent
+                                    source: candRow.modelData.iconId
+                                            ? "image://appicon/color/" + candRow.modelData.iconId
+                                            : ""
+                                    sourceSize: Qt.size(96, 96)
+                                    mipmap: true
+                                    smooth: true
+                                    fillMode: Image.PreserveAspectFit
+                                    visible: status === Image.Ready
+                                }
+                                Rectangle {
+                                    anchors.fill: parent
+                                    visible: candImg.status !== Image.Ready
+                                    radius: 7
+                                    color: t.raised
+                                    border.width: 1
+                                    border.color: t.border
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: (candRow.modelData.name || "?").charAt(0).toUpperCase()
+                                        color: t.text
+                                        font.family: t.font
+                                        font.pixelSize: 11
+                                        font.weight: Font.Bold
+                                    }
+                                }
+                            }
+
+                            Text {
+                                anchors.left: candIcon.right
+                                anchors.leftMargin: 10
+                                anchors.right: addPill.left
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: candRow.modelData.name
+                                color: t.text
+                                elide: Text.ElideRight
+                                font.family: t.font
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                            }
+
+                            Rectangle {
+                                id: addPill
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: addPillRow.implicitWidth + 16
+                                height: 26
+                                radius: 13
+                                color: t.tile
+                                border.width: 1
+                                border.color: candHover.hovered ? t.borderStrong : t.border
+                                scale: candTap.pressed ? 0.94 : 1
+                                Behavior on scale { NumberAnimation { duration: 100 } }
+
+                                Row {
+                                    id: addPillRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    Glyph {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        name: "plus"
+                                        size: 11
+                                        stroke: 2.2
+                                        color: t.ink
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: qsTr("Add")
+                                        color: t.ink
+                                        font.family: t.font
+                                        font.pixelSize: 12
+                                        font.weight: Font.Bold
+                                    }
+                                }
+                            }
+
+                            TapHandler {
+                                id: candTap
+                                gesturePolicy: TapHandler.ReleaseWithinBounds
+                                onTapped: panel.pinAppRequested(candRow.modelData.name, candRow.modelData.path)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: bottomRule
+        anchors.top: content.bottom
+        width: parent.width
+        height: 1
+        color: t.borderSoft
+    }
+
+    // ---------- footer
+    Item {
+        id: footer
+        anchors.top: bottomRule.bottom
+        width: parent.width
+        height: panel.footerH
+
+        Row {
+            anchors.left: parent.left
+            anchors.leftMargin: 18
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 7
+
+            Text {
+                text: "Noch"
+                color: t.text
+                font.family: t.font
+                font.pixelSize: 13
+                font.weight: Font.ExtraBold
+            }
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: verText.implicitWidth + 10
+                height: 18
+                radius: 9
+                color: t.raised
+                border.width: 1
+                border.color: t.borderSoft
+                Text {
+                    id: verText
+                    anchors.centerIn: parent
+                    text: "v" + panel.version
                     color: t.textDim
                     font.family: t.font
-                    font.pixelSize: 13
-                }
-
-                Row {
-                    spacing: 8
-                    PillButton {
-                        primary: true
-                        icon: "plus"
-                        label: "Add app"
-                        onClicked: panel.addRequested()
-                    }
-                    PillButton {
-                        icon: "reset"
-                        label: "Auto-detect"
-                        onClicked: panel.resetRequested()
-                    }
-                }
-
-                Text {
-                    width: parent.width
-                    text: "Or drop any app, shortcut or folder onto the notch. Right-click an icon for more."
-                    color: t.textFaint
-                    font.family: t.font
                     font.pixelSize: 11
-                    wrapMode: Text.WordWrap
+                    font.weight: Font.DemiBold
                 }
             }
         }
 
-        Rectangle { width: parent.width; height: 1; color: t.border }
-
-        Item {
-            width: parent.width
-            height: 50
-            MenuRow {
-                anchors.fill: parent
-                anchors.topMargin: 6
-                anchors.bottomMargin: 6
-                label: "Quit Noch"
-                icon: "power"
-                danger: true
-                onTriggered: panel.quitRequested()
-            }
+        SmallPillButton {
+            anchors.right: parent.right
+            anchors.rightMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "power"
+            label: qsTr("Quit Noch")
+            danger: true
+            onClicked: panel.quitRequested()
         }
     }
 }

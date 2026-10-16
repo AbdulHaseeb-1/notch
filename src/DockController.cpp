@@ -371,22 +371,54 @@ bool DockController::pinUrl(const QUrl &url)
     return pinPath(url.toLocalFile());
 }
 
-bool DockController::pinPath(const QString &path)
+bool DockController::isPinned(const QString &path, const QString &exe) const
+{
+    const QString cleanPath = QDir::cleanPath(QDir::fromNativeSeparators(path));
+    const QString resolved = cleanPath.isEmpty()
+        ? QString()
+        : QDir::cleanPath(QDir::fromNativeSeparators(resolveShortcut(cleanPath)));
+    const QString lowerExe = exe.trimmed().toLower();
+
+    for (const App &existing : m_apps) {
+        const QString exClean = QDir::cleanPath(QDir::fromNativeSeparators(existing.path));
+        if (!cleanPath.isEmpty() && exClean.compare(cleanPath, Qt::CaseInsensitive) == 0)
+            return true;
+        const QString exResolved = exClean.isEmpty()
+            ? QString()
+            : QDir::cleanPath(QDir::fromNativeSeparators(resolveShortcut(exClean)));
+        if (!resolved.isEmpty() && exResolved.compare(resolved, Qt::CaseInsensitive) == 0)
+            return true;
+        if (!lowerExe.isEmpty() && !existing.exe.isEmpty()
+            && existing.exe.compare(lowerExe, Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+bool DockController::pinApp(const QString &name, const QString &path)
 {
     if (path.isEmpty() || !QFileInfo::exists(path))
         return false;
 
     App app = makeApp(path);
-    for (const App &existing : std::as_const(m_apps)) {
-        if (QDir::cleanPath(existing.path).compare(app.path, Qt::CaseInsensitive) == 0)
-            return false;
-    }
+    const QString trimmedName = name.trimmed();
+    if (!trimmedName.isEmpty())
+        app.name = trimmedName;
+
+    if (isPinned(app.path, app.exe))
+        return false;
+
     m_apps.append(app);
     save();
     rebuildIconIndex();
     emit appsChanged();
     pollRunning();
     return true;
+}
+
+bool DockController::pinPath(const QString &path)
+{
+    return pinApp(QString(), path);
 }
 
 void DockController::unpin(int index)
@@ -418,6 +450,9 @@ void DockController::rename(int index, const QString &name)
     m_apps[index].name = trimmed;
     save();
     rebuildAppsCache();
+    // Same as add/remove/insert: the display name helps settle icon ids, so
+    // the two caches must move together.
+    rebuildIconIndex();
     emit appsChanged();
 }
 

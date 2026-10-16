@@ -84,8 +84,8 @@ private:
 
     bool m_hasNet = false;
     bool m_netReady = false;
-    quint64 m_prevIn = 0;
-    quint64 m_prevOut = 0;
+    quint32 m_prevIn = 0;
+    quint32 m_prevOut = 0;
     qint64 m_prevNetMs = 0;
     qreal m_downBps = 0;
     qreal m_upBps = 0;

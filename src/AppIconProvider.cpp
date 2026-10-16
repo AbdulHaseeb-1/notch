@@ -1,5 +1,6 @@
 #include "AppIconProvider.h"
 
+#include "AppSearch.h"
 #include "DockController.h"
 #include "RunningApps.h"
 
@@ -99,10 +100,12 @@ QImage trimTransparent(const QImage &src)
 
 } // namespace
 
-AppIconProvider::AppIconProvider(const DockController *dock, const RunningApps *running)
+AppIconProvider::AppIconProvider(const DockController *dock, const RunningApps *running,
+                                 const AppSearch *search)
     : QQuickImageProvider(QQuickImageProvider::Image)
     , m_dock(dock)
     , m_running(running)
+    , m_search(search)
 {
 }
 
@@ -113,7 +116,10 @@ QImage AppIconProvider::colourIcon(const QString &file)
     if (it != m_cache.constEnd())
         return it.value();
     const QImage image = loadIcon(file, kIconExtent);
-    m_cache.insert(file, image);
+    // Only cache successes: a failed load (locked file, missing icon) must be
+    // retried next paint instead of remembered as null for the whole session.
+    if (!image.isNull())
+        m_cache.insert(file, image);
     return image;
 }
 
@@ -124,6 +130,8 @@ QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize
     QString file = m_dock ? m_dock->iconPathForId(iconId) : QString();
     if (file.isEmpty() && m_running)
         file = m_running->iconPathForId(iconId);
+    if (file.isEmpty() && m_search)
+        file = m_search->iconPathForId(iconId);
 
     QImage image;
     if (!file.isEmpty()) {
@@ -138,7 +146,9 @@ QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize
                 const QImage colour = colourIcon(file);
                 if (!colour.isNull())
                     image = onLight ? toInkMonochrome(colour) : toMonochrome(colour);
-                cache.insert(file, image);
+                // Same rule as colourIcon(): failures stay re-retryable.
+                if (!image.isNull())
+                    cache.insert(file, image);
             }
         } else {
             image = colourIcon(file);

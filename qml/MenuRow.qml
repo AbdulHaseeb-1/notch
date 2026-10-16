@@ -14,17 +14,7 @@ Item {
     implicitHeight: 38
     implicitWidth: 200
 
-    readonly property color fg: danger ? t.danger : t.text
-
-    Rectangle {
-        anchors.fill: parent
-        anchors.leftMargin: 4
-        anchors.rightMargin: 4
-        radius: 10
-        color: hit.pressed ? t.press : t.raised
-        opacity: hit.containsMouse ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 110 } }
-    }
+    readonly property color fg: danger ? t.danger : (hit.containsMouse ? t.ink : t.text)
 
     Glyph {
         id: rowGlyph

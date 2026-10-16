@@ -130,8 +130,14 @@ void SystemMonitor::sample()
             const qint64 now = QDateTime::currentMSecsSinceEpoch();
             if (m_hasNet) {
                 const double seconds = qMax(0.2, (now - m_prevNetMs) / 1000.0);
-                m_downBps = double(bytesIn >= m_prevIn ? bytesIn - m_prevIn : 0) / seconds;
-                m_upBps = double(bytesOut >= m_prevOut ? bytesOut - m_prevOut : 0) / seconds;
+                // Each counter is a 32-bit byte count; it wraps every ~4 GiB.
+                // Compute the delta modulo 2^32 so the wrap shows up as the
+                // real delta instead of a dropped sample.
+                const auto delta = [](quint32 now32, quint32 prev32) {
+                    return double(quint32(now32 - prev32));
+                };
+                m_downBps = delta(bytesIn, m_prevIn) / seconds;
+                m_upBps = delta(bytesOut, m_prevOut) / seconds;
                 m_netReady = true;
             }
             m_prevIn = bytesIn;

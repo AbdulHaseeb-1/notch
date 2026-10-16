@@ -24,7 +24,7 @@ QtObject {
 
     // Control fills (translucent, drawn over the glass)
     readonly property color raised: light ? "#0d000000" : "#0fffffff"
-    readonly property color hover: light ? "#14000000" : "#1affffff"
+    readonly property color hover: "transparent"
     readonly property color press: light ? "#1f000000" : "#26ffffff"
     readonly property color tile: light ? "#0d000000" : "#14ffffff"
     readonly property color tileEdge: light ? "#14000000" : "#1fffffff"
@@ -45,7 +45,7 @@ QtObject {
     readonly property color rimBottom: light ? "#1a000000" : "#24ffffff"
     // Light falling across the upper part of the surface.
     readonly property color sheen: light ? "#80ffffff" : "#0dffffff"
-    readonly property color shadow: light ? "#3d1c2433" : "#99000000"
+    readonly property color shadow: "transparent"
 
     // Glass opacity: thinner when the real blur is behind it, denser when it
     // is not (so text stays readable on any wallpaper).

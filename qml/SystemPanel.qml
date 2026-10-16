@@ -106,12 +106,246 @@ Item {
         }
     }
 
-    implicitWidth: 348
+    // One quick-settings tile: Wi-Fi, Bluetooth, night light, microphone.
+    // Filled with ink while on, a quiet raised square while off, dimmed when
+    // the endpoint does not exist on this machine.
+    component QuickTile: Item {
+        id: tile
+        Theme { id: qt }
+        property string icon
+        property string label
+        property bool onState: false
+        property bool available: true
+        signal clicked()
+
+        implicitWidth: 72
+        implicitHeight: 62
+        scale: tileHit.pressed ? 0.94 : 1
+        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 15
+            color: tile.onState ? qt.ink : qt.track
+            border.width: tile.onState ? 0 : 1
+            border.color: qt.border
+            opacity: tile.available ? 1 : 0.4
+            Behavior on color { ColorAnimation { duration: 150 } }
+        }
+        Column {
+            anchors.centerIn: parent
+            spacing: 5
+            Glyph {
+                anchors.horizontalCenter: parent.horizontalCenter
+                name: tile.icon
+                size: 17
+                stroke: 1.9
+                color: tile.onState ? qt.inverse : qt.text
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: tile.label
+                color: tile.onState ? qt.inverse : qt.text
+                font.family: qt.font
+                font.pixelSize: 10
+                font.weight: Font.Bold
+            }
+        }
+        MouseArea {
+            id: tileHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: tile.clicked()
+        }
+    }
+
+    // Lock / Sleep: half-width actions under the uptime row.
+    component PowerPill: Rectangle {
+        id: pp
+        Theme { id: pt }
+        property string icon
+        property string label
+        signal clicked()
+
+        height: 38
+        radius: 12
+        color: "transparent"
+        border.width: 1
+        border.color: pt.border
+        scale: ppHit.pressed ? 0.96 : 1
+        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 7
+            Glyph {
+                anchors.verticalCenter: parent.verticalCenter
+                name: pp.icon
+                size: 15
+                stroke: 2
+                color: pt.text
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: pp.label
+                color: pt.text
+                font.family: pt.font
+                font.pixelSize: 13
+                font.weight: Font.Bold
+            }
+        }
+        MouseArea {
+            id: ppHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: pp.clicked()
+        }
+    }
+
+    // Night light can be flipped from Windows' own UI too; pick that up while
+    // this page is showing.
+    Timer {
+        interval: 5000
+        repeat: true
+        running: panel.enabled && panel.visible
+        onTriggered: nightLight.refresh()
+    }
+
+    implicitWidth: 368
     implicitHeight: body.implicitHeight
 
     Column {
         id: body
         width: parent.width
+
+        // ── Quick settings: radios, night light and the microphone ──────
+        Item {
+            width: parent.width
+            height: quick.implicitHeight
+
+            Column {
+                id: quick
+                x: 20
+                width: parent.width - 40
+                topPadding: 16
+                bottomPadding: 12
+                spacing: 14
+
+                Row {
+                    width: parent.width
+                    spacing: 8
+
+                    QuickTile {
+                        width: (quick.width - 24) / 4
+                        icon: "wifi"
+                        label: qsTr("Wi-Fi")
+                        onState: radios.wifiOn
+                        available: radios.wifiAvailable
+                        onClicked: radios.toggleWifi()
+                    }
+                    QuickTile {
+                        width: (quick.width - 24) / 4
+                        icon: "bluetooth"
+                        label: qsTr("Bluetooth")
+                        onState: radios.bluetoothOn
+                        available: radios.bluetoothAvailable
+                        onClicked: radios.toggleBluetooth()
+                    }
+                    QuickTile {
+                        width: (quick.width - 24) / 4
+                        icon: "moon"
+                        label: qsTr("Night light")
+                        onState: nightLight.on
+                        available: nightLight.supported
+                        onClicked: nightLight.supported ? nightLight.toggle()
+                                                         : nightLight.openSettings()
+                    }
+                    QuickTile {
+                        width: (quick.width - 24) / 4
+                        icon: audio.micMuted ? "mic-off" : "mic"
+                        label: audio.micMuted ? qsTr("Muted") : qsTr("Mic")
+                        onState: !audio.micMuted && audio.hasMic
+                        available: audio.hasMic
+                        onClicked: audio.toggleMicMute()
+                    }
+                }
+
+                Column {
+                    visible: audio.outputs.length > 0
+                    width: parent.width
+                    spacing: 2
+
+                    Item {
+                        width: parent.width
+                        height: 22
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Sound output")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Click to switch")
+                            color: t.textFaint
+                            font.family: t.font
+                            font.pixelSize: 11
+                        }
+                    }
+
+                    Repeater {
+                        model: audio.outputs
+
+                        delegate: Item {
+                            id: outRow
+                            required property var modelData
+                            width: quick.width
+                            height: 34
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 10
+                                anchors.right: outCheck.left
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: outRow.modelData.name
+                                color: outRow.modelData.isDefault || outHit.containsMouse ? t.ink : t.text
+                                elide: Text.ElideRight
+                                font.family: t.font
+                                font.pixelSize: 12
+                                font.weight: outRow.modelData.isDefault ? Font.Bold : Font.Medium
+                            }
+                            Glyph {
+                                id: outCheck
+                                anchors.right: parent.right
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: outRow.modelData.isDefault
+                                name: "check"
+                                size: 14
+                                stroke: 2.2
+                                color: t.ink
+                            }
+                            MouseArea {
+                                id: outHit
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                enabled: !outRow.modelData.isDefault
+                                onClicked: audio.setDefault(outRow.modelData.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle { width: parent.width; height: 1; color: t.borderSoft }
 
         Item {
             width: parent.width
@@ -236,7 +470,7 @@ Item {
                 width: tmRow.implicitWidth + 18
                 height: 28
                 radius: 14
-                color: tmHit.containsMouse ? t.raised : "transparent"
+                color: "transparent"
                 border.width: 1
                 border.color: t.border
                 Row {
@@ -266,6 +500,37 @@ Item {
                     onClicked: {
                         monitor.openTaskManager()
                         panel.closeRequested()
+                    }
+                }
+            }
+        }
+
+        // ── Lock / Sleep ────────────────────────────────────────────────
+        Item {
+            width: parent.width
+            height: 54
+
+            Row {
+                x: 20
+                width: parent.width - 40
+                spacing: 8
+
+                PowerPill {
+                    width: (parent.width - 8) / 2
+                    icon: "lock"
+                    label: qsTr("Lock")
+                    onClicked: {
+                        power.lock()
+                        panel.closeRequested()
+                    }
+                }
+                PowerPill {
+                    width: (parent.width - 8) / 2
+                    icon: "zzz"
+                    label: qsTr("Sleep")
+                    onClicked: {
+                        panel.closeRequested()
+                        power.sleep()
                     }
                 }
             }

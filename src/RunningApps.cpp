@@ -137,12 +137,16 @@ QImage captureWindow(HWND hwnd)
         info.bmiHeader.biPlanes = 1;
         info.bmiHeader.biBitCount = 32;
         info.bmiHeader.biCompression = BI_RGB;
-        if (!GetDIBits(memory, bitmap, 0, static_cast<UINT>(height), image.bits(), &info,
-                       DIB_RGB_COLORS))
+        // GetDIBits must not find the bitmap selected into the DC it is
+        // given (documented requirement), so put the old bitmap back first.
+        if (!SelectObject(memory, previous)) {
             image = QImage();
+        } else if (!GetDIBits(memory, bitmap, 0, static_cast<UINT>(height), image.bits(), &info,
+                              DIB_RGB_COLORS)) {
+            image = QImage();
+        }
     }
 
-    SelectObject(memory, previous);
     DeleteObject(bitmap);
     DeleteDC(memory);
     ReleaseDC(nullptr, screen);
@@ -173,7 +177,9 @@ QList<OpenWindow> enumerateWindows()
 QImage placeholderPreview(double windowId)
 {
     QImage image(320, 200, QImage::Format_RGB32);
-    const int hue = static_cast<int>(windowId * 67) % 360;
+    // static_cast<int>(double) on a value past INT_MAX is undefined, so do the
+    // arithmetic in integer types and fold the remainder into range.
+    const int hue = int((static_cast<quintptr>(windowId) * 67) % 360);
     QLinearGradient gradient(0, 0, image.width(), image.height());
     gradient.setColorAt(0.0, QColor::fromHsv(hue, 110, 95));
     gradient.setColorAt(1.0, QColor::fromHsv((hue + 40) % 360, 170, 45));
@@ -243,7 +249,12 @@ void RunningApps::refresh()
 
     {
         QMutexLocker lock(&m_iconMutex);
-        m_iconIndex = icons;
+        // Merge, don't replace: a heavily-cached program can restart at the
+        // same exe/path and get a different paged-out iconId mapping between
+        // the sampled app list and this index otherwise. Retired paths simply
+        // linger (a handful of QStrings) and honest lookups still win.
+        for (auto it = icons.constBegin(); it != icons.constEnd(); ++it)
+            m_iconIndex.insert(it.key(), it.value());
     }
 
     // Titles change often (browser tabs, documents); the tiles only need to
@@ -269,6 +280,41 @@ QVariantList RunningApps::windowsFor(const QString &exe) const
         list.append(entry);
     }
     return list;
+}
+
+QVariantList RunningApps::allWindows() const
+{
+    QVariantList list;
+    for (const OpenWindow &window : enumerateWindows()) {
+        QVariantMap entry;
+        entry.insert(QStringLiteral("windowId"), window.id);
+        entry.insert(QStringLiteral("title"), window.title);
+        entry.insert(QStringLiteral("exe"), window.exe);
+        entry.insert(QStringLiteral("name"), displayName(window.path));
+        entry.insert(QStringLiteral("path"), QDir::toNativeSeparators(window.path));
+        entry.insert(QStringLiteral("iconId"), iconIdFor(window.path));
+        list.append(entry);
+    }
+    return list;
+}
+
+void RunningApps::closeApp(const QString &exe)
+{
+    const QString wanted = exe.toLower();
+    int closed = 0;
+#ifdef Q_OS_WIN
+    for (const OpenWindow &window : enumerateWindows()) {
+        if (window.exe != wanted)
+            continue;
+        const HWND hwnd = nativeWindow(window.id);
+        if (hwnd && PostMessageW(hwnd, WM_CLOSE, 0, 0))
+            ++closed;
+    }
+#else
+    Q_UNUSED(exe)
+#endif
+    if (closed)
+        refresh(); // windows going away changes the tile set
 }
 
 bool RunningApps::activateApp(const QString &exe)

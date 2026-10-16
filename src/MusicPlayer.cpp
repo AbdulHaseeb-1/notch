@@ -1,13 +1,18 @@
 #include "MusicPlayer.h"
 
+#include "ImageAlpha.h"
+
 #include <QAudioOutput>
 #include <QCoreApplication>
+#include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
 #include <QRandomGenerator>
 #include <QSettings>
+#include <QSet>
+#include <QThread>
 #include <QUrl>
 
 #include <algorithm>
@@ -137,6 +142,11 @@ MusicPlayer::MusicPlayer(QObject *parent)
 
 MusicPlayer::~MusicPlayer()
 {
+    // Wait for any folder scan instead of destroying it mid-run: QThread
+    //::create threads are freed by deleteLater once done, and the scan is
+    // bounded, so patience is cheap here.
+    if (m_scanThread)
+        m_scanThread->wait(30000);
     saveNow();
 }
 
@@ -339,11 +349,21 @@ void MusicPlayer::setIndex(int index)
 
 int MusicPlayer::addUrls(const QVariantList &urls)
 {
-    const bool startPlaying = m_tracks.isEmpty() || state() != 1;
+    // Only auto-start when nothing has been started yet: hijacking a paused
+    // session silently rewound the user's spot in the old behaviour.
+    const bool startPlaying = m_tracks.isEmpty() || state() == 0;
     const int firstNew = m_tracks.size();
     int added = 0;
-    for (const QVariant &value : urls)
-        added += addPath(localPath(urlFromVariant(value)));
+    for (const QVariant &value : urls) {
+        const QUrl url = urlFromVariant(value);
+        const QString path = localPath(url);
+        QFileInfo info(path);
+        if (info.isDir()) {
+            enqueueFolderScan(info.absoluteFilePath());
+            continue;
+        }
+        added += addPath(path);
+    }
     if (added <= 0)
         return 0;
     emit playlistChanged();
@@ -390,26 +410,41 @@ void MusicPlayer::clear()
 
 QVariantMap MusicPlayer::ingestDrop(const QVariantList &urls)
 {
-    const bool startPlaying = m_tracks.isEmpty() || state() != 1;
-    const int firstNew = m_tracks.size();
+    const bool startPlaying = m_tracks.isEmpty() || state() == 0;
+    int firstNew = m_tracks.size();
     int added = 0;
+    int folders = 0;
     QVariantList other;
     for (const QVariant &value : urls) {
         const QUrl url = urlFromVariant(value);
-        const int n = addPath(localPath(url));
+        const QString path = localPath(url);
+        const QFileInfo info(path);
+        if (info.isDir()) {
+            // Scans run on a worker and report later; the drop is not "other".
+            enqueueFolderScan(info.absoluteFilePath());
+            ++folders;
+            continue;
+        }
+        const int n = addPath(path);
         if (n > 0)
             added += n;
         else
             other.push_back(QVariant::fromValue(url));
     }
+    if (folders > 0) {
+        emit folderScanNotice(folders == 1
+                                  ? QStringLiteral("Scanning folder…")
+                                  : QStringLiteral("Scanning %1 folders…").arg(folders));
+    }
     if (added > 0) {
         emit playlistChanged();
         saveNow();
-        if (startPlaying)
+        if (startPlaying && !m_scanActive)
             playIndex(qMin(firstNew, m_tracks.size() - 1), true);
     }
     QVariantMap result;
     result.insert(QStringLiteral("added"), added);
+    result.insert(QStringLiteral("folders"), folders);
     result.insert(QStringLiteral("other"), other);
     return result;
 }
@@ -487,38 +522,113 @@ int MusicPlayer::addPath(const QString &path)
         return 0;
     const QFileInfo info(path);
     if (info.isDir()) {
-        QStringList patterns;
-        for (const QString &suffix : audioSuffixes())
-            patterns.push_back(QStringLiteral("*.") + suffix);
-
-        QStringList found;
-        int visited = 0;
-        QDirIterator it(path, patterns, QDir::Files,
-                        info.isRoot() ? QDirIterator::NoIteratorFlags
-                                      : QDirIterator::Subdirectories);
-        while (it.hasNext() && found.size() < 300 && visited < 4000) {
-            found.push_back(QFileInfo(it.next()).absoluteFilePath());
-            ++visited;
-        }
-        std::sort(found.begin(), found.end(), [](const QString &a, const QString &b) {
-            return naturalLess(QFileInfo(a).fileName(), QFileInfo(b).fileName());
-        });
-
-        int added = 0;
-        for (const QString &file : found)
-            added += addPath(file);
-        return added;
+        enqueueFolderScan(info.absoluteFilePath());
+        return 0;
     }
 
     if (!info.isFile() || !isAudioFile(path))
         return 0;
     const QString absolute = info.absoluteFilePath();
-    for (const Track &track : m_tracks) {
-        if (track.path.compare(absolute, Qt::CaseInsensitive) == 0)
-            return 0;
-    }
+    if (knownTrackPaths().contains(absolute.toLower()))
+        return 0;
     m_tracks.append(Track{absolute, {}, {}, {}});
     return 1;
+}
+
+QSet<QString> MusicPlayer::knownTrackPaths() const
+{
+    QSet<QString> known;
+    known.reserve(m_tracks.size());
+    for (const Track &track : m_tracks)
+        known.insert(track.path.toLower());
+    return known;
+}
+
+void MusicPlayer::enqueueFolderScan(const QString &root)
+{
+    const QString clean = QDir::cleanPath(root);
+    if (clean.isEmpty() || m_scanQueue.contains(clean))
+        return;
+    m_scanQueue.append(clean);
+    startNextFolderScan();
+}
+
+void MusicPlayer::startNextFolderScan()
+{
+    if (m_scanActive || m_scanQueue.isEmpty())
+        return;
+    const QString root = m_scanQueue.takeFirst();
+    m_scanActive = true;
+    const bool fromRoot = QFileInfo(root).isRoot();
+
+    QThread *thread = QThread::create([this, root, fromRoot]() {
+        // Worker thread: filesystem walking only, no GUI objects touched.
+        QStringList patterns;
+        for (const QString &suffix : audioSuffixes())
+            patterns.push_back(QStringLiteral("*.") + suffix);
+
+        QStringList found;
+        bool truncated = false;
+        int visited = 0;
+        QDirIterator it(root, patterns, QDir::Files,
+                        fromRoot ? QDirIterator::NoIteratorFlags
+                                 : QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            if (found.size() >= 300 || visited >= 4000) {
+                // Bounded: big trees are capped instead of walked for minutes.
+                truncated = true;
+                break;
+            }
+            found.push_back(QFileInfo(it.next()).absoluteFilePath());
+            ++visited;
+        }
+        QMetaObject::invokeMethod(this,
+                                  [this, root, found = std::move(found),
+                                   truncated]() mutable {
+                                      applyFolderScan(root, found, truncated);
+                                  },
+                                  Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    m_scanThread = thread;
+    thread->start();
+}
+
+void MusicPlayer::applyFolderScan(const QString &root, const QStringList &files, bool truncated)
+{
+    Q_UNUSED(root)
+    m_scanThread = nullptr; // the thread is done (deleteLater owns cleanup)
+
+    // Sort by full path so subdirectories stay in order instead of merging
+    // "01 …" files from every album folder into one scramble.
+    QStringList sorted = files;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const QString &a, const QString &b) { return naturalLess(a, b); });
+
+    const QSet<QString> known = knownTrackPaths();
+    bool addedTracks = false;
+    for (const QString &file : sorted) {
+        if (!known.contains(file.toLower())) {
+            m_tracks.append(Track{file, {}, {}, {}});
+            addedTracks = true;
+        }
+    }
+    if (addedTracks) {
+        emit playlistChanged();
+        saveNow();
+        // Only jump-start playback when the player is idle; a paused spot in
+        // the queue stays paused (see addUrls).
+        if (state() == 0)
+            playIndex(qMax(0, m_index), true);
+    } else {
+        saveNow();
+    }
+    if (truncated)
+        emit folderScanNotice(QStringLiteral("Added the first %1 songs; the rest was not queued")
+                                  .arg(m_tracks.size()));
+
+    m_scanActive = false;
+    startNextFolderScan();
 }
 
 void MusicPlayer::playIndex(int index, bool start)
@@ -638,8 +748,10 @@ CoverImageProvider::CoverImageProvider(MusicPlayer *player)
 
 QImage CoverImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
 {
-    Q_UNUSED(id);
+    const bool round = id.endsWith(QLatin1String("/round"));
     QImage image = m_player ? m_player->coverImage() : QImage();
+    if (!image.isNull() && round)
+        image = roundedImageCorners(image, 0.5);
     if (image.isNull()) {
         image = QImage(1, 1, QImage::Format_ARGB32);
         image.fill(Qt::transparent);

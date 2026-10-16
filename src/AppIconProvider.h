@@ -5,6 +5,7 @@
 #include <QMutex>
 #include <QQuickImageProvider>
 
+class AppSearch;
 class DockController;
 class RunningApps;
 
@@ -14,8 +15,10 @@ class RunningApps;
 class AppIconProvider final : public QQuickImageProvider
 {
 public:
-    // Pinned apps are looked up first, then the programs that are open now.
-    AppIconProvider(const DockController *dock, const RunningApps *running);
+    // Pinned apps are looked up first, then the programs that are open now,
+    // then the Start Menu apps the command palette searches.
+    AppIconProvider(const DockController *dock, const RunningApps *running,
+                    const AppSearch *search);
 
     QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
 
@@ -27,6 +30,7 @@ private:
 
     const DockController *m_dock;
     const RunningApps *m_running;
+    const AppSearch *m_search;
     QMutex m_mutex;
     QHash<QString, QImage> m_cache;     // file -> colour icon
     QHash<QString, QImage> m_monoCache; // file -> light monochrome icon (dark notch)

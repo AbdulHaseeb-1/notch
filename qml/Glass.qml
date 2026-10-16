@@ -1,13 +1,11 @@
 import QtQuick
 import QtQuick.Shapes
-import QtQuick.Effects
 
 // The shared glass surface for the notch, its pills, flyouts and menus.
 // Built the way Apple builds its materials: few layers, each doing one job.
-//   1. a soft, tight shadow that lifts the surface off the desktop;
-//   2. the body, a single tinted fill with a faint lift toward the top;
-//   3. light falling across the upper part (the sheen);
-//   4. a 1px rim that is lit from above - bright at the top edge, quiet down
+//   1. the body, a single tinted fill with a faint lift toward the top;
+//   2. light falling across the upper part (the sheen);
+//   3. a 1px rim that is lit from above - bright at the top edge, quiet down
 //      the sides - drawn as a true gradient ring so curves stay crisp.
 // With "Blur behind" on, the system blur shows through a thinner body; with
 // it off the body is dense enough to read on any wallpaper.
@@ -21,15 +19,18 @@ Item {
     property color tint: t.surface
     // Optional outline colour for emphasis (drag-over, active); none by default.
     property color edge: "transparent"
-    property bool shadowEnabled: true
+    property bool shadowEnabled: false
 
     readonly property bool frosted: glassBackdrop.blurActive
     readonly property real base: frosted ? t.glassFrosted : t.glassSolid
     readonly property real r: Math.max(0, Math.min(radius, width / 2, height / 2))
 
     function fill(lift) {
-        // Mix a little white (dark glass) or black (light glass) into the tint.
-        const k = t.light ? 0 : lift
+        // Brighten the top of the tint: white on dark glass, and a knock-on
+        // (half) lift on light glass, where the sheen already carries most
+        // of the highlight — but keeping both stops identical was flatter
+        // than the comment promised.
+        const k = t.light ? lift * 0.4 : lift
         return Qt.rgba(Math.min(1, glass.tint.r + k), Math.min(1, glass.tint.g + k),
                        Math.min(1, glass.tint.b + k), glass.base)
     }
@@ -48,19 +49,7 @@ Item {
              + " V " + (i + rr) + " A " + rr + " " + rr + " 0 0 1 " + (i + rr) + " " + i + " Z"
     }
 
-    // 1. Shadow.
-    RectangularShadow {
-        visible: glass.shadowEnabled && glass.width > 0
-        anchors.fill: parent
-        offset: Qt.vector2d(0, 4)
-        radius: glass.r
-        blur: 18
-        spread: -1
-        color: t.shadow
-        cached: true
-    }
-
-    // 2. Body.
+    // 1. Body.
     Rectangle {
         anchors.fill: parent
         radius: glass.r
@@ -71,12 +60,13 @@ Item {
     }
 
     // 3. Sheen: light across the top of the surface, gone by the middle.
+    // Uses full parent geometry so the corner radius never clamps smaller than glass.r.
     Rectangle {
-        width: parent.width
-        height: Math.min(parent.height * 0.55, 96)
+        anchors.fill: parent
         radius: glass.r
         gradient: Gradient {
             GradientStop { position: 0.0; color: t.sheen }
+            GradientStop { position: Math.min(0.55, 96 / Math.max(1, glass.height)); color: "transparent" }
             GradientStop { position: 1.0; color: "transparent" }
         }
     }

@@ -16,6 +16,11 @@ public:
     bool light() const { return m_light; }
     void setLight(bool light);
 
+    // Windows' "Animation effects" accessibility switch (Settings >
+    // Accessibility > Visual effects). The desktop buddy consults it to soften
+    // its idle/point animations for motion-sensitive users.
+    Q_INVOKABLE bool systemMotionReduced() const;
+
 signals:
     void lightChanged();
 

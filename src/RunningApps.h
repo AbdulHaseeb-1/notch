@@ -26,6 +26,10 @@ public:
 
     // The windows of one program, topmost first: windowId and title.
     Q_INVOKABLE QVariantList windowsFor(const QString &exe) const;
+    // Every open window, topmost first. For the command palette's window search.
+    Q_INVOKABLE QVariantList allWindows() const;
+    // Asks every window of a program to close (a polite WM_CLOSE, like taskbar).
+    Q_INVOKABLE void closeApp(const QString &exe);
     Q_INVOKABLE bool activateApp(const QString &exe);
     Q_INVOKABLE bool activateWindow(double windowId);
 

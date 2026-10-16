@@ -8,11 +8,22 @@ your apps, tucks itself away and drops back down when you need it.
 - **Auto-hide** - after a moment the notch slides up and leaves a 5% sliver at
   the top edge. Push the pointer to the top of the screen over that sliver and it
   springs back down. Turn this off in Settings to keep it pinned.
+- **Palette** - Ctrl + Alt + Space (from anywhere) drops the notch with a search
+  field: type to launch any installed app, switch to an open window, do quick
+  maths (`1+2*3` is `7`; Enter copies the result), search the web, or run a
+  built-in command - lock, sleep, mute the mic, Task Manager, Windows settings,
+  Noch's own settings. Arrows move, Enter runs, Esc closes. If another app
+  already owns Ctrl + Alt + Space, Noch quietly falls back (Alt + Shift + Space,
+  then Ctrl + Alt + P) and Settings says which shortcut is live.
 - **Resize** - drag the small handle under the notch, Ctrl + scroll on the
   notch, or use S / M / L / XL and the slider in Settings (70%-160%).
 - **Hub** - click the clock to open the hub: **System**, **Timer** and
   **Clipboard** pages in one card.
-  - *System*: CPU, memory, battery, disk, network throughput and uptime. Turn on
+  - *System*: quick controls, then the gauges. The quick row has the **sound
+    output** list (click a device to make it the default), **Wi-Fi**,
+    **Bluetooth**, **night light** and a **microphone mute** switch; each
+    reflects the real system state. Below it: **Lock** and **Sleep**. Then CPU,
+    memory, battery, disk, network throughput and uptime. Turn on
     System stats in Settings for CPU, memory and battery beside the clock.
     Numbers turn red when they're in trouble (CPU or memory over 90%, battery
     under 15%).
@@ -32,6 +43,9 @@ your apps, tucks itself away and drops back down when you need it.
   indicator. Scroll on the pill to change volume.
   Drop songs or a folder onto the notch, or use **Add music**. The queue, the
   last track and the volume are remembered.
+  Noch also follows Windows itself: when Spotify, a browser or anything else
+  plays, the pill and the card show that song and the transport buttons drive
+  it (the header names the app; repeat and volume stay with Noch's own player).
 - **Apps** - icons are read from the real installed programs and shown in black
   and white (switchable). On first run Noch looks for Claude, Cursor, VS Code,
   Chrome, Notion, Figma, Spotify, Discord and a few others.
@@ -42,10 +56,17 @@ your apps, tucks itself away and drops back down when you need it.
 - **Open apps** - programs with a window open sit in their own pill to the left
   of the notch, like the music pill on the right. Hover one to preview its
   windows, click a window to bring it forward. Pinned apps stay in the notch.
+- **Games and full-screen apps** - while a full-screen app (a game, a video, a
+  presentation) is in front, the notch stays tucked away even when the pointer
+  touches the top edge, so it never drops over the action. Ctrl + Alt + Space
+  still summons it. Turn **Keep quiet over games** off in Settings to ignore
+  this.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
   focused). Esc or clicking elsewhere closes it. **Light theme** switches the
   whole notch to pale glass. **Blur behind (beta)** blurs the desktop behind the
   glass (see below); it is off by default.
+- **Launch at startup** - the Settings page can add Noch to the Windows start-up
+  list; it starts tucked, showing the sliver until you hover it.
 
 ## Glass and motion
 
@@ -94,6 +115,7 @@ cmake --build build
 | `qml/FocusTimer.qml`, `qml/TimerView.qml`, `qml/TimerPill.qml` | Focus timer: logic, panel page and the live pill |
 | `qml/ClipboardView.qml` | Clipboard page |
 | `qml/MusicPanel.qml`, `qml/NowPlaying.qml` | Music player and the compact control in the notch |
+| `qml/PaletteCard.qml` | Command palette card: search, calculator, web, commands |
 | `qml/SystemPanel.qml`, `qml/StatusBlock.qml` | System page of the hub and the clock / stats block |
 | `qml/DockItem.qml` | One app icon: magnification, launch bounce, running dot |
 | `qml/Theme.qml` | Colour tokens (dark and light) |
@@ -104,6 +126,14 @@ cmake --build build
 | `src/AppIconProvider.*` | `image://appicon/...` - extracts real app icons, renders them black and white |
 | `src/OverlayController.*` | Limits mouse input to the visible shapes so the rest clicks through |
 | `src/RunningApps.*` | Programs with open windows, window previews, bringing a window forward |
+| `src/MediaHub.*`, `src/SmtcMedia.*` | Now playing: Noch's player and Windows media sessions, unified |
+| `src/AppSearch.*`, `src/Calc.h` | Palette backend: app index, fuzzy matching, inline calculator |
+| `src/GlobalHotkey.*` | The palette shortcut (Ctrl + Alt + Space, with fallbacks) |
+| `src/AudioDevices.*` | Default sound output and microphone mute |
+| `src/Radios.*` | Wi-Fi and Bluetooth radios |
+| `src/NightLight.*` | Night light, through Windows' own state blob |
+| `src/PowerActions.*`, `src/FullscreenWatcher.*` | Lock / sleep, and the full-screen guard |
+| `src/WinRtAbi.h` | Hand-written WinRT ABI the media / radio backends ride on |
 | `src/GlassBackdrop.*` | Optional blur behind the visible glass shapes (Windows) |
 | `src/ClipboardHistory.*` | In-memory clipboard history (text only, private copies skipped) |
 | `src/ShapeRegion.h` | Builds a region from the rounded shapes QML reports |

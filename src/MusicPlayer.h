@@ -5,6 +5,8 @@
 #include <QMutex>
 #include <QObject>
 #include <QQuickImageProvider>
+#include <QSet>
+#include <QThread>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
@@ -78,7 +80,7 @@ public:
     // so the dock can pin it).
     Q_INVOKABLE QVariantMap ingestDrop(const QVariantList &urls);
 
-signals:
+    signals:
     void trackChanged();
     void playlistChanged();
     void positionChanged();
@@ -91,6 +93,7 @@ signals:
     void shuffleChanged();
     void coverChanged();
     void playbackError(const QString &message);
+    void folderScanNotice(const QString &message);
 
 private:
     struct Track {
@@ -104,6 +107,10 @@ private:
     void saveNow();
     void scheduleSave();
     int addPath(const QString &path);
+    QSet<QString> knownTrackPaths() const;
+    void enqueueFolderScan(const QString &root);
+    void startNextFolderScan();
+    void applyFolderScan(const QString &root, const QStringList &files, bool truncated);
     void playIndex(int index, bool start);
     void readMetadata();
     void setCover(const QImage &image);
@@ -128,6 +135,11 @@ private:
     int m_coverRev = 0;
 
     QTimer m_saveTimer;
+    // Folder drops are scanned on a worker thread so a slow share or a big
+    // tree cannot freeze the UI; results are applied on the GUI thread.
+    QStringList m_scanQueue;
+    bool m_scanActive = false;
+    QThread *m_scanThread = nullptr;
 };
 
 // Serves "image://cover/<rev>" for the track currently loaded.

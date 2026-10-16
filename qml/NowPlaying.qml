@@ -24,18 +24,19 @@ Item {
 
     Theme { id: t }
 
-    readonly property bool playing: player.state === 1
+    readonly property bool playing: media.playing
+    readonly property color dynAccent: media.hasTrack ? media.accentColor : t.ink
     readonly property real pillH: Math.round(50 * s)
-    readonly property real playingW: Math.round(80 * s)
+    readonly property real playingW: Math.round((media.hasCover ? 86 : 80) * s)
     property bool barOpen: false
     property bool volumeOpen: false
 
     width: barOpen ? barRow.implicitWidth + Math.round(20 * s)
-                   : (playing ? playingW : pillH)
+                   : (playing || media.hasCover ? playingW : pillH)
     height: pillH
     opacity: appear
 
-    Behavior on width { SpringAnimation { spring: 4.6; damping: 0.55; epsilon: 0.3 } }
+    Behavior on width { NumberAnimation { duration: 220; easing.type: Easing.OutQuint } }
 
     // One round transport button. Filled buttons (play/pause) are solid ink.
     component TransportButton: Item {
@@ -51,11 +52,11 @@ Item {
         height: width
 
         Rectangle {
+            visible: tb.filled
             anchors.fill: parent
             radius: width / 2
             color: t.ink
-            opacity: tb.filled ? (tbHit.pressed ? 0.85 : (tbHit.containsMouse ? 0.92 : 1))
-                               : (tbHit.pressed ? 0.14 : (tbHit.containsMouse ? 0.08 : 0))
+            opacity: tbHit.pressed ? 0.85 : 1
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
         Glyph {
@@ -74,11 +75,11 @@ Item {
             width: Math.round(11 * chip.s)
             height: width
             radius: width / 2
-            color: t.ink
+            color: chip.dynAccent
             Text {
                 anchors.centerIn: parent
                 text: "1"
-                color: t.inverse
+                color: "#ffffff"
                 font.family: t.font
                 font.pixelSize: Math.round(8 * chip.s)
                 font.weight: Font.Black
@@ -98,32 +99,44 @@ Item {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        edge: chip.highlight || chip.active ? t.ink : "transparent"
+        edge: chip.highlight || chip.active ? chip.dynAccent : "transparent"
     }
 
-    // Soft gradient wash across the pill while music plays.
+    // Dynamic ambient wash across the pill while music plays or cover art is loaded.
     Rectangle {
         anchors.fill: parent
         radius: height / 2
-        opacity: chip.playing && !chip.barOpen ? 1 : 0
+        opacity: (chip.playing || media.hasCover) && !chip.barOpen ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 280 } }
         gradient: Gradient {
             orientation: Gradient.Horizontal
             GradientStop { position: 0.0; color: "transparent" }
-            GradientStop { position: 0.5; color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.12) }
+            GradientStop {
+                position: 0.5
+                color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, chip.playing ? 0.20 : 0.10)
+                Behavior on color { ColorAnimation { duration: 320 } }
+            }
             GradientStop { position: 1.0; color: "transparent" }
         }
     }
 
-    // Click target for the whole pill. It sits under the bar's buttons, so the
-    // buttons take their own clicks.
+    // Click target for the whole pill. When no track is loaded or the full
+    // player card is open (or on right-click), toggle the full player card
+    // directly; otherwise toggle the inline transport bar.
     MouseArea {
         anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: Qt.PointingHandCursor
-        onClicked: {
-            chip.barOpen = !chip.barOpen
-            if (!chip.barOpen)
+        onClicked: (mouse) => {
+            if (mouse.button === Qt.RightButton || !media.hasTrack || chip.active) {
+                chip.barOpen = false
                 chip.volumeOpen = false
+                chip.openRequested()
+            } else {
+                chip.barOpen = !chip.barOpen
+                if (!chip.barOpen)
+                    chip.volumeOpen = false
+            }
         }
     }
 
@@ -132,8 +145,9 @@ Item {
         onHoveredChanged: {
             if (hovered) {
                 collapseTimer.stop()
-                chip.hintRequested(player.hasTrack && player.title.length > 0
-                                   ? player.title + (player.artist ? " — " + player.artist : "")
+                chip.hintRequested(media.hasTrack && media.title.length > 0
+                                   ? media.title + (media.artist ? " — " + media.artist : "")
+                                             + (media.sourceName ? " · " + media.sourceName : "")
                                    : qsTr("Music"))
             } else {
                 chip.hintCleared()
@@ -153,27 +167,62 @@ Item {
         }
     }
 
-    // Stopped: the note alone. Playing: the note with a small level indicator
-    // made of soft gradient bars.
+    // Stopped: the note or cover art. Playing: cover art (or note) with dynamic
+    // level bars colored to the active artwork/app palette.
     Row {
         id: idleRow
         anchors.centerIn: parent
-        spacing: Math.round(7 * chip.s)
+        spacing: Math.round(8 * chip.s)
         opacity: chip.barOpen ? 0 : 1
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 160 } }
 
-        Glyph {
-            name: "notes"
-            size: Math.round(20 * chip.s)
-            color: t.ink
+        Item {
+            width: media.hasCover ? Math.round(28 * chip.s) : Math.round(20 * chip.s)
+            height: width
+            anchors.verticalCenter: parent.verticalCenter
+
+            Rectangle {
+                id: miniArtFrame
+                anchors.fill: parent
+                radius: width / 2
+                color: t.raised
+                border.width: 1
+                border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.45)
+                visible: miniCover.visible
+                clip: true
+
+                Image {
+                    id: miniCover
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    // Pre-rounded pixels from the provider: clip ignores
+                    // radius, so a square crop would poke past this circle.
+                    source: media.hasCover ? media.coverUrlRound : ""
+                    sourceSize: Qt.size(64, 64)
+                    fillMode: Image.PreserveAspectCrop
+                    visible: media.hasCover && status === Image.Ready
+                    asynchronous: true
+                    smooth: true
+                }
+            }
+
+            Glyph {
+                anchors.centerIn: parent
+                visible: !miniCover.visible
+                name: "notes"
+                size: Math.round(20 * chip.s)
+                color: media.hasTrack ? chip.dynAccent : t.ink
+                Behavior on color { ColorAnimation { duration: 260 } }
+            }
         }
 
         Item {
             id: meter
-            visible: chip.playing
-            width: Math.round(16 * chip.s)
+            visible: chip.playing || media.hasCover
+            width: Math.round(18 * chip.s)
             height: Math.round(20 * chip.s)
+            anchors.verticalCenter: parent.verticalCenter
 
             Repeater {
                 model: 4
@@ -182,23 +231,37 @@ Item {
                     id: bar
 
                     required property int index
-                    property real level: 0.45
+                    property real level: chip.playing ? 0.45 : 0.22
 
                     x: index * Math.round(5 * chip.s)
                     anchors.verticalCenter: parent.verticalCenter
                     width: Math.round(3 * chip.s)
-                    height: Math.round(20 * chip.s) * level
+                    height: Math.max(Math.round(4 * chip.s), Math.round(20 * chip.s) * level)
                     radius: width / 2
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: t.ink }
-                        GradientStop { position: 1.0; color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.25) }
+                        GradientStop {
+                            position: 0.0
+                            color: chip.dynAccent
+                            Behavior on color { ColorAnimation { duration: 280 } }
+                        }
+                        GradientStop {
+                            position: 1.0
+                            color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.32)
+                            Behavior on color { ColorAnimation { duration: 280 } }
+                        }
                     }
 
                     SequentialAnimation on level {
                         running: chip.playing && !chip.barOpen
                         loops: Animation.Infinite
-                        NumberAnimation { to: 1.0; duration: 360 + bar.index * 120; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 0.25; duration: 360 + bar.index * 120; easing.type: Easing.InOutSine }
+                        // `on <property>` replaces the binding while it runs,
+                        // so bars used to freeze mid-value when paused. Resting
+                        // height back on the way out.
+                        onRunningChanged: if (!running)
+                            level = 0.22
+
+                        NumberAnimation { to: 1.0; duration: 340 + bar.index * 110; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 0.22; duration: 340 + bar.index * 110; easing.type: Easing.InOutSine }
                     }
                 }
             }
@@ -215,36 +278,80 @@ Item {
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 160 } }
 
-        TransportButton {
-            icon: "notes"
-            tint: chip.active ? t.ink : t.textDim
-            onClicked: chip.openRequested()
+        // Open full player card button (shows mini cover when available).
+        Item {
+            width: Math.round(34 * chip.s)
+            height: width
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.round(26 * chip.s)
+                height: width
+                radius: Math.round(7 * chip.s)
+                color: t.raised
+                border.width: 1
+                border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.5)
+                visible: barMiniCover.visible
+                clip: true
+
+                Image {
+                    id: barMiniCover
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    // Same trick: the provider hands over rounded corners, so
+                    // the image cannot out-stick its rounded frame.
+                    source: media.hasCover ? media.coverUrlRound : ""
+                    sourceSize: Qt.size(64, 64)
+                    fillMode: Image.PreserveAspectCrop
+                    visible: media.hasCover && status === Image.Ready
+                    asynchronous: true
+                    smooth: true
+                }
+            }
+
+            Glyph {
+                anchors.centerIn: parent
+                visible: !barMiniCover.visible
+                name: "notes"
+                size: Math.round(18 * chip.s)
+                color: chip.active ? chip.dynAccent : t.textDim
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: chip.openRequested()
+            }
         }
+
         TransportButton {
             icon: "prev"
             glyphSize: Math.round(19 * chip.s)
-            onClicked: player.previous()
+            tint: media.canPrev ? t.ink : t.textFaint
+            onClicked: if (media.canPrev) media.previous()
         }
         TransportButton {
             icon: chip.playing ? "pause" : "play"
             filled: true
             glyphSize: Math.round(17 * chip.s)
-            onClicked: player.toggle()
+            onClicked: media.toggle()
         }
         TransportButton {
             icon: "next"
             glyphSize: Math.round(19 * chip.s)
-            onClicked: player.next()
+            tint: media.canNext ? t.ink : t.textFaint
+            onClicked: if (media.canNext) media.next()
         }
         TransportButton {
+            visible: media.canRepeat
             icon: "repeat"
-            tint: player.repeatMode > 0 ? t.ink : t.textFaint
-            badge: player.repeatMode === 2
-            onClicked: player.cycleRepeat()
+            tint: media.repeatMode > 0 ? chip.dynAccent : t.textFaint
+            badge: media.repeatMode === 2
+            onClicked: media.cycleRepeat()
         }
         TransportButton {
-            icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
-            tint: chip.volumeOpen ? t.ink : t.textDim
+            icon: media.muted || media.volume < 0.01 ? "mute" : "volume"
+            tint: chip.volumeOpen ? chip.dynAccent : t.textDim
             onClicked: chip.volumeOpen = !chip.volumeOpen
         }
         Item {
@@ -258,9 +365,9 @@ Item {
                 width: parent.width
                 from: 0
                 to: 1
-                value: player.volume
+                value: media.volume
                 onMoved: (v) => {
-                    player.volume = v
+                    media.setVolume(v)
                     chip.volumeNudged(v)
                 }
             }
@@ -270,8 +377,8 @@ Item {
     WheelHandler {
         target: null
         onWheel: (event) => {
-            const next = Math.max(0, Math.min(1, player.volume + (event.angleDelta.y / 120) * 0.05))
-            player.volume = next
+            const next = Math.max(0, Math.min(1, media.volume + (event.angleDelta.y / 120) * 0.05))
+            media.setVolume(next)
             chip.volumeNudged(next)
         }
     }

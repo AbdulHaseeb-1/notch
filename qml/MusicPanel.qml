@@ -1,44 +1,76 @@
-﻿import QtQuick
+import QtQuick
 import QtQuick.Shapes
 
-// "NOW PLAYING" card (design reference): near-black card,
-// framed artwork, title / artist with heart + volume, thin purple scrubber,
-// and a transport row spread edge to edge around a purple play button.
+// Dynamic universal "NOW PLAYING" card:
+//   - Compatible with Spotify, YouTube, Chrome, Edge, Firefox, Brave, VLC,
+//     Apple Music, any Windows SMTC app, and Noch's built-in audio player.
+//   - Extracts a live color palette (accentColor / ambientColor) from the
+//     active track's cover art or falls back to the app's brand palette.
+//   - Smoothly morphs the artwork bezel between 1:1 album square and 16:9
+//     widescreen video frame based on the thumbnail aspect ratio.
+//   - Includes a live source switcher strip when multiple media apps are open.
 Item {
     id: panel
 
     signal closeRequested()
     signal addRequested()
     signal toastRequested(string text)
+    // Folder/file drops go through Main's one ingestion path, like every
+    // other drop target.
+    signal dropForwarded(var drop)
 
     Theme { id: t }
 
-    // ---- palette
+    // ---- dynamic palette
     readonly property color cardBg:      t.surface
     readonly property color bezelBg:     t.raised
     readonly property color bezelBorder: t.border
-    readonly property color accent:      t.ink
-    readonly property color accentLight: t.ink
-    readonly property color accentDeep:  t.inkSoft
+    readonly property color dynAccent:   media.hasTrack ? media.accentColor : t.ink
+    readonly property color dynAmbient:  media.hasTrack ? media.ambientColor : t.raised
+    readonly property color accent:      dynAccent
+    readonly property color accentLight: Qt.lighter(dynAccent, 1.15)
+    readonly property color accentDeep:  Qt.darker(dynAccent, 1.28)
     readonly property color textMuted:   t.textDim
     readonly property color textFaint:   t.textFaint
 
     readonly property real pad: 22
-    readonly property real cardRadius: 24
+    readonly property real cardRadius: 28
 
     property bool queueOpen: false
+    property bool sourcesOpen: false
     property bool menuOpen: false
     property var liked: ({})
-    readonly property bool isLiked: player.hasTrack && !!liked[player.title]
+    // Keyed by artist and title: two live versions of "Same Song" (YouTube
+    // and the album rip, say) are different things to like.
+    function likeKey() {
+        return (media.artist || "") + "\u001f" + (media.title || "")
+    }
+    readonly property bool isLiked: media.hasTrack && !!liked[likeKey()]
+
+    // Helper for brand dot colors in the source switcher list
+    function brandColorFor(kind) {
+        if (kind === "spotify")    return "#1DB954"
+        if (kind === "youtube")    return "#FF2644"
+        if (kind === "chrome")     return "#4285F4"
+        if (kind === "edge")       return "#0078D7"
+        if (kind === "firefox")    return "#FF7139"
+        if (kind === "brave")      return "#FB542B"
+        if (kind === "opera")      return "#FF1B2D"
+        if (kind === "vlc")        return "#FF8800"
+        if (kind === "applemusic") return "#FA243C"
+        if (kind === "soundcloud") return "#FF5500"
+        return t.ink
+    }
 
     function toggleLike() {
-        if (!player.hasTrack)
+        if (!media.hasTrack)
             return
+        const key = likeKey()
         const next = Object.assign({}, liked)
-        if (next[player.title])
-            delete next[player.title]
+        if (next[key])
+            delete next[key]
         else
-            next[player.title] = true
+            next[key] = true
         liked = next
     }
 
@@ -52,31 +84,91 @@ Item {
         return h > 0 ? h + ":" + pad2(m) + ":" + pad2(s) : m + ":" + pad2(s)
     }
 
-    function noteAdded(n) {
-        if (n > 0)
-            panel.toastRequested(n === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(n))
-    }
-
-    readonly property bool playing: player.state === 1
-    readonly property string displayTitle: player.hasTrack ? player.title : qsTr("Nothing playing")
-    readonly property string displayArtist: player.hasTrack
-        ? (player.artist || qsTr("Unknown artist"))
-        : qsTr("Add songs or drop audio files here")
-    readonly property real displayDuration: player.hasTrack ? player.duration : 0
-    readonly property real displayPosition: seek.dragging ? seek.dragRatio * displayDuration : player.position
+    readonly property bool playing: media.playing
+    readonly property string displayTitle: media.hasTrack
+        ? (media.title || media.sourceName || qsTr("Playing"))
+        : qsTr("Nothing playing")
+    readonly property string displayArtist: media.hasTrack
+        ? (media.artist
+           ? (media.album && media.album !== media.artist
+              ? media.artist + "  ·  " + media.album
+              : media.artist)
+           : (media.sourceName || qsTr("Unknown artist")))
+        : qsTr("Play in Spotify, YouTube, Chrome, or drop audio here")
+    readonly property real displayDuration: media.hasTrack ? media.duration : 0
+    readonly property real displayPosition: seek.dragging ? seek.dragRatio * displayDuration : media.position
     readonly property real progressRatio: displayDuration > 0
-        ? (seek.dragging ? seek.dragRatio : Math.max(0, Math.min(1, player.position / displayDuration)))
-        : 0
+        ? (seek.dragging ? seek.dragRatio : Math.max(0, Math.min(1, media.position / displayDuration)))
+        : (panel.playing ? 1.0 : 0.0)
+
+    // Dynamic artwork aspect ratio: 1.0 for square album art, up to ~1.78 for
+    // YouTube / browser / video widescreen thumbnails.
+    readonly property real effectiveAspect: media.hasCover
+        ? Math.max(1.0, Math.min(1.78, media.coverAspect))
+        : 1.0
+    readonly property bool isWideArt: effectiveAspect > 1.18
+    readonly property real artInnerH: isWideArt ? 142 : 146
+    readonly property real artInnerW: Math.round(artInnerH * effectiveAspect)
+    readonly property real artBezelW: artInnerW + 26
+    readonly property real artBezelH: artInnerH + 26
 
     implicitWidth: 380
+    readonly property real targetQueueHeight: panel.queueOpen && player.count > 0 && media.source !== "system"
+                                              ? Math.min(player.count * 38 - 2, 176) + 18 : 0
+    readonly property real targetHeight: body.implicitHeight - queueBox.height + targetQueueHeight
     implicitHeight: body.implicitHeight
 
-    // The glass card itself is the music flyout in Main.qml.
+    // Dynamic ambient radial wash at the top of the card, driven by the cover
+    // artwork / source palette.
+    Item {
+        anchors.fill: parent
+        clip: true
+
+        Shape {
+            anchors.fill: parent
+            opacity: media.hasTrack ? (panel.playing ? 0.42 : 0.24) : 0.0
+            Behavior on opacity { NumberAnimation { duration: 360; easing.type: Easing.OutCubic } }
+
+            ShapePath {
+                strokeWidth: -1
+                strokeColor: "transparent"
+                fillGradient: RadialGradient {
+                    centerX: panel.width * 0.5
+                    centerY: 118
+                    centerRadius: panel.width * 0.68
+                    focalX: centerX
+                    focalY: 88
+                    GradientStop {
+                        position: 0.0
+                        color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.55)
+                        Behavior on color { ColorAnimation { duration: 420 } }
+                    }
+                    GradientStop {
+                        position: 0.52
+                        color: Qt.rgba(panel.dynAmbient.r, panel.dynAmbient.g, panel.dynAmbient.b, 0.28)
+                        Behavior on color { ColorAnimation { duration: 420 } }
+                    }
+                    GradientStop {
+                        position: 1.0
+                        color: "transparent"
+                    }
+                }
+                startX: 0; startY: 0
+                PathLine { x: panel.width; y: 0 }
+                PathLine { x: panel.width; y: panel.height }
+                PathLine { x: 0; y: panel.height }
+                PathLine { x: 0; y: 0 }
+            }
+        }
+    }
 
     DropArea {
         anchors.fill: parent
         onDropped: (drop) => {
-            panel.noteAdded(player.addUrls(drop.urls))
+            // Same central ingestion as everywhere else: audio goes to the
+            // player, app shortcuts pin, folders scan, unknowns share that
+            // one toast — no silent failures here either.
+            panel.dropForwarded(drop)
             drop.accept(Qt.CopyAction)
         }
     }
@@ -94,13 +186,6 @@ Item {
         width: 32
         height: 32
 
-        Rectangle {
-            anchors.fill: parent
-            radius: width / 2
-            color: t.ink
-            opacity: ihHit.pressed ? 0.12 : (ihHit.containsMouse ? 0.06 : 0)
-            Behavior on opacity { NumberAnimation { duration: 120 } }
-        }
         Glyph {
             anchors.centerIn: parent
             name: ih.icon
@@ -125,7 +210,7 @@ Item {
         id: body
         width: parent.width
 
-        // ── Header: ∨   NOW PLAYING   ··· ─────────────────────────────────
+        // ── Header: ∨   [ ● SOURCE ]   ··· ────────────────────────────────
         Item {
             width: parent.width
             height: 50
@@ -140,29 +225,216 @@ Item {
                 onClicked: panel.closeRequested()
             }
 
-            Text {
+            // Dynamic interactive source badge: shows active app/browser name,
+            // live brand/cover color dot, and either toggles the multi-source
+            // switcher or brings the active app window to the front.
+            Rectangle {
+                id: sourcePill
                 anchors.centerIn: parent
-                text: qsTr("NOW PLAYING")
-                color: panel.textMuted
-                font.family: t.font
-                font.pixelSize: 10
-                font.weight: Font.Bold
-                font.letterSpacing: 2.4
+                width: Math.min(parent.width - 116, sourcePillRow.implicitWidth + 22)
+                height: 26
+                radius: 13
+                color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b,
+                               panel.sourcesOpen ? 0.20 : 0.10)
+                border.width: 1
+                border.color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b,
+                                      panel.sourcesOpen || sourcePillHit.containsMouse ? 0.48 : 0.22)
+                Behavior on color { ColorAnimation { duration: 240 } }
+                Behavior on border.color { ColorAnimation { duration: 180 } }
+
+                Row {
+                    id: sourcePillRow
+                    anchors.centerIn: parent
+                    spacing: 7
+
+                    // Live status dot
+                    Rectangle {
+                        width: 7
+                        height: 7
+                        radius: 3.5
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: panel.dynAccent
+                        Behavior on color { ColorAnimation { duration: 280 } }
+
+                        SequentialAnimation on opacity {
+                            running: panel.playing
+                            loops: Animation.Infinite
+                            // `on <property>` swaps the binding out while it
+                            // runs; restore it when paused so the dot does not
+                            // freeze at a random mid-fade value.
+                            onRunningChanged: if (!running)
+                                opacity = 1.0
+
+                            NumberAnimation { to: 0.45; duration: 900; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutSine }
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        // The pill itself is width-capped, so cap the label
+                        // too — otherwise elide never engages and long source
+                        // names spill out of the pill.
+                        readonly property int maxLabelWidth: 176
+                        width: Math.min(implicitWidth, maxLabelWidth)
+                        text: media.sourceName && media.sourceName.length > 0
+                              ? media.sourceName.toUpperCase()
+                              : qsTr("NOW PLAYING")
+                        color: t.ink
+                        font.family: t.font
+                        font.pixelSize: 10
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1.8
+                        elide: Text.ElideRight
+                    }
+
+                    // Show chevron when multiple sources exist, or open-window arrow for external app
+                    Glyph {
+                        visible: media.sources.length > 1 || media.source === "system"
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: media.sources.length > 1 ? "chevron-down" : "open"
+                        size: 11
+                        stroke: 2.0
+                        color: panel.textMuted
+                        rotation: media.sources.length > 1 && panel.sourcesOpen ? 180 : 0
+                        Behavior on rotation { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    }
+                }
+
+                MouseArea {
+                    id: sourcePillHit
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        if (media.sources.length > 1)
+                            panel.sourcesOpen = !panel.sourcesOpen
+                        else if (media.source === "system")
+                            media.activateSourceApp()
+                    }
+                }
             }
 
-            IconHit {
-                id: moreBtn
+            Row {
                 anchors.right: parent.right
                 anchors.rightMargin: panel.pad - 8
                 anchors.verticalCenter: parent.verticalCenter
-                icon: "more"
-                glyphSize: 16
-                color: panel.menuOpen ? t.ink : panel.textMuted
-                onClicked: panel.menuOpen = !panel.menuOpen
+                spacing: 2
+
+                // Quick button to jump straight to the playing app window when
+                // multiple sources exist (so the center pill toggles sources).
+                IconHit {
+                    visible: media.source === "system" && media.sources.length > 1
+                    icon: "open"
+                    glyphSize: 14
+                    stroke: 1.9
+                    color: panel.textMuted
+                    hoverColor: panel.dynAccent
+                    onClicked: media.activateSourceApp()
+                }
+
+                IconHit {
+                    id: moreBtn
+                    icon: "more"
+                    glyphSize: 16
+                    color: panel.menuOpen ? t.ink : panel.textMuted
+                    onClicked: panel.menuOpen = !panel.menuOpen
+                }
             }
         }
 
-        // ── Artwork ─────────────────────────────────────────────────────
+        // ── Multi-Source Switcher Strip (Spotify, YouTube, Chrome, VLC, Noch) ──
+        Item {
+            id: sourceStripBox
+            width: parent.width
+            readonly property bool shown: panel.sourcesOpen && media.sources.length > 1
+            height: shown ? sourceStripRow.implicitHeight + 14 : 0
+            opacity: shown ? 1 : 0
+            visible: height > 0.5
+            clip: true
+            Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
+            Behavior on opacity { NumberAnimation { duration: 160 } }
+
+            Flickable {
+                anchors.left: parent.left
+                anchors.leftMargin: panel.pad
+                anchors.right: parent.right
+                anchors.rightMargin: panel.pad
+                anchors.top: parent.top
+                anchors.topMargin: 2
+                height: sourceStripRow.implicitHeight + 4
+                contentWidth: sourceStripRow.implicitWidth
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Row {
+                    id: sourceStripRow
+                    spacing: 6
+
+                    Repeater {
+                        model: media.sources
+
+                        delegate: Rectangle {
+                            id: srcChip
+                            required property var modelData
+                            // The C++ side marks the live source with
+                            // `active` (no `selected` field exists), so this
+                            // chip used to never get its highlight.
+                            readonly property bool isCurrent: !!modelData.active
+                            readonly property color chipAccent: panel.brandColorFor(modelData.kind)
+
+                            width: srcChipInner.implicitWidth + 18
+                            height: 26
+                            radius: 13
+                            color: isCurrent
+                                   ? Qt.rgba(chipAccent.r, chipAccent.g, chipAccent.b, 0.18)
+                                   : t.raised
+                            border.width: 1
+                            border.color: isCurrent
+                                          ? Qt.rgba(chipAccent.r, chipAccent.g, chipAccent.b, 0.55)
+                                          : t.border
+                            Behavior on color { ColorAnimation { duration: 160 } }
+                            Behavior on border.color { ColorAnimation { duration: 160 } }
+
+                            Row {
+                                id: srcChipInner
+                                anchors.centerIn: parent
+                                spacing: 6
+
+                                Rectangle {
+                                    width: 6
+                                    height: 6
+                                    radius: 3
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: srcChip.chipAccent
+                                    opacity: srcChip.modelData.playing || srcChip.isCurrent ? 1.0 : 0.55
+                                }
+
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: srcChip.modelData.name
+                                    color: srcChip.isCurrent ? t.ink : panel.textMuted
+                                    font.family: t.font
+                                    font.pixelSize: 11
+                                    font.weight: srcChip.isCurrent ? Font.Bold : Font.Medium
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    media.selectSource(srcChip.modelData.id)
+                                    panel.sourcesOpen = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Adaptive Artwork Frame (1:1 Album or 16:9 Widescreen Video) ───
         Item {
             width: parent.width
             height: art.height + 4
@@ -170,8 +442,10 @@ Item {
             Item {
                 id: art
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 172
-                height: 172
+                width: panel.artBezelW
+                height: panel.artBezelH
+                Behavior on width { NumberAnimation { duration: 280; easing.type: Easing.OutQuint } }
+                Behavior on height { NumberAnimation { duration: 280; easing.type: Easing.OutQuint } }
 
                 Rectangle {
                     id: bezel
@@ -179,31 +453,36 @@ Item {
                     radius: 18
                     color: panel.bezelBg
                     border.width: 1
-                    border.color: panel.bezelBorder
+                    border.color: media.hasTrack
+                                  ? Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.28)
+                                  : panel.bezelBorder
+                    Behavior on border.color { ColorAnimation { duration: 320 } }
 
                     Rectangle {
                         id: artInner
                         anchors.centerIn: parent
-                        width: parent.width - 38
-                        height: width
-                        radius: 8
+                        width: panel.artInnerW
+                        height: panel.artInnerH
+                        radius: 10
                         color: "#0c0c0f"
                         clip: true
+                        Behavior on width { NumberAnimation { duration: 280; easing.type: Easing.OutQuint } }
+                        Behavior on height { NumberAnimation { duration: 280; easing.type: Easing.OutQuint } }
 
                         Image {
                             id: coverImg
                             anchors.fill: parent
-                            source: player.hasCover ? "image://cover/" + player.coverRev : ""
-                            sourceSize: Qt.size(320, 320)
+                            source: media.hasCover ? media.coverUrl : ""
+                            sourceSize: Qt.size(560, 560)
                             fillMode: Image.PreserveAspectCrop
-                            visible: player.hasCover && status === Image.Ready
+                            visible: media.hasCover && status === Image.Ready
                             asynchronous: true
                             smooth: true
                             mipmap: true
                         }
 
-                        // Default artwork: glowing polyhedron (shown when the file
-                        // carries no cover).
+                        // Default artwork: glowing polyhedron dynamically tinted
+                        // with the active source/app palette when no cover is present.
                         Item {
                             id: defaultArt
                             anchors.fill: parent
@@ -212,7 +491,13 @@ Item {
                             Rectangle {
                                 anchors.fill: parent
                                 gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "#1f1f24" }
+                                    GradientStop {
+                                        position: 0.0
+                                        color: Qt.rgba(panel.dynAmbient.r * 0.65,
+                                                       panel.dynAmbient.g * 0.65,
+                                                       panel.dynAmbient.b * 0.65, 1.0)
+                                        Behavior on color { ColorAnimation { duration: 360 } }
+                                    }
                                     GradientStop { position: 1.0; color: "#0a0a0d" }
                                 }
                             }
@@ -225,12 +510,20 @@ Item {
                                     fillGradient: RadialGradient {
                                         centerX: defaultArt.width / 2
                                         centerY: defaultArt.height / 2
-                                        centerRadius: defaultArt.width * 0.5
+                                        centerRadius: Math.max(defaultArt.width, defaultArt.height) * 0.55
                                         focalX: centerX
                                         focalY: centerY
-                                        GradientStop { position: 0.0; color: "#40ffffff" }
-                                        GradientStop { position: 0.5; color: "#1cb0b0ba" }
-                                        GradientStop { position: 1.0; color: "#00b0b0ba" }
+                                        GradientStop {
+                                            position: 0.0
+                                            color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.36)
+                                            Behavior on color { ColorAnimation { duration: 360 } }
+                                        }
+                                        GradientStop {
+                                            position: 0.55
+                                            color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.12)
+                                            Behavior on color { ColorAnimation { duration: 360 } }
+                                        }
+                                        GradientStop { position: 1.0; color: "transparent" }
                                     }
                                     startX: 0; startY: 0
                                     PathLine { x: defaultArt.width; y: 0 }
@@ -244,7 +537,7 @@ Item {
                             Item {
                                 id: gem
                                 anchors.centerIn: parent
-                                width: parent.width * 0.56
+                                width: Math.min(parent.width, parent.height) * 0.56
                                 height: width
                                 property real bob: 0
                                 anchors.verticalCenterOffset: -3 * bob
@@ -267,7 +560,11 @@ Item {
                                         strokeColor: "transparent"
                                         fillGradient: LinearGradient {
                                             x1: 20; y1: 10; x2: 80; y2: 90
-                                            GradientStop { position: 0.0; color: "#80ffffff" }
+                                            GradientStop {
+                                                position: 0.0
+                                                color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.55)
+                                                Behavior on color { ColorAnimation { duration: 360 } }
+                                            }
                                             GradientStop { position: 1.0; color: "#30707078" }
                                         }
                                         PathSvg { path: "M50 10 L85 30 L85 70 L50 90 L15 70 L15 30 Z" }
@@ -292,17 +589,32 @@ Item {
                                 }
                             }
                         }
+
+                        // Clicking the artwork brings the external app to front,
+                        // or opens file picker when empty.
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: media.source === "system" || !media.hasTrack
+                                         ? Qt.PointingHandCursor
+                                         : Qt.ArrowCursor
+                            onClicked: {
+                                if (media.source === "system")
+                                    media.activateSourceApp()
+                                else if (!media.hasTrack)
+                                    panel.addRequested()
+                            }
+                        }
                     }
                 }
             }
         }
 
-        Item { width: 1; height: 18 }
+        Item { width: 1; height: 16 }
 
-        // ── Title / artist + heart & volume ─────────────────────────────
+        // ── Title / artist + queue & heart ──────────────────────────────
         Item {
             width: parent.width
-            height: 40
+            height: 42
 
             Column {
                 anchors.left: parent.left
@@ -337,15 +649,24 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: panel.pad - 8
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: 0
+                spacing: 2
+
+                IconHit {
+                    visible: player.count > 0 && media.source !== "system"
+                    icon: "list"
+                    glyphSize: 16
+                    color: panel.queueOpen ? panel.accent : panel.textMuted
+                    hoverColor: t.ink
+                    onClicked: panel.queueOpen = !panel.queueOpen
+                }
 
                 IconHit {
                     icon: "heart"
                     glyphSize: 17
                     filled: panel.isLiked
-                    color: panel.accent
+                    color: panel.isLiked ? panel.accent : panel.textMuted
                     hoverColor: panel.accentLight
-                    opacity: player.hasTrack ? 1 : 0.4
+                    opacity: media.hasTrack ? 1 : 0.4
                     onClicked: panel.toggleLike()
                 }
             }
@@ -361,7 +682,7 @@ Item {
 
             property real dragRatio: 0
             property bool dragging: false
-            readonly property bool enabled2: player.hasTrack && player.duration > 0
+            readonly property bool enabled2: media.hasTrack && media.canSeek && media.duration > 0
 
             Item {
                 id: seekTrack
@@ -370,7 +691,7 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: panel.pad
                 y: 4
-                height: seekMouse.containsMouse || seek.dragging ? 5 : 3
+                height: (seekMouse.containsMouse || seek.dragging) && seek.enabled2 ? 5 : 3
                 Behavior on height { NumberAnimation { duration: 120 } }
 
                 Rectangle {
@@ -383,10 +704,19 @@ Item {
                     visible: panel.progressRatio > 0
                     height: parent.height
                     radius: height / 2
+                    opacity: panel.displayDuration > 0 ? 1.0 : 0.45
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: panel.accentDeep }
-                        GradientStop { position: 1.0; color: panel.accent }
+                        GradientStop {
+                            position: 0.0
+                            color: panel.accentDeep
+                            Behavior on color { ColorAnimation { duration: 280 } }
+                        }
+                        GradientStop {
+                            position: 1.0
+                            color: panel.accent
+                            Behavior on color { ColorAnimation { duration: 280 } }
+                        }
                     }
                 }
                 Rectangle {
@@ -395,9 +725,10 @@ Item {
                     radius: width / 2
                     anchors.verticalCenter: parent.verticalCenter
                     x: Math.max(0, Math.min(parent.width - width, panel.progressRatio * parent.width - width / 2))
-                    color: t.ink
+                    color: panel.accentLight
                     visible: seek.enabled2
                     Behavior on width { NumberAnimation { duration: 120 } }
+                    Behavior on color { ColorAnimation { duration: 280 } }
                 }
 
                 MouseArea {
@@ -407,7 +738,7 @@ Item {
                     anchors.bottomMargin: -10
                     enabled: seek.enabled2
                     hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
+                    cursorShape: seek.enabled2 ? Qt.PointingHandCursor : Qt.ArrowCursor
                     preventStealing: true
                     function ratioAt(x) { return Math.max(0, Math.min(1, x / width)) }
                     onPressed: (mouse) => {
@@ -421,7 +752,7 @@ Item {
                     // Seek once on release instead of on every pixel of drag.
                     onReleased: (mouse) => {
                         seek.dragRatio = ratioAt(mouse.x)
-                        player.seek(Math.round(seek.dragRatio * player.duration))
+                        media.seek(Math.round(seek.dragRatio * media.duration))
                         seek.dragging = false
                     }
                     onCanceled: seek.dragging = false
@@ -432,7 +763,9 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: panel.pad
                 anchors.bottom: parent.bottom
-                text: panel.fmtClock(panel.displayPosition)
+                text: panel.displayDuration > 0
+                      ? panel.fmtClock(panel.displayPosition)
+                      : (media.hasTrack ? (panel.playing ? qsTr("LIVE") : qsTr("PAUSED")) : "0:00")
                 color: panel.textFaint
                 font.family: t.font
                 font.pixelSize: 11
@@ -443,7 +776,9 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: panel.pad
                 anchors.bottom: parent.bottom
-                text: panel.fmtClock(panel.displayDuration)
+                text: panel.displayDuration > 0
+                      ? panel.fmtClock(panel.displayDuration)
+                      : (media.hasTrack && media.sourceName ? media.sourceName : "0:00")
                 color: panel.textFaint
                 font.family: t.font
                 font.pixelSize: 11
@@ -455,7 +790,7 @@ Item {
         // ── Transport: shuffle · prev · PLAY · next · repeat ────────────
         Item {
             width: parent.width
-            height: 82
+            height: 76
 
             IconHit {
                 anchors.left: parent.left
@@ -463,9 +798,10 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 icon: "shuffle"
                 glyphSize: 17
-                color: player.shuffle ? panel.accent : panel.textFaint
-                hoverColor: player.shuffle ? panel.accentLight : t.ink
-                onClicked: player.shuffle = !player.shuffle
+                opacity: media.canShuffle ? 1.0 : 0.35
+                color: media.shuffle ? panel.accent : panel.textFaint
+                hoverColor: media.shuffle ? panel.accentLight : t.ink
+                onClicked: if (media.canShuffle) media.toggleShuffle()
             }
 
             IconHit {
@@ -475,8 +811,9 @@ Item {
                 width: 40; height: 40
                 icon: "prev"
                 glyphSize: 22
-                color: t.ink
-                onClicked: player.previous()
+                color: media.canPrev ? t.ink : panel.textFaint
+                hoverColor: t.ink
+                onClicked: if (media.canPrev) media.previous()
             }
 
             Item {
@@ -490,19 +827,27 @@ Item {
                     anchors.fill: parent
                     radius: width / 2
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: playHit.containsMouse ? t.ink : t.ink }
-                        GradientStop { position: 1.0; color: playHit.containsMouse ? t.inkSoft : t.inkSoft }
+                        GradientStop {
+                            position: 0.0
+                            color: media.hasTrack ? panel.accent : t.ink
+                            Behavior on color { ColorAnimation { duration: 280 } }
+                        }
+                        GradientStop {
+                            position: 1.0
+                            color: media.hasTrack ? panel.accentDeep : t.inkSoft
+                            Behavior on color { ColorAnimation { duration: 280 } }
+                        }
                     }
                     scale: playHit.pressed ? 0.92 : (playHit.containsMouse ? 1.04 : 1)
                     Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutBack } }
 
                     Glyph {
                         anchors.centerIn: parent
-                        anchors.horizontalCenterOffset: !player.hasTrack || panel.playing ? 0 : 1.5
-                        name: !player.hasTrack ? "plus" : (panel.playing ? "pause" : "play")
-                        size: player.hasTrack ? 22 : 20
+                        anchors.horizontalCenterOffset: !media.hasTrack || panel.playing ? 0 : 1.5
+                        name: !media.hasTrack ? "plus" : (panel.playing ? "pause" : "play")
+                        size: media.hasTrack ? 22 : 20
                         stroke: 2.4
-                        color: t.inverse
+                        color: media.hasTrack ? "#ffffff" : t.inverse
                     }
                 }
 
@@ -512,10 +857,10 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
-                        if (!player.hasTrack)
+                        if (!media.hasTrack)
                             panel.addRequested()
                         else
-                            player.toggle()
+                            media.toggle()
                     }
                 }
             }
@@ -527,8 +872,9 @@ Item {
                 width: 40; height: 40
                 icon: "next"
                 glyphSize: 22
-                color: t.ink
-                onClicked: player.next()
+                color: media.canNext ? t.ink : panel.textFaint
+                hoverColor: t.ink
+                onClicked: if (media.canNext) media.next()
             }
 
             IconHit {
@@ -538,13 +884,14 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 icon: "repeat"
                 glyphSize: 17
-                color: player.repeatMode > 0 ? panel.accent : panel.textFaint
-                hoverColor: player.repeatMode > 0 ? panel.accentLight : t.ink
-                onClicked: player.cycleRepeat()
+                opacity: media.canRepeat ? 1.0 : 0.35
+                color: media.repeatMode > 0 ? panel.accent : panel.textFaint
+                hoverColor: media.repeatMode > 0 ? panel.accentLight : t.ink
+                onClicked: if (media.canRepeat) media.cycleRepeat()
 
                 // "1" badge for repeat-one.
                 Rectangle {
-                    visible: player.repeatMode === 2
+                    visible: media.repeatMode === 2
                     x: parent.width - width - 3
                     y: 3
                     width: 11
@@ -554,7 +901,7 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: "1"
-                        color: t.inverse
+                        color: "#ffffff"
                         font.family: t.font
                         font.pixelSize: 8
                         font.weight: Font.Black
@@ -563,7 +910,8 @@ Item {
             }
         }
 
-        // ── Volume: slider with the mute toggle and a percentage
+        // ── Universal Volume: controls system master volume for external apps
+        // (Spotify, YouTube, Chrome, etc.) or player volume for internal audio.
         Item {
             width: parent.width
             height: 30
@@ -573,11 +921,11 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: panel.pad - 8
                 anchors.verticalCenter: parent.verticalCenter
-                icon: player.muted || player.volume < 0.01 ? "mute" : "volume"
+                icon: media.muted || media.volume < 0.01 ? "mute" : "volume"
                 glyphSize: 16
                 color: panel.textMuted
                 hoverColor: t.ink
-                onClicked: player.toggleMute()
+                onClicked: media.toggleMute()
             }
 
             SizeSlider {
@@ -588,8 +936,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 from: 0
                 to: 1
-                value: player.volume
-                onMoved: (v) => player.volume = v
+                value: media.volume
+                onMoved: (v) => media.setVolume(v)
             }
 
             Text {
@@ -599,7 +947,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 34
                 horizontalAlignment: Text.AlignRight
-                text: Math.round(player.volume * 100) + "%"
+                text: Math.round(media.volume * 100) + "%"
                 color: panel.textFaint
                 font.family: t.font
                 font.pixelSize: 11
@@ -608,11 +956,12 @@ Item {
             }
         }
 
-        // ── Queue (toggled from the ··· menu) ───────────────────────────
+        // ── Queue (toggled from the ··· menu or list icon) ──────────────
         Item {
             id: queueBox
             width: parent.width
-            height: panel.queueOpen && player.count > 0 ? Math.min(queueList.contentHeight, 176) + 18 : 0
+            height: panel.queueOpen && player.count > 0 && media.source !== "system"
+                    ? Math.min(queueList.contentHeight, 176) + 18 : 0
             clip: true
             Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
@@ -641,13 +990,6 @@ Item {
                     width: queueList.width
                     height: 36
                     readonly property bool current: index === player.index
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: 10
-                        color: qRow.current ? t.hover : t.ink
-                        opacity: qRow.current ? 1 : (qRowHit.containsMouse ? 0.05 : 0)
-                    }
 
                     Text {
                         id: qNum
@@ -695,6 +1037,8 @@ Item {
                         glyphSize: 12
                         stroke: 2
                         opacity: qRowHit.containsMouse || hovered ? 1 : 0
+                        // Invisible must also mean unclickable.
+                        enabled: opacity > 0.5
                         onClicked: player.remove(qRow.index)
                     }
                 }
@@ -717,7 +1061,7 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: 12
         y: targetY + (panel.menuOpen ? 0 : -6)
-        width: 176
+        width: 192
         height: optCol.implicitHeight + 12
         radius: 14
         tint: t.surface
@@ -735,14 +1079,31 @@ Item {
             MenuRow {
                 width: parent.width
                 implicitHeight: 34
-                label: qsTr("Add songs…")
+                visible: media.source === "system" && media.sourceName.length > 0
+                label: qsTr("Open %1").arg(media.sourceName)
+                icon: "open"
+                onTriggered: { panel.menuOpen = false; media.activateSourceApp() }
+            }
+            MenuRow {
+                width: parent.width
+                implicitHeight: 34
+                visible: media.sources.length > 1
+                label: panel.sourcesOpen ? qsTr("Hide media sources") : qsTr("Switch media source")
+                icon: "globe"
+                hint: String(media.sources.length)
+                onTriggered: { panel.menuOpen = false; panel.sourcesOpen = !panel.sourcesOpen }
+            }
+            MenuRow {
+                width: parent.width
+                implicitHeight: 34
+                label: qsTr("Add local songs…")
                 icon: "plus"
                 onTriggered: { panel.menuOpen = false; panel.addRequested() }
             }
             MenuRow {
                 width: parent.width
                 implicitHeight: 34
-                visible: player.count > 0
+                visible: player.count > 0 && media.source !== "system"
                 label: panel.queueOpen ? qsTr("Hide queue") : qsTr("Show queue")
                 icon: "list"
                 hint: player.count > 0 ? String(player.count) : ""
@@ -751,7 +1112,7 @@ Item {
             MenuRow {
                 width: parent.width
                 implicitHeight: 34
-                visible: player.count > 0
+                visible: player.count > 0 && media.source !== "system"
                 label: qsTr("Clear queue")
                 icon: "unpin"
                 danger: true

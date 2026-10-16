@@ -2,6 +2,10 @@
 
 #include <QSettings>
 
+#ifdef Q_OS_WIN
+#  include <windows.h>
+#endif
+
 namespace {
 const char kLightKey[] = "ui/lightTheme";
 }
@@ -21,4 +25,17 @@ void Appearance::setLight(bool light)
     QSettings settings;
     settings.setValue(QLatin1String(kLightKey), m_light);
     emit lightChanged();
+}
+
+bool Appearance::systemMotionReduced() const
+{
+#ifdef Q_OS_WIN
+    // SPI_GETCLIENTAREAANIMATION reflects the user's "Animation effects"
+    // toggle; when it is off, background/client-area animations should calm
+    // down. Unsupported or failing queries default to "animations on".
+    BOOL enabled = TRUE;
+    if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0))
+        return !enabled;
+#endif
+    return false;
 }

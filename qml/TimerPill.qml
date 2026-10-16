@@ -23,11 +23,10 @@ Item {
     readonly property real pillH: Math.round(50 * s)
     readonly property real ringSize: Math.round(24 * s)
 
-    // The pill springs open and shut, so it pops in rather than slides.
-    // (`grow` is clamped so a bounce can never give it a negative width.)
+    // The pill expands and contracts smoothly.
     property real grow: shown ? 1 : 0
     Behavior on grow {
-        SpringAnimation { spring: 4.2; damping: pill.shown ? 0.38 : 0.8; epsilon: 0.002 }
+        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
     }
     width: Math.max(0, grow) * (row.implicitWidth + Math.round(26 * s))
     height: pillH
@@ -48,8 +47,8 @@ Item {
         NumberAnimation { to: 1; duration: 520; easing.type: Easing.InOutSine }
         NumberAnimation { to: 0; duration: 520; easing.type: Easing.InOutSine }
     }
-    scale: (hover.hovered ? 1.04 : 1) * (1 + 0.05 * pulse) * (tap.pressed ? 0.95 : 1)
-    Behavior on scale { SpringAnimation { spring: 5; damping: 0.35; epsilon: 0.0005 } }
+    scale: (hover.hovered ? 1.03 : 1) * (1 + 0.04 * pulse) * (tap.pressed ? 0.96 : 1)
+    Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
     Glass {
         anchors.fill: parent

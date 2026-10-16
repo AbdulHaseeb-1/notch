@@ -20,7 +20,7 @@ Item {
     Theme { id: t }
 
     visible: showClock || showStats
-    width: visible ? row.implicitWidth + Math.round(20 * s) : 0
+    width: visible ? row.implicitWidth + Math.round(18 * s) : 0
     height: parent ? parent.height : Math.round(50 * s)
     opacity: appear
 
@@ -42,47 +42,38 @@ Item {
         property string label
         property string value
         property bool warn: false
-        spacing: Math.round(5 * block.s)
+        spacing: Math.round(4 * block.s)
 
         Text {
-            width: Math.round(26 * block.s)
+            width: Math.round(24 * block.s)
             text: line.label
             color: t.textDim
             font.family: t.font
-            font.pixelSize: Math.round(10 * block.s)
+            font.pixelSize: Math.max(8, Math.round(9.5 * block.s))
             font.weight: Font.DemiBold
         }
         Text {
             text: line.value
             color: line.warn ? t.danger : t.ink
             font.family: t.font
-            font.pixelSize: Math.round(11.5 * block.s)
+            font.pixelSize: Math.max(9, Math.round(10 * block.s))
             font.weight: Font.Bold
             font.features: ({ "tnum": 1 })
         }
     }
 
-    Rectangle {
-        anchors.centerIn: parent
-        width: parent.width
-        height: parent.height - Math.round(14 * block.s)
-        radius: Math.round(10 * block.s)
-        color: block.active ? t.hover : t.raised
-        opacity: block.active || hit.containsMouse ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 140 } }
-        Behavior on color { ColorAnimation { duration: 140 } }
-    }
-
     Row {
         id: row
         anchors.centerIn: parent
-        spacing: Math.round(12 * block.s)
+        spacing: Math.round(10 * block.s)
+        scale: hit.pressed ? 0.96 : 1
+        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
 
         Column {
             id: stats
             visible: block.showStats
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 1
+            spacing: -1
 
             StatLine {
                 label: "CPU"
@@ -120,10 +111,10 @@ Item {
 
             Text {
                 anchors.right: parent.right
-                text: block.now.toLocaleDateString(Qt.locale(), "M/d/yyyy")
-                color: t.text
+                text: block.now.toLocaleDateString(Qt.locale(), "ddd, MMM d")
+                color: t.textDim
                 font.family: t.font
-                font.pixelSize: Math.round(12.5 * block.s)
+                font.pixelSize: Math.round(10.5 * block.s)
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
             }
