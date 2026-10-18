@@ -204,9 +204,49 @@ Item {
 
                 HoverHandler { id: rowHover; cursorShape: Qt.PointingHandCursor }
 
+                // What kind of text this is, for the tile glyph.
+                readonly property string kind: {
+                    const t = String(row.modelData.preview || "").trim()
+                    if (/^(https?:\/\/|www\.)\S+$/i.test(t)) return "globe"
+                    if (/^(\$ |>|git |npm |cmake |cd |ls |dir |python|pip |winget )/.test(t)
+                            || /[{};]\s*$/.test(t)) return "terminal"
+                    if (row.modelData.lines > 1) return "doc"
+                    return "note"
+                }
+
+                // Glass row: transparent at rest, lifted on hover.
+                Rectangle {
+                    x: 10
+                    y: 2
+                    width: parent.width - 20
+                    height: parent.height - 4
+                    radius: Theme.radiusMd
+                    color: row.hot ? Theme.glassFillHover : "transparent"
+                    border.width: row.hot ? 1 : 0
+                    border.color: Theme.glassBorder
+                }
+
+                Rectangle {
+                    id: kindTile
+                    x: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 28
+                    height: 28
+                    radius: Theme.radiusSm + 1
+                    color: Theme.glassFillActive
+                    border.width: 1
+                    border.color: Theme.glassBorder
+                    Glyph {
+                        anchors.centerIn: parent
+                        name: row.kind
+                        size: 14
+                        color: row.hot ? Theme.ink : Theme.inkSoft
+                    }
+                }
+
                 Column {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 20
+                    anchors.left: kindTile.right
+                    anchors.leftMargin: 11
                     anchors.right: actions.left
                     anchors.rightMargin: 6
                     anchors.verticalCenter: parent.verticalCenter
