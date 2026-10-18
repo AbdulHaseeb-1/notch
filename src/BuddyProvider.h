@@ -189,6 +189,7 @@ public:
     Q_INVOKABLE void resolveApproval(bool approve, bool always = false);
     Q_INVOKABLE QString tracesPath() const;
     Q_INVOKABLE QString effectiveWorkspace() const;
+    void syncPrivatePaths();
 
     Q_INVOKABLE QString chatUrl() const;
     Q_INVOKABLE QString modelsUrl() const;
