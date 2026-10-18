@@ -314,6 +314,7 @@ private:
     // handoffs
     bool m_handoffs = true;
     QString m_activeAgent = QStringLiteral("buddy");
+    QString m_memoryIndexSnapshot;   // memoryIndex() taken at run start
     int m_handoffCount = 0;
     void setActiveAgent(const QString &id);
     bool toolAllowedForActiveAgent(const QString &tool) const;

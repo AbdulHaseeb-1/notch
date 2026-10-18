@@ -1062,13 +1062,9 @@ QString BuddyProvider::systemPrompt() const
     if (m_allowCodeSearch)
         caps << QStringLiteral("- `glob_grep`: Fast file & code discovery (`mode: \"glob\"` for filename pattern matching, `mode: \"grep\"` for regex content search with line numbers).");
     if (m_allowMemory) {
-        const QDir memDir(memoriesPath());
-        const QStringList memFiles = memDir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-        const QString snapshot = memFiles.isEmpty()
-            ? QStringLiteral("currently empty")
-            : QStringLiteral("files: ") + memFiles.mid(0, 12).join(QStringLiteral(", "));
-        caps << QStringLiteral("- `memory`: Anthropic Memory tool rooted at `/memories` (%1). Use `view`, `create`, `str_replace`, `insert`, `delete`, or `rename` to recall and persist user facts, preferences, and ongoing notes across sessions.")
-                    .arg(snapshot);
+        // Contents come from the per-run snapshot (memoryIndex) further down,
+        // so this line stays identical across turns.
+        caps << QStringLiteral("- `memory`: Anthropic Memory tool rooted at `/memories` (saved files are listed below). Use `view`, `create`, `str_replace`, `insert`, `delete`, or `rename` to recall and persist user facts, preferences, and ongoing notes across sessions.");
     }
     if (m_allowWebSearch) {
         caps << QStringLiteral("- `web_search`: Search the live web (`query`, `max_results`) for current information, news, prices, or documentation.");
@@ -1096,7 +1092,7 @@ QString BuddyProvider::systemPrompt() const
     else if (m_handoffs)
         safety += QStringLiteral("\n\nSpecialists: for focused web research use `transfer_to_research`; for reading, "
                                  "editing or building code use `transfer_to_code`. Handle quick questions yourself.");
-    safety += memoryIndex();
+    safety += m_memoryIndexSnapshot;
     return base + safety + QStringLiteral("\n\nYou have the Anthropic Agent SDK tool suite armed:\n")
          + caps.join('\n')
          + QStringLiteral("\nWhen tackling multi-step or technical tasks, you can consult `advisor`, track progress with `todo_write`, search tools with `tool_search`, search the web with `web_search`/`web_fetch`, persist knowledge in `memory`, or act on the system via `bash`, `str_replace_editor`, `glob_grep`, and `computer`.");
@@ -1763,6 +1759,9 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_toolsDisabledForTurn = false;
     m_accumulatedText.clear();
     m_handoffCount = 0;
+    // One memory listing per run: a stable system prompt keeps the prompt
+    // cache warm even when the model writes memories mid-run.
+    m_memoryIndexSnapshot = memoryIndex();
     if (m_activeAgent != QLatin1String("buddy")) {   // every run starts with Buddy
         m_activeAgent = QStringLiteral("buddy");
         emit activeAgentChanged();
@@ -2046,6 +2045,10 @@ void BuddyProvider::cancel()
     clearPendingApproval();
     m_streamConsumed = false;
     setStreamText(QString(), false);
+    if (m_activeAgent != QLatin1String("buddy")) {   // no specialist outlives its run
+        m_activeAgent = QStringLiteral("buddy");
+        emit activeAgentChanged();
+    }
     finishTrace(QStringLiteral("cancelled"));
     if (m_activeProcess) {
         QProcess *proc = m_activeProcess;
@@ -2384,9 +2387,26 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
             emit statusChanged(QStringLiteral("idle"));
             return;
         }
+        if (transportOk && !m_stream.complete()) {
+            // The server closed the stream before the model finished (a
+            // proxy timeout, a dropped connection). Never treat the partial
+            // message as the answer: retry, then surface an error.
+            setStreamText(QString(), false);
+            addSpan(QJsonObject{ { "type", "stream" }, { "event", "truncated" }, { "chars", m_stream.text().size() } });
+            if (scheduleRetry(500, QNetworkReply::NoError, QByteArray()))
+                return;
+            const QString msg = tr("The reply stream ended before the model finished.");
+            setActiveToolState(QString(), QString());
+            finishTrace(QStringLiteral("error"), msg);
+            emit errorOccurred(msg);
+            emit statusChanged(QStringLiteral("idle"));
+            return;
+        }
         if (transportOk)
             data = QJsonDocument(m_stream.message()).toJson(QJsonDocument::Compact);
-        setStreamText(m_stream.text(), false);
+        // A dropped stream is retried or surfaced as an error: do not leave
+        // its partial text behind as if it were the answer.
+        setStreamText(transportOk ? m_stream.text() : QString(), false);
     }
 
     if (!transportOk || status < 200 || status >= 300) {

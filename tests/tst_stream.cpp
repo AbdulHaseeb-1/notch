@@ -110,6 +110,22 @@ private slots:
         QCOMPARE(m.value("usage").toObject().value("prompt_tokens_details").toObject().value("cached_tokens").toInt(), 16);
     }
 
+    void completeOnlyWhenTheModelFinished() {
+        StreamAccumulator a(StreamAccumulator::Format::Anthropic);
+        a.feed("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null}}\n\n"
+               "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+               "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hal\"}}\n\n");
+        QVERIFY(!a.complete());
+        a.feed("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n");
+        QVERIFY(a.complete());   // stop reason seen, message_stop may still be in flight
+
+        StreamAccumulator o(StreamAccumulator::Format::OpenAI);
+        o.feed("data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n");
+        QVERIFY(!o.complete());
+        o.feed("data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n");
+        QVERIFY(o.complete());   // lenient servers omit [DONE]
+    }
+
     void garbageIsIgnored() {
         StreamAccumulator acc(StreamAccumulator::Format::OpenAI);
         QVERIFY(!acc.feed("data: {not json\n\nretry: 1000\n\n"));

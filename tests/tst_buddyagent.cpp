@@ -451,6 +451,51 @@ private slots:
         QCOMPARE(ready.first().first().toString(), QStringLiteral("recovered"));
     }
 
+    void truncatedStreamIsRetriedNotAnswered() {
+        QList<QByteArray> cut = sseText({ "partial ", "answer ", "that ", "never ", "ends" });
+        cut.removeLast();   // drop content_block_stop / message_delta / message_stop
+        fake->queue = { Reply{ 200, {}, cut, 10 }, Reply{ 200, {}, sseText({ "whole ", "answer" }), 10 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 2);
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("whole answer"));
+    }
+
+    void memoryIndexStableWithinRun() {
+        bp->setAllowMemory(true);
+        QDir().mkpath(bp->memoriesPath());
+        const QString late = QDir(bp->memoriesPath()).filePath("written-mid-run.md");
+        QFile::remove(late);
+        fake->queue = { Reply{ 200, {}, sseToolUse("tm", "echo hi"), 120 }, { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QTRY_COMPARE_WITH_TIMEOUT(fake->requests.size(), 1, 5000);
+        QFile f(late);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(fake->requests.size(), 2);
+        // Same system prompt on every turn of the run (prompt cache stays warm).
+        QCOMPARE(systemText(fake->requests.at(1)), systemText(fake->requests.at(0)));
+        QVERIFY(!systemText(fake->requests.at(1)).contains("written-mid-run.md"));
+        QFile::remove(late);
+    }
+
+    void cancelResetsSpecialist() {
+        fake->queue = {
+            { 200, toolUseNamed("h1", "transfer_to_research", QJsonObject{ { "reason", "sources" } }) },
+            Reply{ 200, {}, sseText({ "slow ", "research ", "answer" }), 400 } };
+        bp->sendMessage("research something");
+        QTRY_COMPARE_WITH_TIMEOUT(bp->activeAgent(), QStringLiteral("research"), 5000);
+        bp->cancel();
+        QCOMPARE(bp->activeAgent(), QStringLiteral("buddy"));
+        QVERIFY(bp->streamText().isEmpty());
+    }
+
     void openAiStreamToolThenText() {
         bp->setProvider("openai");
         bp->setApiBase(fake->base() + "/v1");

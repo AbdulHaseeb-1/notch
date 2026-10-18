@@ -33,6 +33,9 @@ public:
     QJsonObject message() const;
     bool sawEvents() const { return m_events > 0; }
     bool finished() const { return m_finished; }
+    // The model actually finished: a terminal event (message_stop / [DONE])
+    // or a stop/finish reason. A stream that closes without one was cut off.
+    bool complete() const;
     bool hasError() const { return !m_error.isEmpty(); }
     QString errorMessage() const { return m_error; }
     int events() const { return m_events; }

@@ -161,6 +161,17 @@ void StreamAccumulator::handleOpenAI(const QJsonObject &o)
         m_finishReason = fr;
 }
 
+bool StreamAccumulator::complete() const
+{
+    if (m_finished)
+        return true;
+    if (m_format == Format::Anthropic) {
+        const QJsonValue sr = m_message.value(QStringLiteral("stop_reason"));
+        return sr.isString() && !sr.toString().isEmpty();
+    }
+    return !m_finishReason.isEmpty();
+}
+
 QJsonObject StreamAccumulator::message() const
 {
     if (m_format == Format::Anthropic) {
