@@ -6,13 +6,13 @@ Flyout {
     property var root: null
 
     objectName: "paletteFlyout"
-    open: root.paletteOpen
+    open: paletteFlyout.root.paletteOpen
     radius: Theme.radiusXl
-    baseY: root.shownY + root.pillH + 12
+    baseY: paletteFlyout.root.shownY + paletteFlyout.root.pillH + 12
 
     width: paletteCard.implicitWidth
     height: paletteCard.implicitHeight
-    x: Math.round(Math.max(Theme.screenMargin, (root.width - width) / 2))
+    x: Math.round(Math.max(Theme.screenMargin, (paletteFlyout.root.width - width) / 2))
 
     readonly property real targetHeight: paletteCard.targetHeight
 
@@ -22,7 +22,7 @@ Flyout {
     PaletteCard {
         id: paletteCard
         anchors.fill: parent
-        maxPanelWidth: root.width
-        onDismissed: root.closePalette()
+        maxPanelWidth: paletteFlyout.root.width
+        onDismissed: paletteFlyout.root.closePalette()
     }
 }

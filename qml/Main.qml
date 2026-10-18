@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Window
 import QtQuick.Dialogs
@@ -5,6 +6,12 @@ import QtCore
 
 Window {
     id: root
+    // Handles for the flyouts, which used to reach these ids through the
+    // parent context. Qualified access keeps qmllint (and readers) happy.
+    readonly property var settingsStore: cfg
+    readonly property var addAppDialog: fileDialog
+    readonly property var addMusicDialog: musicDialog
+    readonly property var hubTimer: sessionTimer
 
     visible: true
     color: "transparent"
@@ -19,7 +26,7 @@ Window {
 
     Settings {
         id: cfg
-        location: dock.settingsFileUrl
+        location: Dock.settingsFileUrl
         category: "ui"
         property real sizeScale: 1.0
         property bool autoHide: true
@@ -89,7 +96,7 @@ Window {
     Timer {
         id: snapshotSyncTimer
         interval: 600
-        onTriggered: dock.syncStateSnapshot()
+        onTriggered: Dock.syncStateSnapshot()
     }
 
     // ------------------------------------------------------------------ size
@@ -140,7 +147,7 @@ Window {
     // lifts the guard by itself.
     // When tucked away (!revealed), ONLY hovering the dash (peekZone) brings
     // the notch out — hovering around it does nothing.
-    readonly property bool fullscreenGuard: cfg.suppressInFullscreen && fullscreen.active && !paletteOpen
+    readonly property bool fullscreenGuard: cfg.suppressInFullscreen && Fullscreen.active && !paletteOpen
     readonly property bool notchElementsHovered: pillHover.hovered || grip.containsMouse || panelItem.hovered
                                                  || menu.hovered || musicFlyout.hovered
                                                  || hubFlyout.hovered || musicPillHover.hovered
@@ -213,16 +220,16 @@ Window {
     readonly property bool hudVisible: resizing || hudTimer.running
 
     // ------------------------------------------------------------ data
-    readonly property var apps: dock.apps
-    readonly property var running: dock.running
-    readonly property var openList: openApps.apps
+    readonly property var apps: Dock.apps
+    readonly property var running: Dock.running
+    readonly property var openList: OpenApps.apps
 
     function activateOrLaunchApp(i) {
         if (i < 0 || i >= apps.length)
             return
         previewOpen = false
         const app = apps[i]
-        if (app.exe && running.indexOf(app.exe) >= 0 && openApps.activateApp(app.exe)) {
+        if (app.exe && running.indexOf(app.exe) >= 0 && OpenApps.activateApp(app.exe)) {
             closeAll()
             return
         }
@@ -240,7 +247,7 @@ Window {
         paletteOpen = false
         launchHold = true
         launchHoldTimer.restart()
-        if (dock.launch(i))
+        if (Dock.launch(i))
             toast = qsTr("Opening %1").arg(apps[i].name)
         else
             toast = qsTr("Couldn't open %1").arg(apps[i].name)
@@ -338,27 +345,27 @@ Window {
     function hotkeyNotice() {
         if (!cfg.hotkeyPalette)
             return
-        if (!hotkey.registered)
+        if (!Hotkey.registered)
             showToast(qsTr("Palette hotkey unavailable"))
-        else if (!hotkey.preferred)
-            showToast(qsTr("Ctrl+Alt+Space is taken — press %1 for the palette").arg(hotkey.shortcut))
+        else if (!Hotkey.preferred)
+            showToast(qsTr("Ctrl+Alt+Space is taken — press %1 for the palette").arg(Hotkey.shortcut))
     }
 
     // The built-in commands the palette's list can offer.
     function runCommand(id) {
         switch (id) {
         case "lock":
-            power.lock()
+            Power.lock()
             break
         case "sleep":
-            power.sleep()
+            Power.sleep()
             break
         case "mic":
-            audio.toggleMicMute()
-            showToast(audio.micMuted ? qsTr("Microphone muted") : qsTr("Microphone live"))
+            Audio.toggleMicMute()
+            showToast(Audio.micMuted ? qsTr("Microphone muted") : qsTr("Microphone live"))
             break
         case "taskmgr":
-            search.openPath("taskmgr.exe")
+            AppIndex.openPath("taskmgr.exe")
             break
         case "winsettings":
             Qt.openUrlExternally("ms-settings:")
@@ -500,7 +507,7 @@ Window {
             }
         }
         pushBuddyRegions(r)
-        overlay.setInteractiveRegions(r)
+        Overlay.setInteractiveRegions(r)
     }
 
     Component.onCompleted: updateMask()
@@ -791,12 +798,12 @@ Window {
     }
 
     function handleDrop(drop) {
-        const result = player.ingestDrop(drop.urls)
+        const result = Player.ingestDrop(drop.urls)
         const added = result.added || 0
         let pinned = 0
         const others = result.other || []
         for (let i = 0; i < others.length; ++i) {
-            if (dock.pinUrl(others[i]))
+            if (Dock.pinUrl(others[i]))
                 ++pinned
         }
         if (added > 0) {
@@ -946,7 +953,7 @@ Window {
     }
 
     function openPreview(exe, centerX) {
-        const windows = openApps.windowsFor(exe)
+        const windows = OpenApps.windowsFor(exe)
         if (windows.length === 0) {
             previewOpen = false
             return
@@ -1000,7 +1007,7 @@ Window {
 
         onActivated: (windowId) => {
             root.previewOpen = false
-            openApps.activateWindow(windowId)
+            OpenApps.activateWindow(windowId)
         }
         onHoveredChanged: {
             if (hovered)
@@ -1109,30 +1116,30 @@ Window {
     }
 
     // Keep the C++ buddy provider and sound synthesizer in sync with saved settings.
-    Binding { target: buddyProvider; property: "provider"; value: cfg.buddyProvider }
-    Binding { target: buddyProvider; property: "apiKey"; value: cfg.buddyApiKey }
-    Binding { target: buddyProvider; property: "apiBase"; value: cfg.buddyApiBase }
-    Binding { target: buddyProvider; property: "model"; value: cfg.buddyModel }
-    Binding { target: buddyProvider; property: "temperature"; value: cfg.buddyTemperature }
-    Binding { target: buddyProvider; property: "agentMode"; value: cfg.buddyAgentMode }
-    Binding { target: buddyProvider; property: "allowBash"; value: cfg.buddyAllowBash }
-    Binding { target: buddyProvider; property: "allowComputer"; value: cfg.buddyAllowComputer }
-    Binding { target: buddyProvider; property: "allowEditor"; value: cfg.buddyAllowEditor }
-    Binding { target: buddyProvider; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
-    Binding { target: buddyProvider; property: "allowMemory"; value: cfg.buddyAllowMemory }
-    Binding { target: buddyProvider; property: "allowWebSearch"; value: cfg.buddyAllowWebSearch }
-    Binding { target: buddyProvider; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
-    Binding { target: buddyProvider; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
-    Binding { target: buddyProvider; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
-    Binding { target: buddyProvider; property: "permissionMode"; value: cfg.buddyPermissionMode }
-    Binding { target: buddyProvider; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
-    Binding { target: buddyProvider; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
-    Binding { target: buddyProvider; property: "keepTraces"; value: cfg.buddyKeepTraces }
-    Binding { target: buddyProvider; property: "streamReplies"; value: cfg.buddyStreamReplies }
-    Binding { target: buddyProvider; property: "handoffs"; value: cfg.buddyHandoffs }
-    Binding { target: buddySfx; property: "enabled"; value: cfg.buddySfxEnabled }
-    Binding { target: buddySfx; property: "volume"; value: cfg.buddySfxVolume }
-    Binding { target: buddySfx; property: "style"; value: cfg.buddySfxStyle }
+    Binding { target: BuddyAgent; property: "provider"; value: cfg.buddyProvider }
+    Binding { target: BuddyAgent; property: "apiKey"; value: cfg.buddyApiKey }
+    Binding { target: BuddyAgent; property: "apiBase"; value: cfg.buddyApiBase }
+    Binding { target: BuddyAgent; property: "model"; value: cfg.buddyModel }
+    Binding { target: BuddyAgent; property: "temperature"; value: cfg.buddyTemperature }
+    Binding { target: BuddyAgent; property: "agentMode"; value: cfg.buddyAgentMode }
+    Binding { target: BuddyAgent; property: "allowBash"; value: cfg.buddyAllowBash }
+    Binding { target: BuddyAgent; property: "allowComputer"; value: cfg.buddyAllowComputer }
+    Binding { target: BuddyAgent; property: "allowEditor"; value: cfg.buddyAllowEditor }
+    Binding { target: BuddyAgent; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
+    Binding { target: BuddyAgent; property: "allowMemory"; value: cfg.buddyAllowMemory }
+    Binding { target: BuddyAgent; property: "allowWebSearch"; value: cfg.buddyAllowWebSearch }
+    Binding { target: BuddyAgent; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
+    Binding { target: BuddyAgent; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
+    Binding { target: BuddyAgent; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
+    Binding { target: BuddyAgent; property: "permissionMode"; value: cfg.buddyPermissionMode }
+    Binding { target: BuddyAgent; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
+    Binding { target: BuddyAgent; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
+    Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
+    Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
+    Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
+    Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
+    Binding { target: BuddySound; property: "volume"; value: cfg.buddySfxVolume }
+    Binding { target: BuddySound; property: "style"; value: cfg.buddySfxStyle }
 
     BuddyPanel {
         id: buddyPanel
@@ -1166,7 +1173,7 @@ Window {
     }
 
     Connections {
-        target: player
+        target: Player
         function onPlaybackError(message) { root.showToast(message) }
         function onFolderScanNotice(message) { root.showToast(message) }
     }
@@ -1175,25 +1182,25 @@ Window {
     // disables the registration; if the combination is taken, registration
     // simply fails and everything else keeps working.
     Connections {
-        target: hotkey
+        target: Hotkey
         function onActivated() { root.summonPalette() }
         function onRegisteredChanged() { root.hotkeyNotice() }
     }
-    Binding { target: hotkey; property: "enabled"; value: cfg.hotkeyPalette }
+    Binding { target: Hotkey; property: "enabled"; value: cfg.hotkeyPalette }
 
     Connections {
-        target: search
+        target: AppIndex
         function onCommandRequested(command) { root.runCommand(command) }
         function onToastRequested(text) { root.showToast(text) }
     }
 
     Connections {
-        target: radios
+        target: Radio
         function onDenied() { root.showToast(qsTr("Windows blocked that switch")) }
     }
 
     Connections {
-        target: nightLight
+        target: Night
         function onFailed() { root.showToast(qsTr("Night light could not be switched here")) }
     }
 
@@ -1203,7 +1210,7 @@ Window {
         currentFolder: StandardPaths.writableLocation(StandardPaths.ApplicationsLocation)
         nameFilters: [qsTr("Apps and shortcuts (*.exe *.lnk *.url *.bat *.cmd)"), qsTr("All files (*)")]
         onAccepted: {
-            if (dock.pinUrl(selectedFile))
+            if (Dock.pinUrl(selectedFile))
                 root.showToast(qsTr("Pinned"))
         }
     }
@@ -1215,7 +1222,7 @@ Window {
         currentFolder: StandardPaths.writableLocation(StandardPaths.MusicLocation)
         nameFilters: [qsTr("Audio (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma *.aiff *.aif)")]
         onAccepted: {
-            const n = player.addUrls(selectedFiles)
+            const n = Player.addUrls(selectedFiles)
             if (n > 0) {
                 root.showToast(n === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(n))
                 root.panelOpen = false

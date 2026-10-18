@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 // Noch's desktop buddy: an expressive companion orb with wide-angle 3D
 // sphere-projected eyes, squash-and-stretch physics, mood expressions (happy
 // arcs with a neon gradient halo, curious tilt, listening, pondering, reading
@@ -133,8 +134,8 @@ Item {
             thought.showAnswer("chat", entry.title || entry.q, { response: entry.a }, false)
             session = "result"
             eureka()
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
         } else {
             session = "thinking"
             runTask()
@@ -142,7 +143,7 @@ Item {
     }
 
 
-    readonly property real mo: appearance.systemMotionReduced() ? 0.35 : 1.0
+    readonly property real mo: SystemAppearance.systemMotionReduced() ? 0.35 : 1.0
 
     // Orb geometry: sized to match the notch height (52px at 1.0x scale).
     readonly property real orbSize: Math.round(52 * s)
@@ -302,8 +303,8 @@ Item {
         neonBurst(true)
         if (!thought.visible)
             emote("", "heart")
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("happy")
+        if (BuddySound)
+            BuddySound.play("happy")
     }
 
     // A ripple of the neon ring, optionally with a little ring of sparkles.
@@ -377,7 +378,7 @@ Item {
             forgetAnswer()
         setMood("happy", 1800)
         hop(60)
-        const c = overlay.cursorPos()
+        const c = Overlay.cursorPos()
         lx = c.x
         ly = c.y
         cursorStill = 0
@@ -629,7 +630,7 @@ Item {
             buddy.wanderT += 0.020
             buddy.petAccum = Math.max(0, buddy.petAccum - 3.5)
 
-            const c = overlay.cursorPos()
+            const c = Overlay.cursorPos()
             const moved = Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 1.2
             if (moved && !buddy.gazeLock) {
                 buddy.lx = c.x
@@ -660,7 +661,7 @@ Item {
 
             // Live per-frame cursor tracking while cursor is moving
             if (buddy.cursorStill < 20 && !buddy.gazeLock && !buddy.dragging) {
-                const c = overlay.cursorPos()
+                const c = Overlay.cursorPos()
                 if (Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 0.4) {
                     buddy.lx = c.x
                     buddy.ly = c.y
@@ -1126,8 +1127,8 @@ Item {
         if (!busy)
             setMood("neutral", 0)
         // Only acknowledge an actual fade-out (startup focus loss is silent).
-        if (hadSomething && typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (hadSomething && BuddySound)
+            BuddySound.play("dismiss")
     }
 
     // Abandons the request in flight. Only a deliberate user decision (New
@@ -1137,8 +1138,8 @@ Item {
         thinkTimer.stop()
         if (awaitingReply) {
             awaitingReply = false
-            if (buddyProvider)
-                buddyProvider.cancel()
+            if (BuddyAgent)
+                BuddyAgent.cancel()
         }
     }
 
@@ -1150,8 +1151,8 @@ Item {
         thought.close()
         if (session !== "thinking")
             session = canContinue ? (busy ? "thinking" : "result") : "idle"
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (BuddySound)
+            BuddySound.play("dismiss")
     }
 
     // Keeps what was on screen so "continue" can reopen the exact same answer.
@@ -1200,8 +1201,8 @@ Item {
             session = "result"
             setMood(resultPanel.phase === "loading" ? "thinking" : "speaking", 0)
             hop(55)
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
             return
         }
         // Still waiting on the provider / a local task: show it pondering.
@@ -1211,8 +1212,8 @@ Item {
             hop(55)
             thought.think()
             lookAtBubble(18, 22)
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
             return
         }
         // An answer was on screen when it got tucked away: show it again from
@@ -1232,8 +1233,8 @@ Item {
         setMood(lastAnswerKind === "chat" ? "speaking" : "happy", 0)
         hop(60)
         lookAtBubble(24, 0)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("pop")
+        if (BuddySound)
+            BuddySound.play("pop")
     }
 
     // Plain "type a new question" path. The conversation thread is kept across
@@ -1250,8 +1251,8 @@ Item {
         hop(wasShown ? 50 : 85)
         thought.openInput()
         lookAtBubble(26, 4)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play(wasShown ? "pop" : "wake")
+        if (BuddySound)
+            BuddySound.play(wasShown ? "pop" : "wake")
     }
 
     // The bubble was closed by its own x / Esc. Even then nothing in flight is
@@ -1269,8 +1270,8 @@ Item {
             setMood("neutral", 0)
         blinkShut = true
         blinkOpen.restart()
-        if (!quiet && typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (!quiet && BuddySound)
+            BuddySound.play("dismiss")
     }
     // A click on the orb while its bubble is open just folds it away.
     function dismissInput() {
@@ -1290,8 +1291,8 @@ Item {
     // available, and a request it started keeps running.
     function panelClosed() {
         session = thought.visible ? session : (replyToPanel && busy ? "thinking" : "idle")
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (BuddySound)
+            BuddySound.play("dismiss")
     }
 
     function watchTyping(frac) {
@@ -1325,12 +1326,12 @@ Item {
         if (!replyToPanel)
             thought.think()
         lookAtBubble(18, 22)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("think")
+        if (BuddySound)
+            BuddySound.play("think")
 
         // Direct shell command shortcut ($ <cmd>, bash: <cmd>, powershell: <cmd>, cmd: <cmd>)
         const directMatch = trimmed.match(/^(?:\$|!|bash:|powershell:|ps:|cmd:)\s*(.+)$/i)
-        if (directMatch && buddyProvider && buddyProvider.allowBash) {
+        if (directMatch && BuddyAgent && BuddyAgent.allowBash) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1340,13 +1341,13 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.runDirectCommand(directMatch[1])
+            BuddyAgent.runDirectCommand(directMatch[1])
             return
         }
 
         // Direct web search shortcut (search: <query>, web: <query>)
         const webMatch = trimmed.match(/^(?:search:|web:)\s*(.+)$/i)
-        if (webMatch && buddyProvider && buddyProvider.allowWebSearch) {
+        if (webMatch && BuddyAgent && BuddyAgent.allowWebSearch) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1356,13 +1357,13 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.runDirectWebSearch(webMatch[1])
+            BuddyAgent.runDirectWebSearch(webMatch[1])
             return
         }
 
         // Direct tool search shortcut (tools: <query>, tool_search: <query>, regex_tools: <pattern>)
         const toolSearchMatch = trimmed.match(/^(?:tools:|tool_search:|tool-search:|regex_tools:)\s*(.+)$/i)
-        if (toolSearchMatch && buddyProvider && buddyProvider.allowToolSearch) {
+        if (toolSearchMatch && BuddyAgent && BuddyAgent.allowToolSearch) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1373,13 +1374,13 @@ Item {
             }
             awaitingReply = true
             const useRegex = /^regex_tools:/i.test(trimmed)
-            buddyProvider.runDirectToolSearch(toolSearchMatch[1], useRegex ? "regex" : "bm25")
+            BuddyAgent.runDirectToolSearch(toolSearchMatch[1], useRegex ? "regex" : "bm25")
             return
         }
 
         // Direct Advisor consultation shortcut (advisor: <question>, advise: <question>)
         const advisorMatch = trimmed.match(/^(?:advisor:|advise:|consult:)\s*(.+)$/i)
-        if (advisorMatch && buddyProvider && buddyProvider.allowAdvisor) {
+        if (advisorMatch && BuddyAgent && BuddyAgent.allowAdvisor) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1389,7 +1390,7 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.runDirectAdvisor(advisorMatch[1], "general")
+            BuddyAgent.runDirectAdvisor(advisorMatch[1], "general")
             return
         }
 
@@ -1399,10 +1400,10 @@ Item {
         const compoundAgentIntent = /\b(and|then|command|powershell|bash|terminal|shell|click|screenshot|screen|cursor|mouse|type|press|key|file|folder|directory|read|write|create|edit|script|memory|memories|remember|search|web|url|http|https|grep|glob|advisor|advise|consult|tool|clipboard|cpu|ram|system|todo|checklist)\b/i.test(trimmed)
         const local = !!localTask
                       && (localTask.kind === "timer" || localTask.kind === "apps" || localTask.kind === "tasks")
-                      && !(buddyProvider && buddyProvider.enabled && buddyProvider.agentMode
+                      && !(BuddyAgent && BuddyAgent.enabled && BuddyAgent.agentMode
                            && (localTask.kind === "apps" || localTask.kind === "tasks")
                            && compoundAgentIntent)
-        if (!local && buddyProvider && buddyProvider.enabled) {
+        if (!local && BuddyAgent && BuddyAgent.enabled) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1412,11 +1413,11 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.sendMessage(trimmed, conversation)
+            BuddyAgent.sendMessage(trimmed, conversation)
             return
         }
-        if (buddyProvider)
-            buddyProvider.clearToolSteps()
+        if (BuddyAgent)
+            BuddyAgent.clearToolSteps()
         thinkTimer.restart()
     }
     function retryTask() {
@@ -1442,8 +1443,8 @@ Item {
         targetRoll = -10 * mo
         targetPitch = -12 * mo
         springing = true
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("error")
+        if (BuddySound)
+            BuddySound.play("error")
     }
     // Local tasks still think for a beat so the bubble's morph can be seen.
     Timer { id: thinkTimer; interval: 820; onTriggered: buddy.runTask() }
@@ -1488,10 +1489,10 @@ Item {
             break
         }
         case "apps": {
-            const rows = search.search(task.payload.query)
+            const rows = AppIndex.search(task.payload.query)
                             .filter(function (r) { return r.kind === "app" })
             if (rows.length > 0) {
-                search.activate(rows[0])
+                AppIndex.activate(rows[0])
                 note(qsTr("Opening %1").arg(String(rows[0].name || task.payload.query)), "open")
             } else {
                 showError(qsTr("No app matched “%1”.").arg(task.payload.query))
@@ -1544,8 +1545,8 @@ Item {
     // off-screen focus, so make the arrival obvious).
     function popForward() {
         eureka()
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("reply")
+        if (BuddySound)
+            BuddySound.play("reply")
     }
     // A quick confirmation that tucks itself away.
     function note(text, icon) {
@@ -1558,8 +1559,8 @@ Item {
         hop(105)
         neonBurst(false)
         lookAtBubble(22, 0)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("reply")
+        if (BuddySound)
+            BuddySound.play("reply")
     }
     function setPanel(kind, title, payload, simulated) {
         if (!resultPanel)
@@ -1577,8 +1578,8 @@ Item {
         session = "result"
         setMood(kind === "chat" ? "speaking" : "happy", 2400)
         hop(115)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("reply")
+        if (BuddySound)
+            BuddySound.play("reply")
     }
     // Pop the bubble's answer out into the movable, resizable panel, right
     // where the bubble was.
@@ -1609,8 +1610,8 @@ Item {
         resultPanel.open = true
         session = "result"
         setMood("happy", 1400)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("pop")
+        if (BuddySound)
+            BuddySound.play("pop")
     }
 
     // ---- capability actions -------------------------------------------------
@@ -1633,9 +1634,9 @@ Item {
             clipboardRequested()
             break
         case "mic":
-            audio.toggleMicMute()
+            Audio.toggleMicMute()
             dismiss()
-            toastRequested(audio.micMuted ? "Microphone muted" : "Microphone live")
+            toastRequested(Audio.micMuted ? "Microphone muted" : "Microphone live")
             break
         case "settings":
             dismiss()
@@ -1789,8 +1790,8 @@ Item {
                 buddy.hop(75)
                 buddy.setMood("happy", 1400)
                 buddy.neonBurst(false)
-                if (typeof buddySfx !== "undefined" && buddySfx)
-                    buddySfx.play("drop")
+                if (BuddySound)
+                    BuddySound.play("drop")
                 buddy.buddyMoved(newAnchorX, newAnchorY)
             } else {
                 // The orb toggles its thought bubble.
@@ -1812,17 +1813,17 @@ Item {
     // Only the request the buddy is still waiting for may answer; a reply to
     // a question that was closed or superseded is dropped.
     Connections {
-        target: buddyProvider
+        target: BuddyAgent
         function onResponseReady(text) {
             if (!buddy.awaitingReply)
                 return
-            const steps = buddyProvider.toolSteps || []
+            const steps = BuddyAgent.toolSteps || []
             let clean = steps.length > 0
             for (let i = 0; i < steps.length; ++i)
                 if (steps[i].status === "error") { clean = false; break }
             if (clean)
                 buddy.nodHappy()
-            const streamed = String(buddyProvider.streamText || "").length > 0
+            const streamed = String(BuddyAgent.streamText || "").length > 0
             if (streamed && buddy.replyToPanel && buddy.resultPanel)
                 buddy.resultPanel.instantReveal = true
             buddy.present("chat", buddy.lastRequest.length > 0 ? buddy.lastRequest : "Buddy",
@@ -1838,20 +1839,20 @@ Item {
         // The agent paused on a tool call that needs the user's OK: perk up,
         // look at the bubble, and nudge again every few seconds until answered.
         function onPendingApprovalChanged() {
-            const p = buddyProvider.pendingApproval
+            const p = BuddyAgent.pendingApproval
             const waiting = p && p.id !== undefined
             if (waiting && !approvalNudge.running) {
                 buddy.wake()
                 buddy.setMood("surprised", 900)
                 buddy.hop(80)
                 buddy.lookAtBubble(24, 4)
-                if (typeof buddySfx !== "undefined" && buddySfx)
-                    buddySfx.play("pop")
+                if (BuddySound)
+                    BuddySound.play("pop")
             }
             approvalNudge.running = waiting
         }
         function onToolStepsChanged() {
-            const steps = buddyProvider.toolSteps || []
+            const steps = BuddyAgent.toolSteps || []
             if (!buddy.awaitingReply || steps.length === 0)
                 return
             const last = steps[steps.length - 1]
@@ -1867,8 +1868,8 @@ Item {
             buddy.setMood("curious", 1600)
             buddy.hop(42)
             buddy.lookAtBubble(22, 6)
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
         }
     }
 

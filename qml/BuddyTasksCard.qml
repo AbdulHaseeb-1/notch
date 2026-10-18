@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // The productivity card: a checkable list of plan items with progress, add, and

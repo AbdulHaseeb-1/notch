@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // The command palette: Ctrl+Alt+Space summons the notch and this card. One
@@ -31,7 +32,7 @@ Item {
     }
 
     function refresh() {
-        results = search.search(paletteInput.text)
+        results = AppIndex.search(paletteInput.text)
         currentIndex = 0
         list.positionViewAtBeginning()
     }
@@ -53,7 +54,7 @@ Item {
         if (!item)
             return
         dismissed()
-        search.activate(item)
+        AppIndex.activate(item)
     }
 
     function runCurrent() {
@@ -69,7 +70,7 @@ Item {
     // The Start Menu scan now runs off the GUI thread; refresh once it lands
     // so the very first keystroke fills up with real results when they arrive.
     Connections {
-        target: search
+        target: AppIndex
         function onIndexReady() { pcard.refresh() }
     }
 
@@ -315,6 +316,7 @@ Item {
                 spacing: 14
 
                 component Hint: Row {
+                    id: hint
                     property string key
                     property string what
                     spacing: 5
@@ -329,7 +331,7 @@ Item {
                         Text {
                             id: hintKey
                             anchors.centerIn: parent
-                            text: parent.parent.key
+                            text: hint.key
                             color: Theme.textDim
                             font.family: Theme.font
                             font.pixelSize: 10

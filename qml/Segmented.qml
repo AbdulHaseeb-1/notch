@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Segmented control: recessed stone well with a sliding light-stone thumb.

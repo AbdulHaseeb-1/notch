@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Candlestick view of the buddy's sample chart. The fixture comes from
@@ -51,7 +52,7 @@ Item {
     }
 
     Connections {
-        target: host
+        target: card.host
         function onPayloadChanged() { canvas1.requestPaint() }
     }
     Component.onCompleted: canvas1.requestPaint()

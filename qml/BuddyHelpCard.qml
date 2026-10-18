@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // The "what can you do" card. Everything on it is a real Noch action wired to

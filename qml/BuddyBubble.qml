@@ -1,5 +1,5 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Shapes
 
 // The buddy's thought bubble. It pops out of the orb as a trail of little
 // thought dots followed by the bubble itself, then morphs through every step
@@ -38,22 +38,22 @@ Item {
     property var history: []              // [{ q, kind, title, a, t }], newest first
 
     // Live Anthropic Agent SDK tool & response telemetry state
-    readonly property var toolSteps: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.toolSteps : []
-    readonly property string activeTool: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeTool : ""
-    readonly property string activeToolBadge: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeToolBadge : ""
-    readonly property string activeToolSummary: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeToolSummary : ""
-    readonly property var responseMeta: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.responseMeta : ({})
-    readonly property var agentTodos: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.agentTodos : []
-    readonly property var citations: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.citations : []
-    readonly property var pendingApproval: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.pendingApproval : ({})
+    readonly property var toolSteps: (BuddyAgent) ? BuddyAgent.toolSteps : []
+    readonly property string activeTool: (BuddyAgent) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolBadge: (BuddyAgent) ? BuddyAgent.activeToolBadge : ""
+    readonly property string activeToolSummary: (BuddyAgent) ? BuddyAgent.activeToolSummary : ""
+    readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
+    readonly property var agentTodos: (BuddyAgent) ? BuddyAgent.agentTodos : []
+    readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
+    readonly property var pendingApproval: (BuddyAgent) ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
     // Specialist currently in charge (handoffs), "" for Buddy itself.
-    readonly property string specialist: (typeof buddyProvider !== "undefined" && buddyProvider
-                                          && buddyProvider.activeAgent !== "buddy")
-                                         ? String(buddyProvider.activeAgentTitle).replace(" specialist", "") : ""
+    readonly property string specialist: (BuddyAgent
+                                          && BuddyAgent.activeAgent !== "buddy")
+                                         ? String(BuddyAgent.activeAgentTitle).replace(" specialist", "") : ""
     // Live streamed answer text while the model is still writing.
-    readonly property string liveText: (typeof buddyProvider !== "undefined" && buddyProvider && buddyProvider.streaming)
-                                       ? String(buddyProvider.streamText).replace(/\*\*|`/g, "") : ""
+    readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
+                                       ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "thinking"
     readonly property real liveH: hasLive ? Math.min(liveBody.implicitHeight, 168) + 22 : 0
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
@@ -567,8 +567,8 @@ Item {
                 ++next
             tb.revealed = next
             tb.speakingTick(n > 0 ? next / n : 1)
-            if (typeof buddySfx !== "undefined" && buddySfx && Math.random() < 0.26)
-                buddySfx.play("speak")
+            if (BuddySound && Math.random() < 0.26)
+                BuddySound.play("speak")
             tb.followReveal()
         }
     }
@@ -1489,8 +1489,8 @@ Item {
                     visible: tb.awaitingApproval && tb.phase === "thinking"
                     request: tb.pendingApproval
                     onDecided: (approve, always) => {
-                        if (typeof buddyProvider !== "undefined" && buddyProvider)
-                            buddyProvider.resolveApproval(approve, always)
+                        if (BuddyAgent)
+                            BuddyAgent.resolveApproval(approve, always)
                     }
                 }
             }
@@ -1673,6 +1673,7 @@ Item {
                                 Repeater {
                                     model: tb.agentTodos
                                     Row {
+                                        id: todoRow
                                         required property var modelData
                                         width: agentTodoCol.width
                                         spacing: 6
@@ -1684,25 +1685,25 @@ Item {
                                             width: 13
                                             height: 13
                                             radius: 4
-                                            color: parent.done ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.18)
-                                                 : (parent.active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent")
+                                            color: todoRow.done ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.18)
+                                                 : (todoRow.active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent")
                                             border.width: 1
-                                            border.color: parent.done ? Theme.success : (parent.active ? Theme.accent : Theme.borderStrong)
+                                            border.color: todoRow.done ? Theme.success : (todoRow.active ? Theme.accent : Theme.borderStrong)
 
                                             Glyph {
-                                                visible: parent.parent.done || parent.parent.active
+                                                visible: todoRow.done || todoRow.active
                                                 anchors.centerIn: parent
-                                                name: parent.parent.done ? "check" : "bolt"
+                                                name: todoRow.done ? "check" : "bolt"
                                                 size: 8.5
                                                 stroke: 2.0
-                                                color: parent.parent.done ? Theme.success : Theme.accent
+                                                color: todoRow.done ? Theme.success : Theme.accent
                                             }
                                         }
 
                                         Text {
                                             width: parent.width - 20
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: String(modelData.content || "")
+                                            text: String(todoRow.modelData.content || "")
                                             color: parent.done ? Theme.textDim : Theme.ink
                                             font.family: Theme.font
                                             font.pixelSize: 11
@@ -1768,6 +1769,7 @@ Item {
                                 model: tb.citations ? tb.citations.slice(0, 4) : []
 
                                 Rectangle {
+                                    id: citeChip
                                     required property var modelData
                                     width: Math.min(chatBodyCol.width, citeRow.implicitWidth + 12)
                                     height: 20
@@ -1793,7 +1795,7 @@ Item {
                                         Text {
                                             width: Math.min(130, implicitWidth)
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: String(modelData.title || modelData.url || "")
+                                            text: String(citeChip.modelData.title || citeChip.modelData.url || "")
                                             color: Theme.inkSoft
                                             font.family: Theme.font
                                             font.pixelSize: 10
@@ -1807,7 +1809,7 @@ Item {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: if (modelData.url) Qt.openUrlExternally(modelData.url)
+                                        onClicked: if (citeChip.modelData.url) Qt.openUrlExternally(citeChip.modelData.url)
                                     }
                                 }
                             }
@@ -2189,8 +2191,8 @@ Item {
         clip.text = ""
         copied = true
         copiedTimer.restart()
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("pop")
+        if (BuddySound)
+            BuddySound.play("pop")
     }
 
     function trySubmit() {

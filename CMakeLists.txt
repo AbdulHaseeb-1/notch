@@ -41,6 +41,7 @@ qt_add_executable(noch
     src/AgentPolicy.h
     src/IconSet.cpp
     src/IconSet.h
+    src/QmlSingletons.h
     src/BuddyProvider.cpp
     src/BuddyProvider.h
     src/BuddySfx.cpp
@@ -84,6 +85,7 @@ file(GLOB NOCH_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/
 qt_add_qml_module(noch
     URI noch
     VERSION 1.0
+    DEPENDENCIES QtQuick
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
@@ -131,6 +133,9 @@ qt_add_qml_module(noch
     RESOURCES
         ${NOCH_ICONS}
 )
+
+# Lets the generated QML type registration find src/QmlSingletons.h.
+target_include_directories(noch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(noch PRIVATE
     Qt6::Core

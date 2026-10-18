@@ -1,5 +1,5 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Shapes
 
 // The buddy's result card: a repositionable, resizable companion panel that
 // hosts AI chat responses with live streaming reveal, expressive mini-avatar
@@ -39,10 +39,10 @@ Item {
 
     // Body height: defaults per kind, user-resizable with the bottom grip.
     property real bodyH: 356
-    readonly property var pendingApproval: buddyProvider ? buddyProvider.pendingApproval : ({})
+    readonly property var pendingApproval: BuddyAgent ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
-    readonly property string liveText: (buddyProvider && buddyProvider.streaming)
-                                       ? String(buddyProvider.streamText).replace(/\*\*|`/g, "") : ""
+    readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
+                                       ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "loading"
     // Room the loading view gives up for approval cards or live text.
     readonly property bool compactLoading: awaitingApproval || hasLive
@@ -58,13 +58,13 @@ Item {
     property bool copiedFeedback: false
     property int thinkStep: 0
 
-    readonly property var toolSteps: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.toolSteps : []
-    readonly property string activeTool: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeTool : ""
-    readonly property string activeToolBadge: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeToolBadge : ""
-    readonly property string activeToolSummary: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeToolSummary : ""
-    readonly property var responseMeta: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.responseMeta : ({})
-    readonly property var agentTodos: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.agentTodos : []
-    readonly property var citations: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.citations : []
+    readonly property var toolSteps: (BuddyAgent) ? BuddyAgent.toolSteps : []
+    readonly property string activeTool: (BuddyAgent) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolBadge: (BuddyAgent) ? BuddyAgent.activeToolBadge : ""
+    readonly property string activeToolSummary: (BuddyAgent) ? BuddyAgent.activeToolSummary : ""
+    readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
+    readonly property var agentTodos: (BuddyAgent) ? BuddyAgent.agentTodos : []
+    readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
     readonly property bool hasAdvisor: !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
@@ -150,8 +150,8 @@ Item {
                 next++
             panel.revealedChars = next
             panel.speakingTick()
-            if (typeof buddySfx !== "undefined" && buddySfx && Math.random() < 0.42)
-                buddySfx.play("speak")
+            if (BuddySound && Math.random() < 0.42)
+                BuddySound.play("speak")
             if (chatFlick.contentHeight > chatFlick.height)
                 chatFlick.contentY = Math.max(0, chatFlick.contentHeight - chatFlick.height)
             if (panel.revealedChars >= total) {
@@ -352,7 +352,7 @@ Item {
                     visible: panel.kind === "chat"
                     text: panel.phase === "loading" ? panel.thinkPhrases[panel.thinkStep]
                         : (panel.isStreaming ? qsTr("Speaking…")
-                        : (buddyProvider && buddyProvider.model ? buddyProvider.model : qsTr("Companion")))
+                        : (BuddyAgent && BuddyAgent.model ? BuddyAgent.model : qsTr("Companion")))
                     color: Theme.textDim
                     font.family: Theme.font
                     font.pixelSize: 11
@@ -441,6 +441,7 @@ Item {
 
             // Animated, deeply human-lovable Thinking / Loading experience
             Item {
+                id: loadArea
                 anchors.fill: parent
                 opacity: panel.phase === "loading" ? 1 : 0
                 visible: opacity > 0.01
@@ -449,6 +450,7 @@ Item {
 
                 // Show user's prompt bubble at the top while thinking
                 Rectangle {
+                    id: promptBox
                     visible: panel.userPrompt.length > 0
                     x: 14
                     y: 14
@@ -476,8 +478,14 @@ Item {
                 }
 
                 Column {
-                    anchors.centerIn: parent
-                    anchors.verticalCenterOffset: panel.userPrompt.length > 0 ? (panel.hasLive ? 20 : panel.compactLoading ? 24 : 18) : 0
+                    id: loadCol
+                    // Streaming text grows, so pin it under the prompt and
+                    // let the live well take what is left; otherwise centre.
+                    readonly property real topY: promptBox.visible ? promptBox.y + promptBox.height + 10 : 14
+                    x: (loadArea.width - width) / 2
+                    y: panel.hasLive ? topY
+                       : Math.max(topY, (loadArea.height - height) / 2
+                                  + (panel.userPrompt.length > 0 ? (panel.compactLoading ? 24 : 18) : 0))
                     spacing: panel.compactLoading ? 8 : 14
 
                     // Animated expressive thinking orb (folded away while an
@@ -578,6 +586,7 @@ Item {
 
                     // Live tool timeline while loading (last four steps)
                     Column {
+                        id: loadTools
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: panel.width_ - 48
                         spacing: 3
@@ -598,7 +607,9 @@ Item {
                         visible: panel.hasLive
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: panel.width_ - 48
-                        height: Math.min(panelLive.implicitHeight + 24, 196)
+                        height: Math.min(panelLive.implicitHeight + 24,
+                                         Math.max(72, loadArea.height - loadCol.topY - 14
+                                                      - (loadTools.visible ? loadTools.height + loadCol.spacing : 0)))
                         radius: Theme.radiusMd
                         color: Theme.glassFill
                         border.width: 1
@@ -634,7 +645,7 @@ Item {
                         width: panel.width_ - 48
                         visible: panel.awaitingApproval
                         request: panel.pendingApproval
-                        onDecided: (approve, always) => buddyProvider.resolveApproval(approve, always)
+                        onDecided: (approve, always) => BuddyAgent.resolveApproval(approve, always)
                     }
                 }
             }
@@ -902,6 +913,7 @@ Item {
                             Repeater {
                                 model: panel.agentTodos
                                 Row {
+                                    id: todoRow
                                     required property var modelData
                                     width: pTodoCol.width
                                     spacing: 8
@@ -913,25 +925,25 @@ Item {
                                         width: 15
                                         height: 15
                                         radius: 4.5
-                                        color: parent.done ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.18)
-                                             : (parent.active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent")
+                                        color: todoRow.done ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.18)
+                                             : (todoRow.active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent")
                                         border.width: 1
-                                        border.color: parent.done ? Theme.success : (parent.active ? Theme.accent : Theme.borderStrong)
+                                        border.color: todoRow.done ? Theme.success : (todoRow.active ? Theme.accent : Theme.borderStrong)
 
                                         Glyph {
-                                            visible: parent.parent.done || parent.parent.active
+                                            visible: todoRow.done || todoRow.active
                                             anchors.centerIn: parent
-                                            name: parent.parent.done ? "check" : "bolt"
+                                            name: todoRow.done ? "check" : "bolt"
                                             size: 9.5
                                             stroke: 2.0
-                                            color: parent.parent.done ? Theme.success : Theme.accent
+                                            color: todoRow.done ? Theme.success : Theme.accent
                                         }
                                     }
 
                                     Text {
                                         width: parent.width - 24
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: String(modelData.content || "")
+                                        text: String(todoRow.modelData.content || "")
                                         color: parent.done ? Theme.textDim : Theme.ink
                                         font.family: Theme.font
                                         font.pixelSize: 12
@@ -1033,8 +1045,8 @@ Item {
                                         chatText.deselect()
                                         panel.copiedFeedback = true
                                         copiedTimer.restart()
-                                        if (typeof buddySfx !== "undefined" && buddySfx)
-                                            buddySfx.play("wake")
+                                        if (BuddySound)
+                                            BuddySound.play("wake")
                                     }
                                 }
                             }
@@ -1175,6 +1187,7 @@ Item {
                             model: panel.citations ? panel.citations.slice(0, 6) : []
 
                             Rectangle {
+                                id: pCiteChip
                                 required property var modelData
                                 width: Math.min(chatCol.width, pCiteRow.implicitWidth + 16)
                                 height: 24
@@ -1200,7 +1213,7 @@ Item {
                                     Text {
                                         width: Math.min(180, implicitWidth)
                                         anchors.verticalCenter: parent.verticalCenter
-                                        text: String(modelData.title || modelData.url || "")
+                                        text: String(pCiteChip.modelData.title || pCiteChip.modelData.url || "")
                                         color: Theme.inkSoft
                                         font.family: Theme.font
                                         font.pixelSize: 11
@@ -1214,7 +1227,7 @@ Item {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: if (modelData.url) Qt.openUrlExternally(modelData.url)
+                                    onClicked: if (pCiteChip.modelData.url) Qt.openUrlExternally(pCiteChip.modelData.url)
                                 }
                             }
                         }

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Wide, solid-surface Settings panel under the notch.
@@ -69,8 +70,8 @@ Item {
     function chatEndpoint() {
         const p = panel.prefs ? panel.prefs.buddyProvider : "none"
         const base = panel.prefs ? panel.prefs.buddyApiBase : ""
-        if (buddyProvider)
-            return buddyProvider.chatUrl()
+        if (BuddyAgent)
+            return BuddyAgent.chatUrl()
         const b = (String(base).trim() || panel.infoFor(p).base).replace(/\/+$/, "")
         if (p === "ollama")
             return b + "/api/chat"
@@ -136,12 +137,12 @@ Item {
 
     function runTest() {
         panel.testState = "testing"
-        panel.testMessage = qsTr("Checking %1…").arg(buddyProvider.modelsUrl())
-        buddyProvider.probe()
+        panel.testMessage = qsTr("Checking %1…").arg(BuddyAgent.modelsUrl())
+        BuddyAgent.probe()
     }
 
     Connections {
-        target: buddyProvider
+        target: BuddyAgent
         function onTestFinished(ok, message) {
             panel.testState = ok ? "ok" : "failed"
             panel.testMessage = message
@@ -172,11 +173,11 @@ Item {
     readonly property real targetHeight: headerH + 1 + targetBodyHeight + 1 + footerH
 
     function refreshAvailableApps() {
-        const raw = search.availableApps(panel.appFilter)
+        const raw = AppIndex.availableApps(panel.appFilter)
         const filtered = []
         for (let i = 0; i < raw.length; ++i) {
             const item = raw[i]
-            if (!dock.isPinned(item.path || "", item.exe || ""))
+            if (!Dock.isPinned(item.path || "", item.exe || ""))
                 filtered.push(item)
         }
         panel.availableList = filtered
@@ -189,7 +190,7 @@ Item {
     Component.onCompleted: refreshAvailableApps()
 
     Connections {
-        target: search
+        target: AppIndex
         function onIndexReady() {
             if (panel.visible)
                 panel.refreshAvailableApps()
@@ -871,11 +872,11 @@ Item {
                             label: qsTr("Command palette hotkey")
                             sub: !panel.prefs.hotkeyPalette
                                  ? qsTr("Off. Ctrl + Alt + Space summons search from anywhere.")
-                                 : (!hotkey.registered
+                                 : (!Hotkey.registered
                                     ? qsTr("Shortcut unavailable on this PC.")
-                                    : (hotkey.preferred
+                                    : (Hotkey.preferred
                                        ? qsTr("Press Ctrl + Alt + Space anywhere to search.")
-                                       : qsTr("Active on %1.").arg(hotkey.shortcut)))
+                                       : qsTr("Active on %1.").arg(Hotkey.shortcut)))
                             checked: panel.prefs.hotkeyPalette
                             onToggled: (c) => panel.prefs.hotkeyPalette = c
                         }
@@ -1441,8 +1442,8 @@ Item {
                                 checked: panel.prefs.buddySfxEnabled
                                 onToggled: (c) => {
                                     panel.prefs.buddySfxEnabled = c
-                                    if (c && typeof buddySfx !== "undefined" && buddySfx)
-                                        Qt.callLater(function() { buddySfx.play("wake") })
+                                    if (c && BuddySound)
+                                        Qt.callLater(function() { BuddySound.play("wake") })
                                 }
                             }
 
@@ -1454,8 +1455,8 @@ Item {
                                 label: qsTr("Test sound")
                                 enabled: panel.prefs.buddySfxEnabled
                                 onClicked: {
-                                    if (typeof buddySfx !== "undefined" && buddySfx)
-                                        buddySfx.play("happy")
+                                    if (BuddySound)
+                                        BuddySound.play("happy")
                                 }
                             }
                         }
@@ -1489,8 +1490,8 @@ Item {
                                     value: panel.prefs.buddySfxStyle
                                     onPicked: (v) => {
                                         panel.prefs.buddySfxStyle = v
-                                        if (typeof buddySfx !== "undefined" && buddySfx)
-                                            Qt.callLater(function() { buddySfx.play("wake") })
+                                        if (BuddySound)
+                                            Qt.callLater(function() { BuddySound.play("wake") })
                                     }
                                 }
                             }
@@ -1760,7 +1761,7 @@ Item {
                         FieldBox {
                             width: parent.width
                             label: qsTr("Workspace folder")
-                            placeholder: buddyProvider ? buddyProvider.effectiveWorkspace() : qsTr("~/Noch Workspace")
+                            placeholder: BuddyAgent ? BuddyAgent.effectiveWorkspace() : qsTr("~/Noch Workspace")
                             hint: qsTr("Auto-edit mode only auto-approves edits inside this folder.")
                             mono: true
                             text: panel.prefs.buddyWorkspaceRoot
@@ -1995,7 +1996,7 @@ Item {
             SmallPillButton {
                 icon: "folder"
                 label: qsTr("Data folder")
-                onClicked: dock.openDataFolder()
+                onClicked: Dock.openDataFolder()
             }
 
             SmallPillButton {

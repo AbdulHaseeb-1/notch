@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Clipboard page of the hub: what you copied recently, one click to copy it
@@ -12,7 +13,7 @@ Item {
     readonly property int maxRows: 5
 
     implicitWidth: 348
-    implicitHeight: clipboard.enabled ? enabledCol.implicitHeight : offCol.implicitHeight
+    implicitHeight: Clipboard.enabled ? enabledCol.implicitHeight : offCol.implicitHeight
 
     function ago(when) {
         const sec = Math.max(0, Math.round((Date.now() - when.getTime()) / 1000))
@@ -30,7 +31,7 @@ Item {
     // ---- off: ask first
     Column {
         id: offCol
-        visible: !clipboard.enabled
+        visible: !Clipboard.enabled
         width: parent.width
         topPadding: 30
         bottomPadding: 28
@@ -94,7 +95,7 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: clipboard.enabled = true
+                onClicked: Clipboard.enabled = true
             }
         }
     }
@@ -102,7 +103,7 @@ Item {
     // ---- on: the list
     Column {
         id: enabledCol
-        visible: clipboard.enabled
+        visible: Clipboard.enabled
         width: parent.width
 
         Item {
@@ -113,8 +114,8 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: 20
                 anchors.verticalCenter: parent.verticalCenter
-                text: clipboard.count === 0 ? qsTr("Nothing yet")
-                    : (clipboard.count === 1 ? qsTr("1 item") : qsTr("%1 items").arg(clipboard.count))
+                text: Clipboard.count === 0 ? qsTr("Nothing yet")
+                    : (Clipboard.count === 1 ? qsTr("1 item") : qsTr("%1 items").arg(Clipboard.count))
                 color: Theme.textDim
                 font.family: Theme.font
                 font.pixelSize: 12
@@ -151,9 +152,9 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 if (link.modelData.action === "clear")
-                                    clipboard.clearUnpinned()
+                                    Clipboard.clearUnpinned()
                                 else
-                                    clipboard.enabled = false
+                                    Clipboard.enabled = false
                             }
                         }
                     }
@@ -165,7 +166,7 @@ Item {
 
         // Empty state.
         Item {
-            visible: clipboard.count === 0
+            visible: Clipboard.count === 0
             width: parent.width
             height: 124
             Text {
@@ -182,7 +183,7 @@ Item {
 
         ListView {
             id: list
-            visible: clipboard.count > 0
+            visible: Clipboard.count > 0
             width: parent.width
             height: Math.min(contentHeight, view.rowH * view.maxRows) + 8
             topMargin: 4
@@ -191,7 +192,7 @@ Item {
             interactive: contentHeight > view.rowH * view.maxRows
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 320
-            model: clipboard.items
+            model: Clipboard.items
 
             delegate: Item {
                 id: row
@@ -280,7 +281,7 @@ Item {
                     id: rowTap
                     gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: {
-                        if (clipboard.copy(row.index))
+                        if (Clipboard.copy(row.index))
                             view.toastRequested(qsTr("Copied"))
                     }
                 }
@@ -314,7 +315,7 @@ Item {
                             // Hidden must mean unhittable: without this the
                             // transparent action spots swallow clicks.
                             enabled: parent.opacity > 0.5
-                            onClicked: clipboard.togglePin(row.index)
+                            onClicked: Clipboard.togglePin(row.index)
                         }
                     }
                     Item {
@@ -335,7 +336,7 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             enabled: parent.opacity > 0.5
-                            onClicked: clipboard.remove(row.index)
+                            onClicked: Clipboard.remove(row.index)
                         }
                     }
                 }

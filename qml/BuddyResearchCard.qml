@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Research digest card. Everything shown is a local sample note — BuddyRouter

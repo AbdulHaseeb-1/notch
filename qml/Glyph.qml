@@ -21,8 +21,8 @@ Item {
     width: size
     height: size
 
-    readonly property string pathData: iconSet.path(glyph.name)
-    readonly property bool isFill: filled || iconSet.isFilled(glyph.name)
+    readonly property string pathData: Icons.path(glyph.name)
+    readonly property bool isFill: filled || Icons.isFilled(glyph.name)
 
     Shape {
         anchors.fill: parent

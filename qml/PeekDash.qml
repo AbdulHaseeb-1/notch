@@ -8,29 +8,29 @@ MouseArea {
     property var root: null
 
 
-    width: root.dashW + Math.round(6 * root.s)
-    height: root.revealed ? (root.shownY + 2) : Math.max(7, root.dashH + 4)
-    x: Math.round((root.width - width) / 2)
+    width: self.root.dashW + Math.round(6 * self.root.s)
+    height: self.root.revealed ? (self.root.shownY + 2) : Math.max(7, self.root.dashH + 4)
+    x: Math.round((self.root.width - width) / 2)
     y: 0
     hoverEnabled: true
-    onClicked: if (!root.fullscreenGuard) root.revealed = true
+    onClicked: if (!self.root.fullscreenGuard) self.root.revealed = true
 
     Rectangle {
         id: peekBar
         anchors.horizontalCenter: parent.horizontalCenter
         y: 2
-        width: root.dashW
-        height: root.dashH
+        width: self.root.dashW
+        height: self.root.dashH
         radius: height / 2
         color: self.containsMouse ? Theme.ink : Theme.textDim
-        opacity: root.clamp01(1 - root.progress * 3.5)
+        opacity: self.root.clamp01(1 - self.root.progress * 3.5)
         Behavior on color { ColorAnimation { duration: 150 } }
     }
 
     DropArea {
         id: peekDrop
         anchors.fill: parent
-        onDropped: (drop) => root.handleDrop(drop)
+        onDropped: (drop) => self.root.handleDrop(drop)
     }
 
     readonly property bool containsDrag: peekDrop.containsDrag

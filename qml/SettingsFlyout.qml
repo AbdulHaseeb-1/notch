@@ -7,13 +7,13 @@ Flyout {
     property var cfg: null
     property var fileDialog: null
 
-    open: root.panelOpen
+    open: panelItem.root.panelOpen
     radius: Theme.radiusXl
-    baseY: root.shownY + root.pillH + 12
+    baseY: panelItem.root.shownY + panelItem.root.pillH + 12
 
     width: settings.implicitWidth
     height: settings.implicitHeight
-    x: Math.round(Math.max(Theme.screenMargin, (root.width - width) / 2))
+    x: Math.round(Math.max(Theme.screenMargin, (panelItem.root.width - width) / 2))
 
     readonly property real targetHeight: settings.targetHeight
     // Lets Main open Settings on a given tab (0 General, 1 Apps, 2 Buddy).
@@ -22,30 +22,30 @@ Flyout {
     SettingsPanel {
         id: settings
         anchors.fill: parent
-        prefs: cfg
-        dockModel: root.apps
-        runningList: root.running
-        version: dock.version
-        startupSupported: dock.startupSupported
-        launchAtStartup: dock.launchAtStartup
-        maxPanelWidth: root.width
-        maxBodyHeight: root.height - (root.shownY + root.pillH + 12) - settings.headerH - settings.footerH - 24
+        prefs: panelItem.root.settingsStore
+        dockModel: panelItem.root.apps
+        runningList: panelItem.root.running
+        version: Dock.version
+        startupSupported: Dock.startupSupported
+        launchAtStartup: Dock.launchAtStartup
+        maxPanelWidth: panelItem.root.width
+        maxBodyHeight: panelItem.root.height - (panelItem.root.shownY + panelItem.root.pillH + 12) - settings.headerH - settings.footerH - 24
 
-        onCloseRequested: root.panelOpen = false
-        onAddRequested: fileDialog.open()
+        onCloseRequested: panelItem.root.panelOpen = false
+        onAddRequested: panelItem.root.addAppDialog.open()
         onPinAppRequested: (name, path) => {
-            if (dock.pinApp(name, path))
-                root.showToast(qsTr("Pinned %1").arg(name))
+            if (Dock.pinApp(name, path))
+                panelItem.root.showToast(qsTr("Pinned %1").arg(name))
         }
-        onResetRequested: dock.resetToDefaults()
-        onQuitRequested: dock.quit()
-        onUnpinRequested: (i) => dock.unpin(i)
-        onMoveRequested: (from, to) => dock.move(from, to)
-        onStartupToggled: (on) => dock.launchAtStartup = on
+        onResetRequested: Dock.resetToDefaults()
+        onQuitRequested: Dock.quit()
+        onUnpinRequested: (i) => Dock.unpin(i)
+        onMoveRequested: (from, to) => Dock.move(from, to)
+        onStartupToggled: (on) => Dock.launchAtStartup = on
         onResetBuddyPosRequested: {
-            cfg.buddyX = -1
-            cfg.buddyY = -1
-            root.showToast(qsTr("Buddy position reset"))
+            panelItem.root.settingsStore.buddyX = -1
+            panelItem.root.settingsStore.buddyY = -1
+            panelItem.root.showToast(qsTr("Buddy position reset"))
         }
     }
 }
