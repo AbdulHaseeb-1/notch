@@ -16,7 +16,6 @@ Window {
     width: Screen.width
     height: Screen.height
 
-    Theme { id: t }
 
     Settings {
         id: cfg
@@ -72,8 +71,7 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
-        cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle,
-        appearance.light, appearance.palette, appearance.accent, appearance.ring
+        cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
     Timer {
@@ -521,7 +519,7 @@ Window {
             if (!bub) bub = find(buddy, function(o) { return o.objectName === "buddyBubble" })
             switch (step++) {
             case 0:
-                saved = { h: cfg.buddyHistory, p: appearance.palette, a: appearance.accent, r: appearance.ring, l: appearance.light }
+                saved = { h: cfg.buddyHistory }
                 const now = Date.now()
                 cfg.buddyHistory = JSON.stringify([
                     { q: "How do I stay focused in the afternoon?", kind: "chat", title: "", a: "Try a **25-minute** focus block, a short walk, and water before coffee.", t: now - 120000 },
@@ -534,16 +532,15 @@ Window {
             case 2: grab("h1_hist_anim"); next(800); break
             case 3: grab("h2_hist"); bub.pickHistory(0); next(1600); break
             case 4: grab("h3_replay"); buddy.dismiss(); next(700); break
-            case 5: appearance.palette = "midnight"; appearance.accent = "violet"; appearance.ring = "sunset"; buddy.openInput(); next(900); break
-            case 6: grab("t1_midnight_input"); buddy.dismiss(); buddy.setMood("happy", 5000); next(600); break
-            case 7: grab("t2_sunset_ring"); root.toggleSettings(); next(900); break
-            case 8: sp = find(root.contentItem, function(o) { return o.paletteOpts !== undefined && o.tab !== undefined }); grab("s1_general"); next(100); break
+            case 5: buddy.openInput(); next(900); break
+            case 6: grab("t1_input"); buddy.dismiss(); buddy.setMood("happy", 5000); next(600); break
+            case 7: grab("t2_ring"); root.toggleSettings(); next(900); break
+            case 8: sp = find(root.contentItem, function(o) { return o.appFilter !== undefined && o.tab !== undefined }); grab("s1_general"); next(100); break
             case 9: { const f = find(sp, function(o) { return o.contentHeight !== undefined && o.visible && o.contentHeight > o.height }); if (f) f.contentY = f.contentHeight - f.height; next(500); break }
             case 10: grab("s1b_general_scrolled"); sp.tab = 2; next(600); break
-            case 11: grab("s2_buddy"); appearance.light = true; next(700); break
-            case 12: grab("s3_light"); next(100); break
+            case 11: grab("s2_buddy"); next(700); break
+            case 12: next(100); break
             case 13:
-                appearance.light = saved.l; appearance.palette = saved.p; appearance.accent = saved.a; appearance.ring = saved.r
                 cfg.buddyHistory = saved.h
                 root.toggleSettings(); console.log("DEMO restored"); break
             }
@@ -582,7 +579,7 @@ Window {
             id: bg
             anchors.fill: parent
             radius: height / 2
-            edge: root.dragging ? t.accent : "transparent"
+            edge: root.dragging ? Theme.accent : "transparent"
         }
 
         // Clicking empty notch space dismisses menus; right-click opens settings.
@@ -681,13 +678,13 @@ Window {
                                 radius: width * 0.28
                                 color: "transparent"
                                 border.width: 1.5
-                                border.color: t.accent
+                                border.color: Theme.accent
                                 Glyph {
                                     anchors.centerIn: parent
                                     name: "plus"
                                     size: root.iconSize * 0.55
                                     stroke: 2
-                                    color: t.accent
+                                    color: Theme.accent
                                 }
                             }
                         }
@@ -708,13 +705,13 @@ Window {
                                     name: "plus"
                                     size: Math.round(14 * root.s)
                                     stroke: 2
-                                    color: emptyPromptHit.containsMouse ? t.ink : t.textDim
+                                    color: emptyPromptHit.containsMouse ? Theme.ink : Theme.textDim
                                 }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: qsTr("Add apps")
-                                    color: emptyPromptHit.containsMouse ? t.ink : t.textDim
-                                    font.family: t.font
+                                    color: emptyPromptHit.containsMouse ? Theme.ink : Theme.textDim
+                                    font.family: Theme.font
                                     font.pixelSize: Math.round(12.5 * root.s)
                                     font.weight: Font.DemiBold
                                 }
@@ -745,7 +742,7 @@ Window {
                         anchors.centerIn: parent
                         width: 1
                         height: Math.round(20 * root.s)
-                        color: t.border
+                        color: Theme.border
                     }
                 }
 
@@ -1071,14 +1068,6 @@ Window {
         ? Math.max(8, Math.min(height - 64, cfg.buddyY))
         : root.shownY
 
-    // Settings > Buddy > Ring colour: let the buddy show off the new halo.
-    function previewBuddyRing() {
-        if (!cfg.buddyEnabled)
-            return
-        buddy.setMood("happy", 2200)
-        buddy.hop(90)
-        buddy.neonBurst(true)
-    }
 
     Buddy {
         id: buddy

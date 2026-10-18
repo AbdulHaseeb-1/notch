@@ -7,7 +7,6 @@ MouseArea {
 
     property var root: null
 
-    Theme { id: t }
 
     width: root.dashW + Math.round(6 * root.s)
     height: root.revealed ? (root.shownY + 2) : Math.max(7, root.dashH + 4)
@@ -23,7 +22,7 @@ MouseArea {
         width: root.dashW
         height: root.dashH
         radius: height / 2
-        color: self.containsMouse ? t.ink : t.textDim
+        color: self.containsMouse ? Theme.ink : Theme.textDim
         opacity: root.clamp01(1 - root.progress * 3.5)
         Behavior on color { ColorAnimation { duration: 150 } }
     }

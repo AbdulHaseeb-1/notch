@@ -7,7 +7,6 @@ Item {
     property bool active: false
     signal clicked()
 
-    Theme { id: t }
 
     readonly property bool hovered: hit.containsMouse
 
@@ -19,7 +18,7 @@ Item {
         width: Math.round(34 * more.s)
         height: width
         radius: width / 2
-        color: more.active ? t.accent : (hit.pressed ? t.press : t.raised)
+        color: more.active ? Theme.accent : (hit.pressed ? Theme.press : Theme.raised)
         opacity: more.active || hit.containsMouse ? 1 : 0
         scale: hit.pressed ? 0.9 : 1
         Behavior on opacity { NumberAnimation { duration: 140 } }
@@ -38,7 +37,7 @@ Item {
                 width: Math.max(3, Math.round(4 * more.s))
                 height: width
                 radius: width / 2
-                color: more.active ? t.inverse : (hit.containsMouse ? t.ink : t.text)
+                color: more.active ? Theme.inverse : (hit.containsMouse ? Theme.ink : Theme.text)
             }
         }
     }

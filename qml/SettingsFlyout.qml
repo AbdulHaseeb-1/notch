@@ -8,12 +8,12 @@ Flyout {
     property var fileDialog: null
 
     open: root.panelOpen
-    radius: 20
+    radius: Theme.radiusXl
     baseY: root.shownY + root.pillH + 12
 
     width: settings.implicitWidth
     height: settings.implicitHeight
-    x: Math.round((root.width - width) / 2)
+    x: Math.round(Math.max(Theme.screenMargin, (root.width - width) / 2))
 
     readonly property real targetHeight: settings.targetHeight
 
@@ -26,7 +26,7 @@ Flyout {
         version: dock.version
         startupSupported: dock.startupSupported
         launchAtStartup: dock.launchAtStartup
-        maxPanelWidth: Math.max(440, root.width - 40)
+        maxPanelWidth: root.width
         maxBodyHeight: root.height - (root.shownY + root.pillH + 12) - settings.headerH - settings.footerH - 24
 
         onCloseRequested: root.panelOpen = false
@@ -40,9 +40,6 @@ Flyout {
         onUnpinRequested: (i) => dock.unpin(i)
         onMoveRequested: (from, to) => dock.move(from, to)
         onStartupToggled: (on) => dock.launchAtStartup = on
-        lightTheme: appearance.light
-        onThemeToggled: (on) => appearance.light = on
-        onRingPreviewRequested: root.previewBuddyRing()
         onResetBuddyPosRequested: {
             cfg.buddyX = -1
             cfg.buddyY = -1

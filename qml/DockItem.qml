@@ -21,11 +21,10 @@ Item {
     signal activated(int index)
     signal contextRequested(int index)
 
-    Theme { id: t }
 
     readonly property bool hovered: hover.hovered
     readonly property string iconSource: modelData.iconId
-        ? "image://appicon/" + (mono ? t.iconMono : "color") + "/" + modelData.iconId : ""
+        ? "image://appicon/" + (mono ? Theme.iconMono : "color") + "/" + modelData.iconId : ""
 
     width: cellW
     implicitWidth: cellW
@@ -106,15 +105,15 @@ Item {
             anchors.fill: parent
             visible: icon.status !== Image.Ready
             radius: Math.round(width * 0.3)
-            color: t.raised
+            color: Theme.raised
             border.width: 1
-            border.color: t.border
+            border.color: Theme.border
 
             Text {
                 anchors.centerIn: parent
                 text: (item.modelData.name || "?").charAt(0).toUpperCase()
-                color: t.text
-                font.family: t.font
+                color: Theme.text
+                font.family: Theme.font
                 font.pixelSize: Math.round(parent.height * 0.5)
                 font.weight: Font.Bold
             }
@@ -130,7 +129,7 @@ Item {
         height: Math.max(3, Math.round(3.5 * item.s))
         width: item.launching && !item.running ? height * 2.8 : (item.running && item.highlighted ? height * 1.6 : height)
         radius: height / 2
-        color: item.running && item.highlighted ? t.success : t.ink
+        color: item.running && item.highlighted ? Theme.success : Theme.ink
         property real shown: item.running || item.launching ? 1 : 0
         property real pulse: 1
         opacity: shown * pulse * item.appear

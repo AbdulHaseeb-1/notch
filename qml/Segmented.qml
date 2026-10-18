@@ -7,7 +7,6 @@ Item {
     property var value
     signal picked(var value)
 
-    Theme { id: t }
 
     readonly property int currentIndex: {
         for (let i = 0; i < options.length; ++i) {
@@ -28,8 +27,8 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: height / 2
-        color: t.raised
-        border.color: t.borderSoft
+        color: Theme.raised
+        border.color: Theme.borderSoft
         border.width: 1
     }
 
@@ -41,7 +40,7 @@ Item {
         width: seg.cellW
         x: 3 + Math.max(0, seg.currentIndex) * seg.cellW
         radius: height / 2
-        color: t.accent
+        color: Theme.accent
         Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
     }
@@ -63,8 +62,8 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: cell.modelData.label
-                    color: cell.selected ? t.inverse : (cellHit.containsMouse ? t.text : t.textDim)
-                    font.family: t.font
+                    color: cell.selected ? Theme.inverse : (cellHit.containsMouse ? Theme.text : Theme.textDim)
+                    font.family: Theme.font
                     font.pixelSize: 12
                     font.weight: cell.selected ? Font.Bold : Font.Medium
                     Behavior on color { ColorAnimation { duration: 160 } }

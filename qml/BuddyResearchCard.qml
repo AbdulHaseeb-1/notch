@@ -17,12 +17,11 @@ Item {
     readonly property real sentimentScore: ready ? Number(digest.sentiment.score || 0) : 0
     readonly property string sentimentLabel: ready ? String(digest.sentiment.label || "") : ""
 
-    Theme { id: t }
 
     function sentimentColor(s) {
-        if (s >= 0.62) return t.success
-        if (s <= 0.38) return t.danger
-        return t.accent
+        if (s >= 0.62) return Theme.success
+        if (s <= 0.38) return Theme.danger
+        return Theme.accent
     }
 
     // Tint helpers for chips drawn over glass.
@@ -50,9 +49,9 @@ Item {
                 width: parent.width
                 height: bodyLabel.implicitHeight + 18
                 radius: 10
-                color: t.tile
+                color: Theme.tile
                 border.width: 1
-                border.color: t.tileEdge
+                border.color: Theme.tileEdge
 
                 Text {
                     id: bodyLabel
@@ -60,8 +59,8 @@ Item {
                     y: 9
                     width: parent.width - 20
                     text: (card.ready && card.digest && card.digest.summary) ? card.digest.summary : ""
-                    color: t.text
-                    font.family: t.font
+                    color: Theme.text
+                    font.family: Theme.font
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     lineHeight: 1.18
@@ -70,8 +69,8 @@ Item {
 
             Text {
                 text: qsTr("Key findings")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
             }
@@ -92,14 +91,14 @@ Item {
                             width: 5
                             height: 5
                             radius: 2.5
-                            color: t.accent
+                            color: Theme.accent
                         }
                     }
                     Text {
                         width: parent.width - 13
                         text: parent.modelData
-                        color: t.text
-                        font.family: t.font
+                        color: Theme.text
+                        font.family: Theme.font
                         font.pixelSize: 12
                         wrapMode: Text.WordWrap
                         lineHeight: 1.18
@@ -117,8 +116,8 @@ Item {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: qsTr("Assessment")
-                        color: t.textDim
-                        font.family: t.font
+                        color: Theme.textDim
+                        font.family: Theme.font
                         font.pixelSize: 11
                         font.weight: Font.DemiBold
                     }
@@ -132,14 +131,14 @@ Item {
                                           : "transparent"
                         border.width: 1
                         border.color: card.ready ? card.tintEdge(card.sentimentColor(card.sentimentScore))
-                                                 : t.border
+                                                 : Theme.border
 
                         Text {
                             id: sentLabel
                             anchors.centerIn: parent
                             text: card.sentimentLabel
-                            color: card.ready ? card.sentimentColor(card.sentimentScore) : t.textDim
-                            font.family: t.font
+                            color: card.ready ? card.sentimentColor(card.sentimentScore) : Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 10
                             font.weight: Font.DemiBold
                         }
@@ -148,8 +147,8 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: card.ready ? (Math.round(card.sentimentScore * 100) + "%")
                                         : ""
-                        color: t.textFaint
-                        font.family: t.font
+                        color: Theme.textFaint
+                        font.family: Theme.font
                         font.pixelSize: 10
                     }
                 }
@@ -157,12 +156,12 @@ Item {
                     width: parent.width
                     height: 5
                     radius: 2.5
-                    color: t.track
+                    color: Theme.track
                     Rectangle {
                         width: card.ready ? Math.max(6, parent.width * card.sentimentScore) : 6
                         height: parent.height
                         radius: 2.5
-                        color: card.ready ? card.sentimentColor(card.sentimentScore) : t.track
+                        color: card.ready ? card.sentimentColor(card.sentimentScore) : Theme.track
                         Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
                     }
                 }
@@ -170,8 +169,8 @@ Item {
 
             Text {
                 text: qsTr("Suggested reading (not fetched — just famous desks)")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
             }
@@ -189,9 +188,9 @@ Item {
                         width: srcTxt.implicitWidth + 46
                         height: 24
                         radius: 12
-                        color: srcHit.containsMouse || srcHit.pressed ? t.tileActive : t.tile
+                        color: srcHit.containsMouse || srcHit.pressed ? Theme.tileActive : Theme.tile
                         border.width: 1
-                        border.color: t.border
+                        border.color: Theme.border
 
                         Row {
                             anchors.centerIn: parent
@@ -202,14 +201,14 @@ Item {
                                 name: "globe"
                                 size: 11
                                 stroke: 2
-                                color: srcHit.containsMouse ? t.ink : t.textDim
+                                color: srcHit.containsMouse ? Theme.ink : Theme.textDim
                             }
                             Text {
                                 id: srcTxt
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: srcBtn.modelData.name
-                                color: srcHit.containsMouse ? t.ink : t.text
-                                font.family: t.font
+                                color: srcHit.containsMouse ? Theme.ink : Theme.text
+                                font.family: Theme.font
                                 font.pixelSize: 11
                                 font.weight: Font.DemiBold
                             }
@@ -218,7 +217,7 @@ Item {
                                 name: "open"
                                 size: 10
                                 stroke: 2
-                                color: srcHit.containsMouse ? t.ink : t.textFaint
+                                color: srcHit.containsMouse ? Theme.ink : Theme.textFaint
                             }
                         }
                         MouseArea {
@@ -234,8 +233,8 @@ Item {
 
             Text {
                 text: qsTr("Sample content — Noch has no live feed wired up, so nothing here is real-time.")
-                color: t.textFaint
-                font.family: t.font
+                color: Theme.textFaint
+                font.family: Theme.font
                 font.pixelSize: 10
                 width: parent.width
                 wrapMode: Text.WordWrap

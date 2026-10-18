@@ -141,7 +141,6 @@ Item {
         }
     }
 
-    Theme { id: t }
 
     readonly property real mo: appearance.systemMotionReduced() ? 0.35 : 1.0
 
@@ -210,7 +209,7 @@ Item {
     property real dragVelY: 0
     property real neon: 0              // 0..1: neon gradient halo, the buddy's "happy glow"
     // The halo's gradient stops, chosen in Settings > Buddy > Ring colour.
-    readonly property var ringColors: appearance.ringColors
+    readonly property var ringColors: Theme.ringColors
 
     Timer {
         id: moodResetTimer
@@ -699,7 +698,7 @@ Item {
         color: "transparent"
         border.width: buddy.solidRing && (buddy.session === "thinking" || buddy.busy
                                           || buddy.mood === "speaking") ? 2 : 0
-        border.color: t.accent
+        border.color: Theme.accent
         opacity: (buddy.session === "thinking" || buddy.busy)
                  ? (0.45 + 0.35 * Math.sin(buddy.breathPhase * 2.0))
                  : (buddy.mood === "speaking" ? 0.55 * (1 - buddy.neon) : 0)
@@ -717,13 +716,13 @@ Item {
         y: Math.round(buddy.faceLeadY * 0.25 + buddy.hopOffsetY
                       + (buddy.mo > 0.5 ? Math.sin(buddy.breathPhase) * 1.4 * buddy.s : 0))
         radius: buddy.orbRadius
-        color: t.orb
+        color: Theme.orb
         border.width: !buddy.solidRing ? 0
                     : (buddyHit.containsMouse || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
         border.color: !buddy.solidRing ? "transparent"
-                    : (buddy.mood === "error" ? t.danger
-                    : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? t.accent
-                    : (buddyHit.containsMouse || buddy.session === "input" ? t.accent : "#2c2c35")))
+                    : (buddy.mood === "error" ? Theme.danger
+                    : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? Theme.accent
+                    : (buddyHit.containsMouse || buddy.session === "input" ? Theme.accent : "#2c2c35")))
         Behavior on border.color { ColorAnimation { duration: 140 } }
 
         rotation: Math.max(-14, Math.min(14, buddy.gazeRoll * 0.55 + buddy.dragVelX * 0.18))
@@ -760,8 +759,8 @@ Item {
                 anchors.fill: parent
                 radius: width / 2
                 color: buddy.mood === "love" ? "#ffd1e3"
-                     : (buddy.mood === "error" ? t.danger
-                     : ((buddy.session === "thinking" || buddy.busy) ? t.accent : "#ffffff"))
+                     : (buddy.mood === "error" ? Theme.danger
+                     : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
                 antialiasing: true
             }
@@ -804,8 +803,8 @@ Item {
                 anchors.fill: parent
                 radius: width / 2
                 color: buddy.mood === "love" ? "#ffd1e3"
-                     : (buddy.mood === "error" ? t.danger
-                     : ((buddy.session === "thinking" || buddy.busy) ? t.accent : "#ffffff"))
+                     : (buddy.mood === "error" ? Theme.danger
+                     : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
                 antialiasing: true
             }
@@ -1006,9 +1005,9 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: t.surface
+            color: Theme.surface
             border.width: 1
-            border.color: t.borderStrong
+            border.color: Theme.borderStrong
         }
         Row {
             anchors.centerIn: parent
@@ -1026,8 +1025,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: buddy.bubbleText.length > 0
                 text: buddy.bubbleText
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
             }

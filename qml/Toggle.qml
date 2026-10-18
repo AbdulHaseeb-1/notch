@@ -7,7 +7,6 @@ Item {
     property bool enabled2: true
     signal toggled(bool checked)
 
-    Theme { id: t }
 
     implicitWidth: 40
     implicitHeight: 22
@@ -17,7 +16,7 @@ Item {
         id: track
         anchors.fill: parent
         radius: height / 2
-        color: toggle.checked ? t.accent : (hit.containsMouse ? t.press : t.border)
+        color: toggle.checked ? Theme.accent : (hit.containsMouse ? Theme.press : Theme.border)
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 
@@ -28,7 +27,7 @@ Item {
         radius: width / 2
         y: 3
         x: toggle.checked ? parent.width - width - 3 : 3
-        color: toggle.checked ? t.inverse : t.text
+        color: toggle.checked ? Theme.inverse : Theme.text
         scale: hit.pressed ? 0.88 : 1
         Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on color { ColorAnimation { duration: 150 } }

@@ -22,10 +22,9 @@ Item {
     signal hintRequested(string text)
     signal hintCleared()
 
-    Theme { id: t }
 
     readonly property bool playing: media.playing
-    readonly property color dynAccent: media.hasTrack ? media.accentColor : t.ink
+    readonly property color dynAccent: media.hasTrack ? media.accentColor : Theme.ink
     readonly property real pillH: Math.round(50 * s)
     readonly property real playingW: Math.round((media.hasCover ? 86 : 80) * s)
     property bool barOpen: false
@@ -43,7 +42,7 @@ Item {
         id: tb
         property string icon
         property real glyphSize: Math.round(18 * chip.s)
-        property color tint: t.ink
+        property color tint: Theme.ink
         property bool filled: false
         property bool badge: false
         signal clicked()
@@ -55,7 +54,7 @@ Item {
             visible: tb.filled
             anchors.fill: parent
             radius: width / 2
-            color: t.ink
+            color: Theme.ink
             opacity: tbHit.pressed ? 0.85 : 1
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
@@ -63,7 +62,7 @@ Item {
             anchors.centerIn: parent
             name: tb.icon
             size: tb.glyphSize
-            color: tb.filled ? t.inverse : tb.tint
+            color: tb.filled ? Theme.inverse : tb.tint
             scale: tbHit.pressed ? 0.86 : 1
             Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
         }
@@ -80,7 +79,7 @@ Item {
                 anchors.centerIn: parent
                 text: "1"
                 color: "#ffffff"
-                font.family: t.font
+                font.family: Theme.font
                 font.pixelSize: Math.round(8 * chip.s)
                 font.weight: Font.Black
             }
@@ -186,7 +185,7 @@ Item {
                 id: miniArtFrame
                 anchors.fill: parent
                 radius: width / 2
-                color: t.raised
+                color: Theme.raised
                 border.width: 1
                 border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.45)
                 visible: miniCover.visible
@@ -212,7 +211,7 @@ Item {
                 visible: !miniCover.visible
                 name: "notes"
                 size: Math.round(20 * chip.s)
-                color: media.hasTrack ? chip.dynAccent : t.ink
+                color: media.hasTrack ? chip.dynAccent : Theme.ink
                 Behavior on color { ColorAnimation { duration: 260 } }
             }
         }
@@ -288,7 +287,7 @@ Item {
                 width: Math.round(26 * chip.s)
                 height: width
                 radius: Math.round(7 * chip.s)
-                color: t.raised
+                color: Theme.raised
                 border.width: 1
                 border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.5)
                 visible: barMiniCover.visible
@@ -314,7 +313,7 @@ Item {
                 visible: !barMiniCover.visible
                 name: "notes"
                 size: Math.round(18 * chip.s)
-                color: chip.active ? chip.dynAccent : t.textDim
+                color: chip.active ? chip.dynAccent : Theme.textDim
             }
 
             MouseArea {
@@ -327,7 +326,7 @@ Item {
         TransportButton {
             icon: "prev"
             glyphSize: Math.round(19 * chip.s)
-            tint: media.canPrev ? t.ink : t.textFaint
+            tint: media.canPrev ? Theme.ink : Theme.textFaint
             onClicked: if (media.canPrev) media.previous()
         }
         TransportButton {
@@ -339,19 +338,19 @@ Item {
         TransportButton {
             icon: "next"
             glyphSize: Math.round(19 * chip.s)
-            tint: media.canNext ? t.ink : t.textFaint
+            tint: media.canNext ? Theme.ink : Theme.textFaint
             onClicked: if (media.canNext) media.next()
         }
         TransportButton {
             visible: media.canRepeat
             icon: "repeat"
-            tint: media.repeatMode > 0 ? chip.dynAccent : t.textFaint
+            tint: media.repeatMode > 0 ? chip.dynAccent : Theme.textFaint
             badge: media.repeatMode === 2
             onClicked: media.cycleRepeat()
         }
         TransportButton {
             icon: media.muted || media.volume < 0.01 ? "mute" : "volume"
-            tint: chip.volumeOpen ? chip.dynAccent : t.textDim
+            tint: chip.volumeOpen ? chip.dynAccent : Theme.textDim
             onClicked: chip.volumeOpen = !chip.volumeOpen
         }
         Item {

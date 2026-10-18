@@ -19,19 +19,18 @@ Item {
     // other drop target.
     signal dropForwarded(var drop)
 
-    Theme { id: t }
 
     // ---- dynamic palette
-    readonly property color cardBg:      t.surface
-    readonly property color bezelBg:     t.raised
-    readonly property color bezelBorder: t.border
-    readonly property color dynAccent:   media.hasTrack ? media.accentColor : t.ink
-    readonly property color dynAmbient:  media.hasTrack ? media.ambientColor : t.raised
+    readonly property color cardBg:      Theme.surface
+    readonly property color bezelBg:     Theme.raised
+    readonly property color bezelBorder: Theme.border
+    readonly property color dynAccent:   media.hasTrack ? media.accentColor : Theme.ink
+    readonly property color dynAmbient:  media.hasTrack ? media.ambientColor : Theme.raised
     readonly property color accent:      dynAccent
     readonly property color accentLight: Qt.lighter(dynAccent, 1.15)
     readonly property color accentDeep:  Qt.darker(dynAccent, 1.28)
-    readonly property color textMuted:   t.textDim
-    readonly property color textFaint:   t.textFaint
+    readonly property color textMuted:   Theme.textDim
+    readonly property color textFaint:   Theme.textFaint
 
     readonly property real pad: 22
     readonly property real cardRadius: 28
@@ -59,7 +58,7 @@ Item {
         if (kind === "vlc")        return "#FF8800"
         if (kind === "applemusic") return "#FA243C"
         if (kind === "soundcloud") return "#FF5500"
-        return t.ink
+        return Theme.ink
     }
 
     function toggleLike() {
@@ -177,8 +176,8 @@ Item {
         id: ih
         property string icon
         property real glyphSize: 16
-        property color color: t.textDim
-        property color hoverColor: t.ink
+        property color color: Theme.textDim
+        property color hoverColor: Theme.ink
         property bool filled: false
         property real stroke: 1.8
         readonly property bool hovered: ihHit.containsMouse
@@ -280,8 +279,8 @@ Item {
                         text: media.sourceName && media.sourceName.length > 0
                               ? media.sourceName.toUpperCase()
                               : qsTr("NOW PLAYING")
-                        color: t.ink
-                        font.family: t.font
+                        color: Theme.ink
+                        font.family: Theme.font
                         font.pixelSize: 10
                         font.weight: Font.Bold
                         font.letterSpacing: 1.8
@@ -337,7 +336,7 @@ Item {
                     id: moreBtn
                     icon: "more"
                     glyphSize: 16
-                    color: panel.menuOpen ? t.ink : panel.textMuted
+                    color: panel.menuOpen ? Theme.ink : panel.textMuted
                     onClicked: panel.menuOpen = !panel.menuOpen
                 }
             }
@@ -388,11 +387,11 @@ Item {
                             radius: 13
                             color: isCurrent
                                    ? Qt.rgba(chipAccent.r, chipAccent.g, chipAccent.b, 0.18)
-                                   : t.raised
+                                   : Theme.raised
                             border.width: 1
                             border.color: isCurrent
                                           ? Qt.rgba(chipAccent.r, chipAccent.g, chipAccent.b, 0.55)
-                                          : t.border
+                                          : Theme.border
                             Behavior on color { ColorAnimation { duration: 160 } }
                             Behavior on border.color { ColorAnimation { duration: 160 } }
 
@@ -413,8 +412,8 @@ Item {
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: srcChip.modelData.name
-                                    color: srcChip.isCurrent ? t.ink : panel.textMuted
-                                    font.family: t.font
+                                    color: srcChip.isCurrent ? Theme.ink : panel.textMuted
+                                    font.family: Theme.font
                                     font.pixelSize: 11
                                     font.weight: srcChip.isCurrent ? Font.Bold : Font.Medium
                                 }
@@ -629,9 +628,9 @@ Item {
                 Text {
                     width: parent.width
                     text: panel.displayTitle
-                    color: t.ink
+                    color: Theme.ink
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 16
                     font.weight: Font.Bold
                 }
@@ -640,7 +639,7 @@ Item {
                     text: panel.displayArtist
                     color: panel.textMuted
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 12
                     font.weight: Font.Medium
                 }
@@ -658,7 +657,7 @@ Item {
                     icon: "list"
                     glyphSize: 16
                     color: panel.queueOpen ? panel.accent : panel.textMuted
-                    hoverColor: t.ink
+                    hoverColor: Theme.ink
                     onClicked: panel.queueOpen = !panel.queueOpen
                 }
 
@@ -699,7 +698,7 @@ Item {
                 Rectangle {
                     anchors.fill: parent
                     radius: height / 2
-                    color: t.track
+                    color: Theme.track
                 }
                 Rectangle {
                     width: Math.max(height, panel.progressRatio * parent.width)
@@ -769,7 +768,7 @@ Item {
                       ? panel.fmtClock(panel.displayPosition)
                       : (media.hasTrack ? (panel.playing ? qsTr("LIVE") : qsTr("PAUSED")) : "0:00")
                 color: panel.textFaint
-                font.family: t.font
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
@@ -782,7 +781,7 @@ Item {
                       ? panel.fmtClock(panel.displayDuration)
                       : (media.hasTrack && media.sourceName ? media.sourceName : "0:00")
                 color: panel.textFaint
-                font.family: t.font
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
@@ -802,7 +801,7 @@ Item {
                 glyphSize: 17
                 opacity: media.canShuffle ? 1.0 : 0.35
                 color: media.shuffle ? panel.accent : panel.textFaint
-                hoverColor: media.shuffle ? panel.accentLight : t.accent
+                hoverColor: media.shuffle ? panel.accentLight : Theme.accent
                 onClicked: if (media.canShuffle) media.toggleShuffle()
             }
 
@@ -813,8 +812,8 @@ Item {
                 width: 40; height: 40
                 icon: "prev"
                 glyphSize: 22
-                color: media.canPrev ? t.ink : panel.textFaint
-                hoverColor: t.ink
+                color: media.canPrev ? Theme.ink : panel.textFaint
+                hoverColor: Theme.ink
                 onClicked: if (media.canPrev) media.previous()
             }
 
@@ -831,12 +830,12 @@ Item {
                     gradient: Gradient {
                         GradientStop {
                             position: 0.0
-                            color: media.hasTrack ? panel.accent : t.ink
+                            color: media.hasTrack ? panel.accent : Theme.ink
                             Behavior on color { ColorAnimation { duration: 120 } }
                         }
                         GradientStop {
                             position: 1.0
-                            color: media.hasTrack ? panel.accentDeep : t.inkSoft
+                            color: media.hasTrack ? panel.accentDeep : Theme.inkSoft
                             Behavior on color { ColorAnimation { duration: 120 } }
                         }
                     }
@@ -849,7 +848,7 @@ Item {
                         name: !media.hasTrack ? "plus" : (panel.playing ? "pause" : "play")
                         size: media.hasTrack ? 22 : 20
                         stroke: 2.4
-                        color: media.hasTrack ? "#ffffff" : t.inverse
+                        color: media.hasTrack ? "#ffffff" : Theme.inverse
                     }
                 }
 
@@ -874,8 +873,8 @@ Item {
                 width: 40; height: 40
                 icon: "next"
                 glyphSize: 22
-                color: media.canNext ? t.ink : panel.textFaint
-                hoverColor: t.ink
+                color: media.canNext ? Theme.ink : panel.textFaint
+                hoverColor: Theme.ink
                 onClicked: if (media.canNext) media.next()
             }
 
@@ -888,7 +887,7 @@ Item {
                 glyphSize: 17
                 opacity: media.canRepeat ? 1.0 : 0.35
                 color: media.repeatMode > 0 ? panel.accent : panel.textFaint
-                hoverColor: media.repeatMode > 0 ? panel.accentLight : t.accent
+                hoverColor: media.repeatMode > 0 ? panel.accentLight : Theme.accent
                 onClicked: if (media.canRepeat) media.cycleRepeat()
 
                 // "1" badge for repeat-one.
@@ -904,7 +903,7 @@ Item {
                         anchors.centerIn: parent
                         text: "1"
                         color: "#ffffff"
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 8
                         font.weight: Font.Black
                     }
@@ -926,7 +925,7 @@ Item {
                 icon: media.muted || media.volume < 0.01 ? "mute" : "volume"
                 glyphSize: 16
                 color: panel.textMuted
-                hoverColor: t.ink
+                hoverColor: Theme.ink
                 onClicked: media.toggleMute()
             }
 
@@ -951,7 +950,7 @@ Item {
                 horizontalAlignment: Text.AlignRight
                 text: Math.round(media.volume * 100) + "%"
                 color: panel.textFaint
-                font.family: t.font
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
@@ -972,7 +971,7 @@ Item {
                 x: panel.pad
                 width: parent.width - 2 * panel.pad
                 height: 1
-                color: t.border
+                color: Theme.border
             }
 
             ListView {
@@ -1005,7 +1004,7 @@ Item {
                         width: 18
                         text: qRow.index + 1
                         color: qRow.current ? panel.accent : panel.textFaint
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 11
                         font.weight: Font.DemiBold
                         font.features: ({ "tnum": 1 })
@@ -1018,9 +1017,9 @@ Item {
                         anchors.rightMargin: 6
                         anchors.verticalCenter: parent.verticalCenter
                         text: qRow.modelData.title + (qRow.modelData.artist ? "  ·  " + qRow.modelData.artist : "")
-                        color: qRow.current ? panel.accentLight : t.text
+                        color: qRow.current ? panel.accentLight : Theme.text
                         elide: Text.ElideRight
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 12
                         font.weight: qRow.current ? Font.Bold : Font.Normal
                     }
@@ -1070,7 +1069,7 @@ Item {
         width: 192
         height: optCol.implicitHeight + 12
         radius: 14
-        tint: t.surface
+        tint: Theme.surface
         opacity: panel.menuOpen ? 1 : 0
         visible: opacity > 0.01
         Behavior on opacity { NumberAnimation { duration: 130 } }

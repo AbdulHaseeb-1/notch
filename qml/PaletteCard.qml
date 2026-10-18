@@ -11,7 +11,6 @@ Item {
     // (Escape, or a row was run).
     signal dismissed()
 
-    Theme { id: t }
 
     property var results: []
     property int currentIndex: 0
@@ -89,7 +88,7 @@ Item {
                 name: "search"
                 size: 17
                 stroke: 2
-                color: paletteInput.activeFocus ? t.accent : t.textFaint
+                color: paletteInput.activeFocus ? Theme.accent : Theme.textFaint
             }
 
             TextInput {
@@ -99,10 +98,10 @@ Item {
                 anchors.right: clearBtn.visible ? clearBtn.left : parent.right
                 anchors.rightMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
-                color: t.ink
-                selectionColor: t.accent
-                selectedTextColor: t.inverse
-                font.family: t.font
+                color: Theme.ink
+                selectionColor: Theme.accent
+                selectedTextColor: Theme.inverse
+                font.family: Theme.font
                 font.pixelSize: 15
                 font.weight: Font.Medium
                 clip: true
@@ -136,7 +135,7 @@ Item {
                     visible: paletteInput.text.length === 0
                     verticalAlignment: TextInput.AlignVCenter
                     text: qsTr("Search apps, switch windows, calculate, or search the web…")
-                    color: t.textFaint
+                    color: Theme.textFaint
                     font: paletteInput.font
                 }
             }
@@ -155,7 +154,7 @@ Item {
                     name: "close"
                     size: 12
                     stroke: 2
-                    color: clearHit.containsMouse ? t.ink : t.textDim
+                    color: clearHit.containsMouse ? Theme.ink : Theme.textDim
                 }
                 MouseArea {
                     id: clearHit
@@ -173,7 +172,7 @@ Item {
         Rectangle {
             width: parent.width
             height: 1
-            color: t.borderSoft
+            color: Theme.borderSoft
         }
 
         // ── Results ─────────────────────────────────────────────────────
@@ -204,9 +203,9 @@ Item {
                     width: parent.width - 16
                     height: parent.height - 4
                     radius: 10
-                    color: row.active ? t.tileActive : "transparent"
+                    color: row.active ? Theme.tileActive : "transparent"
                     border.width: row.active ? 1 : 0
-                    border.color: t.tileEdge
+                    border.color: Theme.tileEdge
                 }
 
                 HoverHandler {
@@ -242,7 +241,7 @@ Item {
                         name: row.modelData.icon || "plus"
                         size: 17
                         stroke: 1.9
-                        color: t.text
+                        color: Theme.text
                     }
                 }
 
@@ -254,9 +253,9 @@ Item {
                     anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
                     text: row.modelData.title || ""
-                    color: t.ink
+                    color: Theme.ink
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 14
                     font.weight: row.modelData.kind === "calc" ? Font.Bold : Font.DemiBold
 
@@ -267,8 +266,8 @@ Item {
                         x: parent.contentWidth + 10
                         anchors.verticalCenter: parent.verticalCenter
                         text: row.modelData.subtitle || ""
-                        color: t.textFaint
-                        font.family: t.font
+                        color: Theme.textFaint
+                        font.family: Theme.font
                         font.pixelSize: 12
                     }
                 }
@@ -281,9 +280,9 @@ Item {
                     width: Math.min(implicitWidth, row.width * 0.42)
                     horizontalAlignment: Text.AlignRight
                     text: row.modelData.kind === "calc" ? "" : (row.modelData.subtitle || "")
-                    color: row.active ? t.textDim : t.textFaint
+                    color: row.active ? Theme.textDim : Theme.textFaint
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 12
                     font.weight: Font.Medium
                 }
@@ -299,7 +298,7 @@ Item {
         Rectangle {
             width: parent.width
             height: 1
-            color: t.borderSoft
+            color: Theme.borderSoft
         }
 
         // ── Footer hints ────────────────────────────────────────────────
@@ -315,7 +314,6 @@ Item {
                 spacing: 14
 
                 component Hint: Row {
-                    Theme { id: ht }
                     property string key
                     property string what
                     spacing: 5
@@ -324,15 +322,15 @@ Item {
                         width: Math.max(18, hintKey.implicitWidth + 8)
                         height: 17
                         radius: 5
-                        color: ht.raised
+                        color: Theme.raised
                         border.width: 1
-                        border.color: ht.border
+                        border.color: Theme.border
                         Text {
                             id: hintKey
                             anchors.centerIn: parent
                             text: parent.parent.key
-                            color: ht.textDim
-                            font.family: ht.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 10
                             font.weight: Font.Bold
                         }
@@ -340,8 +338,8 @@ Item {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: parent.what
-                        color: ht.textFaint
-                        font.family: ht.font
+                        color: Theme.textFaint
+                        font.family: Theme.font
                         font.pixelSize: 10
                         font.weight: Font.Medium
                     }
@@ -358,8 +356,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: palette.results.length > 0
                 text: qsTr("%1 result(s)").arg(palette.results.length)
-                color: t.textFaint
-                font.family: t.font
+                color: Theme.textFaint
+                font.family: Theme.font
                 font.pixelSize: 10
             }
         }

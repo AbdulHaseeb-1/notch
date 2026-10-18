@@ -9,7 +9,6 @@ MouseArea {
     property var pillItem: null
     property bool pillHovered: false
 
-    Theme { id: t }
 
     width: Math.round(64 * root.s)
     height: 16
@@ -47,9 +46,9 @@ MouseArea {
         width: self.containsMouse || self.pressed ? 46 : 30
         height: self.pressed ? 5 : 4
         radius: height / 2
-        color: self.containsMouse || self.pressed ? t.ink : t.textDim
+        color: self.containsMouse || self.pressed ? Theme.ink : Theme.textDim
         border.width: 1
-        border.color: t.surface
+        border.color: Theme.surface
         opacity: self.showBar && root.progress > 0.9 ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 150 } }
         Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }

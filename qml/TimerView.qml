@@ -9,7 +9,6 @@ Item {
     property var timer          // FocusTimer
     signal toastRequested(string text)
 
-    Theme { id: t }
 
     // Null-safe flows (the timer is always wired today, but these mirror
     // TimerPill so a mis-wire can never throw at paint time).
@@ -44,16 +43,16 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: rb.primary ? t.accent : t.raised
+            color: rb.primary ? Theme.accent : Theme.raised
             border.width: rb.primary ? 0 : 1
-            border.color: t.borderSoft
+            border.color: Theme.borderSoft
         }
         Glyph {
             anchors.centerIn: parent
             name: rb.icon
             size: rb.glyphSize
             stroke: 2
-            color: rb.primary ? t.inverse : t.text
+            color: rb.primary ? Theme.inverse : Theme.text
         }
         MouseArea {
             id: rbHit
@@ -83,7 +82,7 @@ Item {
                 preferredRendererType: Shape.CurveRenderer
                 ShapePath {
                     strokeWidth: 8
-                    strokeColor: t.track
+                    strokeColor: Theme.track
                     fillColor: "transparent"
                     PathAngleArc {
                         centerX: view.ringSize / 2; centerY: view.ringSize / 2
@@ -93,7 +92,7 @@ Item {
                 }
                 ShapePath {
                     strokeWidth: 8
-                    strokeColor: view.finished ? t.success : t.ink
+                    strokeColor: view.finished ? Theme.success : Theme.ink
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
                     Behavior on strokeColor { ColorAnimation { duration: 240 } }
@@ -112,8 +111,8 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: view.timerLabel
-                    color: view.finished ? t.success : t.ink
-                    font.family: t.font
+                    color: view.finished ? Theme.success : Theme.ink
+                    font.family: Theme.font
                     font.pixelSize: 38
                     font.weight: Font.Bold
                     font.features: ({ "tnum": 1 })
@@ -122,8 +121,8 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: view.finished ? qsTr("Session finished")
                         : (view.running ? qsTr("Focusing") : (view.timerActive ? qsTr("Paused") : qsTr("Ready")))
-                    color: t.textDim
-                    font.family: t.font
+                    color: Theme.textDim
+                    font.family: Theme.font
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
                 }
@@ -178,8 +177,8 @@ Item {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: qsTr("minutes  ·  keeps running when this panel is closed")
-            color: t.textFaint
-            font.family: t.font
+            color: Theme.textFaint
+            font.family: Theme.font
             font.pixelSize: 11
         }
     }

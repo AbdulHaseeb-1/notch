@@ -16,7 +16,6 @@ Item {
     signal hintRequested(string text)
     signal hintCleared()
 
-    Theme { id: t }
 
     readonly property bool shown: timer && timer.active
     readonly property bool hovered: hover.hovered
@@ -53,7 +52,7 @@ Item {
     Glass {
         anchors.fill: parent
         radius: height / 2
-        edge: pill.timer && pill.timer.finished ? Qt.rgba(t.success.r, t.success.g, t.success.b, 0.35 + 0.5 * pill.pulse)
+        edge: pill.timer && pill.timer.finished ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.35 + 0.5 * pill.pulse)
                                                 : "transparent"
     }
 
@@ -72,7 +71,7 @@ Item {
                 preferredRendererType: Shape.CurveRenderer
                 ShapePath {
                     strokeWidth: Math.max(2.2, 2.6 * pill.s)
-                    strokeColor: t.track
+                    strokeColor: Theme.track
                     fillColor: "transparent"
                     PathAngleArc {
                         centerX: pill.ringSize / 2; centerY: pill.ringSize / 2
@@ -82,7 +81,7 @@ Item {
                 }
                 ShapePath {
                     strokeWidth: Math.max(2.2, 2.6 * pill.s)
-                    strokeColor: pill.timer && pill.timer.finished ? t.success : t.accent
+                    strokeColor: pill.timer && pill.timer.finished ? Theme.success : Theme.accent
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
                     PathAngleArc {
@@ -99,7 +98,7 @@ Item {
                 anchors.centerIn: parent
                 name: "pause"
                 size: Math.round(10 * pill.s)
-                color: t.ink
+                color: Theme.ink
             }
             Glyph {
                 visible: pill.timer && pill.timer.finished
@@ -107,15 +106,15 @@ Item {
                 name: "check"
                 size: Math.round(12 * pill.s)
                 stroke: 2.6
-                color: t.success
+                color: Theme.success
             }
         }
 
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: pill.timer ? (pill.timer.finished ? qsTr("Done") : pill.timer.label) : ""
-            color: pill.timer && pill.timer.finished ? t.success : t.ink
-            font.family: t.font
+            color: pill.timer && pill.timer.finished ? Theme.success : Theme.ink
+            font.family: Theme.font
             font.pixelSize: Math.round(14 * pill.s)
             font.weight: Font.Bold
             font.features: ({ "tnum": 1 })

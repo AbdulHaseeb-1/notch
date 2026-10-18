@@ -14,7 +14,6 @@ Item {
     signal tabPicked(int tab)
     signal toastRequested(string text)
 
-    Theme { id: t }
 
     implicitWidth: 368
     // The size the card is heading for, for the click-through mask: using the
@@ -58,7 +57,7 @@ Item {
                 anchors.centerIn: parent
                 name: "close"
                 size: 15
-                color: closeHit.containsMouse ? t.ink : t.textDim
+                color: closeHit.containsMouse ? Theme.ink : Theme.textDim
             }
             MouseArea {
                 id: closeHit
@@ -75,7 +74,7 @@ Item {
         anchors.top: header.bottom
         width: parent.width
         height: 1
-        color: t.borderSoft
+        color: Theme.borderSoft
     }
 
     Item {

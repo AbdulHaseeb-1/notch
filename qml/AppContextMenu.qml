@@ -52,9 +52,9 @@ Flyout {
                     visible: !menu.renaming
                     width: parent.width
                     text: menu.app ? menu.app.name : ""
-                    color: t.ink
+                    color: Theme.ink
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 15
                     font.weight: Font.ExtraBold
                 }
@@ -63,19 +63,19 @@ Flyout {
                     width: parent.width
                     height: 26
                     radius: 6
-                    color: t.raised
+                    color: Theme.raised
                     border.width: 1
-                    border.color: t.accent
+                    border.color: Theme.accent
                     TextInput {
                         id: renameInput
                         anchors.fill: parent
                         anchors.leftMargin: 8
                         anchors.rightMargin: 8
                         verticalAlignment: TextInput.AlignVCenter
-                        color: t.ink
-                        selectionColor: t.ink
-                        selectedTextColor: t.inverse
-                        font.family: t.font
+                        color: Theme.ink
+                        selectionColor: Theme.ink
+                        selectedTextColor: Theme.inverse
+                        font.family: Theme.font
                         font.pixelSize: 13
                         font.weight: Font.Bold
                         clip: true
@@ -91,14 +91,14 @@ Flyout {
                 Text {
                     width: parent.width
                     text: menu.app ? (root.running.indexOf(menu.app.exe) >= 0 ? qsTr("Running") : (menu.app.path || "")) : ""
-                    color: t.textDim
+                    color: Theme.textDim
                     elide: Text.ElideMiddle
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 11
                 }
             }
         }
-        Rectangle { width: parent.width; height: 1; color: t.borderSoft }
+        Rectangle { width: parent.width; height: 1; color: Theme.borderSoft }
         Item { width: 1; height: 4 }
 
         MenuRow {
@@ -152,7 +152,7 @@ Flyout {
             onTriggered: { dock.move(liveIndex, liveIndex + 1); root.menuIndex = -1 }
         }
         Item { width: 1; height: 4 }
-        Rectangle { width: parent.width; height: 1; color: t.borderSoft }
+        Rectangle { width: parent.width; height: 1; color: Theme.borderSoft }
         Item { width: 1; height: 4 }
         MenuRow {
             width: parent.width
@@ -168,5 +168,4 @@ Flyout {
         }
     }
 
-    Theme { id: t }
 }

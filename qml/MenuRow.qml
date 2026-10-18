@@ -9,12 +9,11 @@ Item {
     property bool danger: false
     signal triggered()
 
-    Theme { id: t }
 
     implicitHeight: 38
     implicitWidth: 200
 
-    readonly property color fg: danger ? t.danger : (hit.containsMouse ? t.ink : t.text)
+    readonly property color fg: danger ? Theme.danger : (hit.containsMouse ? Theme.ink : Theme.text)
 
     Glyph {
         id: rowGlyph
@@ -33,7 +32,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         text: row.label
         color: row.fg
-        font.family: t.font
+        font.family: Theme.font
         font.pixelSize: 14
         font.weight: Font.DemiBold
     }
@@ -43,8 +42,8 @@ Item {
         anchors.rightMargin: 16
         anchors.verticalCenter: parent.verticalCenter
         text: row.hint
-        color: t.textDim
-        font.family: t.font
+        color: Theme.textDim
+        font.family: Theme.font
         font.pixelSize: 12
     }
 

@@ -6,10 +6,9 @@ import QtQuick
 Item {
     id: glass
 
-    Theme { id: t }
 
     property real radius: 22
-    property color tint: t.surface
+    property color tint: Theme.surface
     property color edge: "transparent"
     property bool shadowEnabled: false
 
@@ -20,7 +19,7 @@ Item {
         radius: glass.r
         color: Qt.rgba(glass.tint.r, glass.tint.g, glass.tint.b, 1.0)
         border.width: glass.edge.a > 0 ? 1.5 : 1
-        border.color: glass.edge.a > 0 ? glass.edge : t.border
+        border.color: glass.edge.a > 0 ? glass.edge : Theme.border
         Behavior on border.color { ColorAnimation { duration: 150 } }
     }
 }

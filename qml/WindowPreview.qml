@@ -6,7 +6,6 @@ import QtQuick
 Item {
     id: preview
 
-    Theme { id: t }
 
     property string programName: ""
     property int windowCount: 0
@@ -52,9 +51,9 @@ Item {
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: preview.programName
-            color: t.ink
+            color: Theme.ink
             elide: Text.ElideRight
-            font.family: t.font
+            font.family: Theme.font
             font.pixelSize: 13
             font.weight: Font.Bold
         }
@@ -64,8 +63,8 @@ Item {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             text: preview.windowCount === 1 ? qsTr("1 window") : qsTr("%1 windows").arg(preview.windowCount)
-            color: t.textDim
-            font.family: t.font
+            color: Theme.textDim
+            font.family: Theme.font
             font.pixelSize: 11
             font.weight: Font.DemiBold
         }
@@ -95,10 +94,10 @@ Item {
                     width: parent.width
                     height: preview.thumbHeight
                     radius: 12
-                    color: t.frame
+                    color: Theme.frame
                     clip: true
                     border.width: 1
-                    border.color: thumb.hot ? t.accent : t.border
+                    border.color: thumb.hot ? Theme.accent : Theme.border
                     Behavior on border.color { ColorAnimation { duration: 140 } }
 
                     Image {
@@ -119,8 +118,8 @@ Item {
                     width: parent.width
                     text: thumb.modelData.title
                     elide: Text.ElideRight
-                    color: thumb.hot ? t.ink : t.text
-                    font.family: t.font
+                    color: thumb.hot ? Theme.ink : Theme.text
+                    font.family: Theme.font
                     font.pixelSize: 11
                     font.weight: Font.DemiBold
                 }

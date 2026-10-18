@@ -7,7 +7,6 @@ Item {
 
     signal toastRequested(string text)
 
-    Theme { id: t }
 
     readonly property int rowH: 58
     readonly property int maxRows: 5
@@ -42,21 +41,21 @@ Item {
             width: 56
             height: 56
             radius: 28
-            color: t.raised
+            color: Theme.raised
             border.width: 1
-            border.color: t.borderSoft
+            border.color: Theme.borderSoft
             Glyph {
                 anchors.centerIn: parent
                 name: "clipboard"
                 size: 26
-                color: t.ink
+                color: Theme.ink
             }
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: qsTr("Clipboard history")
-            color: t.ink
-            font.family: t.font
+            color: Theme.ink
+            font.family: Theme.font
             font.pixelSize: 16
             font.weight: Font.Bold
         }
@@ -67,8 +66,8 @@ Item {
             wrapMode: Text.WordWrap
             lineHeight: 1.12
             text: qsTr("Keeps the text you copy so you can copy it again. It stays in memory only and is gone when Noch quits. Copies from password managers are skipped.")
-            color: t.textDim
-            font.family: t.font
+            color: Theme.textDim
+            font.family: Theme.font
             font.pixelSize: 12
         }
         Item { width: 1; height: 2 }
@@ -77,7 +76,7 @@ Item {
             width: onLabel.implicitWidth + 36
             height: 36
             radius: 18
-            color: onHit.containsMouse ? t.inkSoft : t.ink
+            color: onHit.containsMouse ? Theme.inkSoft : Theme.ink
             scale: onHit.pressed ? 0.95 : 1
             Behavior on scale { SpringAnimation { spring: 6; damping: 0.35; epsilon: 0.0005 } }
             Behavior on color { ColorAnimation { duration: 120 } }
@@ -85,8 +84,8 @@ Item {
                 id: onLabel
                 anchors.centerIn: parent
                 text: qsTr("Turn on")
-                color: t.inverse
-                font.family: t.font
+                color: Theme.inverse
+                font.family: Theme.font
                 font.pixelSize: 14
                 font.weight: Font.Bold
             }
@@ -116,8 +115,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: clipboard.count === 0 ? qsTr("Nothing yet")
                     : (clipboard.count === 1 ? qsTr("1 item") : qsTr("%1 items").arg(clipboard.count))
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
             }
@@ -140,8 +139,8 @@ Item {
                             id: linkText
                             anchors.centerIn: parent
                             text: link.modelData.label
-                            color: linkHit.containsMouse ? t.ink : t.textDim
-                            font.family: t.font
+                            color: linkHit.containsMouse ? Theme.ink : Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                         }
@@ -162,7 +161,7 @@ Item {
             }
         }
 
-        Rectangle { width: parent.width; height: 1; color: t.borderSoft }
+        Rectangle { width: parent.width; height: 1; color: Theme.borderSoft }
 
         // Empty state.
         Item {
@@ -175,8 +174,8 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: qsTr("Copy some text and it shows up here.")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 13
             }
         }
@@ -216,12 +215,12 @@ Item {
                     Text {
                         width: parent.width
                         text: row.modelData.preview
-                        color: t.text
+                        color: Theme.text
                         elide: Text.ElideRight
                         maximumLineCount: 2
                         wrapMode: Text.Wrap
                         lineHeight: 1.05
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 13
                         font.weight: Font.DemiBold
                     }
@@ -230,9 +229,9 @@ Item {
                         text: (row.modelData.lines > 1 ? qsTr("%1 lines").arg(row.modelData.lines)
                                                        : qsTr("%1 chars").arg(row.modelData.chars))
                               + "  ·  " + view.ago(row.modelData.when)
-                        color: t.textFaint
+                        color: Theme.textFaint
                         elide: Text.ElideRight
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 11
                     }
                 }
@@ -263,7 +262,7 @@ Item {
                             name: "pin"
                             size: 15
                             stroke: 2
-                            color: row.modelData.pinned ? t.ink : (pinHit.containsMouse ? t.ink : t.textDim)
+                            color: row.modelData.pinned ? Theme.ink : (pinHit.containsMouse ? Theme.ink : Theme.textDim)
                             rotation: row.modelData.pinned ? 0 : 35
                             Behavior on rotation { SpringAnimation { spring: 5; damping: 0.3; epsilon: 0.05 } }
                         }
@@ -288,7 +287,7 @@ Item {
                             name: "close"
                             size: 14
                             stroke: 2
-                            color: delHit.containsMouse ? t.danger : t.textDim
+                            color: delHit.containsMouse ? Theme.danger : Theme.textDim
                         }
                         MouseArea {
                             id: delHit

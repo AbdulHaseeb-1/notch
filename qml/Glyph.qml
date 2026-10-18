@@ -8,9 +8,8 @@ import QtQuick.Shapes
 Item {
     id: glyph
     property string name: "close"
-    Theme { id: t }
 
-    property color color: t.text
+    property color color: Theme.text
     property real size: 16
     property real stroke: 1.8
     property bool filled: false
