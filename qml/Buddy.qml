@@ -25,7 +25,7 @@ Item {
 
     // ---- state & mood -------------------------------------------------------
     property string session: "idle"      // idle | input | thinking | result
-    property string mood: "neutral"      // neutral | happy | love | curious | listening | thinking | speaking | surprised | error
+    property string mood: "neutral"      // neutral | happy | love | curious | listening | thinking | speaking | surprised | error | sleepy
     property string lastRequest: ""
     property bool awaitingReply: false   // a chat request is in flight for the bubble
     readonly property bool inputActive: session === "input" || session === "thinking"
@@ -201,6 +201,7 @@ Item {
     property real asymRight: 0         // curious asymmetric right eye scale
     property real speakBounce: 0       // 0..1 rhythmic modulation while speaking/streaming
     property real breathPhase: 0       // continuous organic idle breathing phase
+    property real shakeX: 0            // brief horizontal "no" wobble on errors
     property real hopOffsetY: 0        // vertical jump/bounce offset
     property real hopVelY: 0
     property real squashX: 1.0         // squash-and-stretch horizontal scale
@@ -242,6 +243,57 @@ Item {
         squashY = 1.14
         springing = true
     }
+
+    // A quick head shake: one cheap property animation, no per-frame JS.
+    function shake() {
+        if (mo < 0.5)
+            return
+        shakeAnim.restart()
+    }
+    SequentialAnimation {
+        id: shakeAnim
+        NumberAnimation { target: buddy; property: "shakeX"; to: -4 * buddy.s; duration: 55; easing.type: Easing.OutQuad }
+        NumberAnimation { target: buddy; property: "shakeX"; to: 4 * buddy.s; duration: 90; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: buddy; property: "shakeX"; to: -2.5 * buddy.s; duration: 80; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: buddy; property: "shakeX"; to: 0; duration: 70; easing.type: Easing.OutQuad }
+    }
+
+    // Small success beat when an agent run finishes cleanly with tools.
+    function nodHappy() {
+        setMood("happy", 1500)
+        hop(70)
+        neonBurst(false)
+    }
+
+    // ---- idle → sleepy --------------------------------------------------------
+    // After a few quiet minutes the buddy dozes (droopy eyes, an occasional
+    // zzz). The timer only runs while idle, so it costs nothing otherwise, and
+    // the sleepy face settles the frame loop like any other expression.
+    Timer {
+        id: dozeTimer
+        interval: 180000
+        running: buddy.visible && buddy.session === "idle" && buddy.mood === "neutral"
+                 && !buddy.busy && !buddy.dragging
+        onTriggered: {
+            buddy.setMood("sleepy", 0)
+            buddy.targetPitch = -8 * buddy.mo
+            buddy.emote("", "zzz")
+        }
+    }
+    Timer {
+        interval: 14000
+        repeat: true
+        running: buddy.visible && buddy.mood === "sleepy"
+        onTriggered: buddy.emote("", "zzz")
+    }
+    function wake() {
+        if (mood !== "sleepy")
+            return
+        targetPitch = restPitch
+        setMood("surprised", 650)
+        hop(55)
+    }
+    onSessionChanged: { wake(); dozeTimer.restart() }
 
     function celebrate() {
         setMood("love", 3000)
@@ -624,7 +676,8 @@ Item {
                            : (buddy.mood === "surprised" ? 0.34
                            : (buddy.mood === "listening" ? 0.14
                            : (buddy.mood === "thinking" ? -0.06
-                           : (buddy.mood === "error" ? -0.22 : 0.0))))
+                           : (buddy.mood === "error" ? -0.22
+                           : (buddy.mood === "sleepy" ? -0.5 : 0.0)))))
             // Curious: one eye a touch bigger. Pondering: a slight one-eyed squint.
             const wantAsymL = buddy.mood === "curious" ? 0.18 : (buddy.mood === "thinking" ? 0.05 : 0.0)
             const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
@@ -712,7 +765,7 @@ Item {
         width: parent.width
         height: parent.height
         // Subtle body lean toward gaze + organic breathing bob + hop bounce
-        x: Math.round(buddy.faceLeadX * 0.28)
+        x: Math.round(buddy.faceLeadX * 0.28 + buddy.shakeX)
         y: Math.round(buddy.faceLeadY * 0.25 + buddy.hopOffsetY
                       + (buddy.mo > 0.5 ? Math.sin(buddy.breathPhase) * 1.4 * buddy.s : 0))
         radius: buddy.orbRadius
@@ -1385,6 +1438,7 @@ Item {
         session = "result"
         // A sympathetic droop: squinted eyes, head tilted, looking down.
         setMood("error", 2600)
+        shake()
         targetRoll = -10 * mo
         targetPitch = -12 * mo
         springing = true
@@ -1659,8 +1713,12 @@ Item {
             buddy.lastHoverX = mouseX
             buddy.lastHoverY = mouseY
             buddy.springing = true
+            buddy.wake()
+            dozeTimer.restart()
         }
         onPressed: (mouse) => {
+            buddy.wake()
+            dozeTimer.restart()
             const g = buddy.desktop
                       ? buddyHit.mapToItem(buddy.desktop, mouse.x, mouse.y)
                       : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
@@ -1758,6 +1816,12 @@ Item {
         function onResponseReady(text) {
             if (!buddy.awaitingReply)
                 return
+            const steps = buddyProvider.toolSteps || []
+            let clean = steps.length > 0
+            for (let i = 0; i < steps.length; ++i)
+                if (steps[i].status === "error") { clean = false; break }
+            if (clean)
+                buddy.nodHappy()
             buddy.present("chat", buddy.lastRequest.length > 0 ? buddy.lastRequest : "Buddy",
                           { response: text }, false)
         }
@@ -1765,6 +1829,32 @@ Item {
             if (!buddy.awaitingReply)
                 return
             buddy.showError(message)
+        }
+        // The agent paused on a tool call that needs the user's OK: perk up,
+        // look at the bubble, and nudge again every few seconds until answered.
+        function onPendingApprovalChanged() {
+            const p = buddyProvider.pendingApproval
+            const waiting = p && p.id !== undefined
+            if (waiting && !approvalNudge.running) {
+                buddy.wake()
+                buddy.setMood("surprised", 900)
+                buddy.hop(80)
+                buddy.lookAtBubble(24, 4)
+                if (typeof buddySfx !== "undefined" && buddySfx)
+                    buddySfx.play("pop")
+            }
+            approvalNudge.running = waiting
+        }
+        function onToolStepsChanged() {
+            const steps = buddyProvider.toolSteps || []
+            if (!buddy.awaitingReply || steps.length === 0)
+                return
+            const last = steps[steps.length - 1]
+            if (last.status === "error" && buddy.lastErrorStep !== last.id) {
+                buddy.lastErrorStep = String(last.id)
+                buddy.setMood("error", 900)   // a brief wince; the run carries on
+                buddy.shake()
+            }
         }
         function onToolExecuted(name, summary) {
             if (!buddy.awaitingReply)
@@ -1775,6 +1865,14 @@ Item {
             if (typeof buddySfx !== "undefined" && buddySfx)
                 buddySfx.play("pop")
         }
+    }
+
+    property string lastErrorStep: ""
+    Timer {
+        id: approvalNudge
+        interval: 6000
+        repeat: true
+        onTriggered: { buddy.setMood("curious", 1200); buddy.hop(48) }
     }
 
     Component.onCompleted: computeEyePoses()
