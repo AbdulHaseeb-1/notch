@@ -1,0 +1,150 @@
+import QtQuick
+
+// One step of the agent execution trace, as a dark glass card:
+//
+//   [icon]  Title of the call …                 BADGE · 812ms  [status]
+//           detail / arguments (mono, faint)
+//   ┌ output well (mono) — click to expand / collapse ───────────────────┐
+//
+// Plain Rectangles and Text only (no layers or effects); the output well
+// clamps to a few lines until clicked.
+Rectangle {
+    id: card
+    property var step: ({})
+    property int collapsedLines: 3
+    property bool expanded: false
+
+    readonly property string status: String(step.status || "done")
+    readonly property bool isError: status === "error" || status === "denied"
+    readonly property bool isRunning: status === "running"
+    readonly property string detail: String(step.detail || "")
+    readonly property string output: String(step.output || "")
+
+    implicitHeight: inner.implicitHeight + 18
+    height: implicitHeight
+    radius: Theme.radiusMd
+    color: isError ? Theme.dangerSoft : (cardHover.hovered ? Theme.glassFillHover : Theme.glassFill)
+    border.width: 1
+    border.color: isError ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.30)
+                : isRunning ? Theme.glassBorderStrong : Theme.glassBorder
+
+    HoverHandler { id: cardHover }
+
+    Column {
+        id: inner
+        x: 10
+        y: 9
+        width: parent.width - 20
+        spacing: 6
+
+        Item {
+            width: parent.width
+            height: 20
+
+            Rectangle {
+                id: icBox
+                width: 20
+                height: 20
+                radius: Theme.radiusSm
+                color: Theme.glassFillActive
+                anchors.verticalCenter: parent.verticalCenter
+                Glyph {
+                    anchors.centerIn: parent
+                    name: String(card.step.icon || "terminal")
+                    size: 12
+                    color: Theme.inkSoft
+                }
+            }
+
+            Text {
+                anchors.left: icBox.right
+                anchors.leftMargin: 8
+                anchors.right: right.left
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                text: String(card.step.title || "")
+                color: card.isError ? Theme.danger : Theme.ink
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+
+            Row {
+                id: right
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 7
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: String(card.step.badge || "TOOL")
+                    color: Theme.textFaint
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontXs - 1
+                    font.weight: Font.Bold
+                    font.letterSpacing: 0.6
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text.length > 0
+                    text: card.isRunning ? qsTr("running") : Theme.formatDuration(card.step.durationMs)
+                    color: Theme.textFaint
+                    font.family: Theme.monoFont
+                    font.pixelSize: Theme.fontXs
+                }
+                ToolStatusIcon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    status: card.status
+                    size: 13
+                }
+            }
+        }
+
+        Text {
+            width: parent.width
+            visible: card.detail.length > 0
+            leftPadding: 28
+            text: card.detail
+            color: Theme.textDim
+            font.family: Theme.monoFont
+            font.pixelSize: Theme.fontXs + 0.5
+            wrapMode: Text.WrapAnywhere
+            maximumLineCount: card.expanded ? 6 : 2
+            elide: Text.ElideRight
+        }
+
+        Rectangle {
+            id: well
+            width: parent.width
+            visible: card.output.length > 0
+            height: outText.implicitHeight + 12
+            radius: Theme.radiusSm
+            color: Theme.glassDeep
+            border.width: 1
+            border.color: Theme.glassBorder
+
+            Text {
+                id: outText
+                x: 8
+                y: 6
+                width: parent.width - 16
+                text: card.output
+                color: card.isError ? Qt.lighter(Theme.danger, 1.1) : Theme.textDim
+                font.family: Theme.monoFont
+                font.pixelSize: Theme.fontXs + 0.5
+                lineHeight: 1.15
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: card.expanded ? 14 : card.collapsedLines
+                elide: Text.ElideRight
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: outText.truncated || card.expanded ? Qt.PointingHandCursor : Qt.ArrowCursor
+                enabled: outText.truncated || card.expanded
+                onClicked: card.expanded = !card.expanded
+            }
+        }
+    }
+}

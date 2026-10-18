@@ -119,6 +119,10 @@ qt_add_qml_module(noch
         qml/BuddyResearchCard.qml
         qml/BuddyTasksCard.qml
         qml/BuddyHelpCard.qml
+        qml/ToolStatusIcon.qml
+        qml/ToolStepRow.qml
+        qml/ToolStepCard.qml
+        qml/ToolTraceBar.qml
     RESOURCES
         ${NOCH_ICONS}
 )

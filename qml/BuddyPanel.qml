@@ -33,7 +33,7 @@ Item {
     readonly property real pad: 14
     readonly property real headerH: 48
     readonly property real footerH: kind === "chat" ? 50 : 42
-    readonly property real width_: 460
+    readonly property real width_: Math.min(Theme.buddyPanelWidth, Math.max(320, (desktop ? desktop.width : Theme.buddyPanelWidth) - 2 * Theme.screenMargin))
     property real dragX: 0
     property real dragY: 0
 
@@ -75,12 +75,7 @@ Item {
     }
     property bool toolsExpanded: false
 
-    function formatDuration(ms) {
-        const n = Number(ms || 0)
-        if (n <= 0) return ""
-        if (n < 1000) return n + "ms"
-        return (n / 1000).toFixed(1) + "s"
-    }
+    function formatDuration(ms) { return Theme.formatDuration(ms) }
 
     readonly property var thinkPhrases: [
         qsTr("Reading your request…"),
@@ -301,7 +296,7 @@ Item {
                 radius: 13
                 color: Theme.orb
                 border.width: 1.5
-                border.color: panel.responseLoved ? "#ff6b9d"
+                border.color: panel.responseLoved ? Theme.love
                             : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.borderStrong)
 
                 Row {
@@ -313,7 +308,7 @@ Item {
                             width: 3
                             height: panel.miniBlink ? 1 : (panel.isStreaming ? 8 : 7)
                             radius: 1.5
-                            color: panel.responseLoved ? "#ffd1e3"
+                            color: panel.responseLoved ? Theme.loveSoft
                                  : (panel.phase === "loading" ? Theme.accent : "#ffffff")
                             Behavior on height { NumberAnimation { duration: 80 } }
                         }
@@ -563,101 +558,19 @@ Item {
                         }
                     }
 
-                    // Live tool execution timeline while loading
+                    // Live tool timeline while loading (last four steps)
                     Column {
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: panel.width_ - 48
-                        spacing: 5
+                        spacing: 3
                         visible: panel.hasTools
 
                         Repeater {
                             model: panel.hasTools ? panel.toolSteps.slice(-4) : []
-
-                            Rectangle {
+                            ToolStepRow {
                                 required property var modelData
-                                readonly property bool isRunning: modelData.status === "running"
-                                readonly property bool isError: modelData.status === "error"
-                                readonly property color statusColor: isError ? Theme.danger : (isRunning ? Theme.accent : Theme.success)
                                 width: parent.width
-                                height: 28
-                                radius: 9
-                                color: isRunning
-                                       ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.12)
-                                       : (isError ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.10) : Theme.raised)
-                                border.width: 1
-                                border.color: isRunning
-                                              ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.38)
-                                              : (isError ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.35) : Theme.borderSoft)
-
-                                Rectangle {
-                                    id: pStepStatusBox
-                                    x: 8
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 17
-                                    height: 17
-                                    radius: 5
-                                    color: Qt.rgba(parent.statusColor.r, parent.statusColor.g, parent.statusColor.b, 0.16)
-
-                                    Glyph {
-                                        anchors.centerIn: parent
-                                        name: parent.parent.isRunning ? String(modelData.icon || "terminal")
-                                            : (parent.parent.isError ? "close" : "check")
-                                        size: 10
-                                        stroke: 2.0
-                                        color: parent.parent.statusColor
-                                    }
-                                }
-
-                                Rectangle {
-                                    id: pStepCatBadge
-                                    anchors.left: pStepStatusBox.right
-                                    anchors.leftMargin: 6
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: pStepCatText.implicitWidth + 8
-                                    height: 16
-                                    radius: 4
-                                    color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.06)
-
-                                    Text {
-                                        id: pStepCatText
-                                        anchors.centerIn: parent
-                                        text: String(modelData.badge || "TOOL")
-                                        color: parent.parent.isRunning ? Theme.accent : Theme.textDim
-                                        font.family: Theme.font
-                                        font.pixelSize: 9
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: 0.4
-                                    }
-                                }
-
-                                Text {
-                                    anchors.left: pStepCatBadge.right
-                                    anchors.leftMargin: 7
-                                    anchors.right: pStepBadge.left
-                                    anchors.rightMargin: 6
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: String(modelData.title || "")
-                                    color: parent.isRunning ? Theme.ink : Theme.inkSoft
-                                    font.family: Theme.font
-                                    font.pixelSize: 12
-                                    font.weight: parent.isRunning ? Font.DemiBold : Font.Medium
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    id: pStepBadge
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 9
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: parent.isRunning ? qsTr("LIVE")
-                                        : (parent.isError ? qsTr("ERR")
-                                        : (panel.formatDuration(modelData.durationMs) || qsTr("DONE")))
-                                    color: parent.isRunning ? Theme.accent
-                                         : (parent.isError ? Theme.danger : Theme.textFaint)
-                                    font.family: "Consolas"
-                                    font.pixelSize: 10
-                                    font.weight: Font.Bold
-                                }
+                                step: modelData
                             }
                         }
                     }
@@ -802,281 +715,33 @@ Item {
                         }
                     }
 
-                    // Redesigned Agent SDK Execution Trace Card
-                    Rectangle {
+                    // Agent execution trace: summary bar + expandable step cards
+                    Column {
                         visible: panel.hasTools
                         width: parent.width
-                        height: 36 + (panel.toolsExpanded ? panelToolCol.implicitHeight + 16 : 0)
-                        radius: 12
-                        color: Theme.raised
-                        border.width: 1
-                        border.color: panel.toolsExpanded
-                                      ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.45)
-                                      : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.28)
-                        clip: true
-                        Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                        spacing: 6
 
-                        Item {
+                        ToolTraceBar {
                             width: parent.width
-                            height: 36
-
-                            Row {
-                                x: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 8
-
-                                // Stacked distinct tool icons
-                                Row {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    spacing: -4
-                                    Repeater {
-                                        model: panel.distinctToolIcons
-                                        Rectangle {
-                                            required property var modelData
-                                            width: 20
-                                            height: 20
-                                            radius: 6
-                                            color: Theme.tile
-                                            border.width: 1
-                                            border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.42)
-                                            Glyph {
-                                                anchors.centerIn: parent
-                                                name: String(modelData)
-                                                size: 11
-                                                stroke: 1.75
-                                                color: Theme.accent
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: qsTr("Anthropic Agent SDK · %n step(s)", "", panel.toolSteps.length)
-                                    color: Theme.ink
-                                    font.family: Theme.font
-                                    font.pixelSize: 12
-                                    font.weight: Font.DemiBold
-                                }
-
-                                Rectangle {
-                                    visible: panel.responseMeta && Number(panel.responseMeta.durationMs || 0) > 0
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: pDurChipText.implicitWidth + 10
-                                    height: 18
-                                    radius: 6
-                                    color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.06)
-
-                                    Text {
-                                        id: pDurChipText
-                                        anchors.centerIn: parent
-                                        text: panel.formatDuration(panel.responseMeta ? panel.responseMeta.durationMs : 0)
-                                        color: Theme.textDim
-                                        font.family: "Consolas"
-                                        font.pixelSize: 10
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                anchors.right: parent.right
-                                anchors.rightMargin: 10
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: pTraceBtnLabel.implicitWidth + 14
-                                height: 22
-                                radius: 7
-                                color: panel.toolsExpanded
-                                       ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-                                       : Theme.tile
-
-                                Text {
-                                    id: pTraceBtnLabel
-                                    anchors.centerIn: parent
-                                    text: panel.toolsExpanded ? qsTr("Hide trace ▴") : qsTr("Inspect trace ▾")
-                                    color: Theme.accent
-                                    font.family: Theme.font
-                                    font.pixelSize: 11
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: panel.toolsExpanded = !panel.toolsExpanded
-                            }
+                            steps: panel.toolSteps
+                            icons: panel.distinctToolIcons
+                            durationMs: panel.responseMeta ? Number(panel.responseMeta.durationMs || 0) : 0
+                            expanded: panel.toolsExpanded
+                            onToggled: panel.toolsExpanded = !panel.toolsExpanded
                         }
 
                         Column {
                             id: panelToolCol
-                            x: 10
-                            y: 38
-                            width: parent.width - 20
-                            spacing: 7
+                            width: parent.width
+                            spacing: 5
                             visible: panel.toolsExpanded
 
                             Repeater {
-                                model: panel.toolSteps
-
-                                Rectangle {
+                                model: panel.toolsExpanded ? panel.toolSteps : []
+                                ToolStepCard {
                                     required property var modelData
-                                    readonly property bool isError: modelData.status === "error"
-                                    readonly property color stepAccent: isError ? Theme.danger : Theme.success
                                     width: panelToolCol.width
-                                    height: pInnerCol.implicitHeight + 14
-                                    radius: 9
-                                    color: Theme.tile
-                                    border.width: 1
-                                    border.color: isError
-                                                  ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.35)
-                                                  : Theme.borderSoft
-
-                                    Rectangle {
-                                        x: 0
-                                        y: 7
-                                        width: 3
-                                        height: parent.height - 14
-                                        radius: 1.5
-                                        color: parent.stepAccent
-                                        opacity: 0.8
-                                    }
-
-                                    Column {
-                                        id: pInnerCol
-                                        x: 11
-                                        y: 7
-                                        width: parent.width - 20
-                                        spacing: 4
-
-                                        Item {
-                                            width: parent.width
-                                            height: 20
-
-                                            Rectangle {
-                                                id: pStepIconBox
-                                                x: 0
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                width: 18
-                                                height: 18
-                                                radius: 5
-                                                color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.14)
-
-                                                Glyph {
-                                                    anchors.centerIn: parent
-                                                    name: String(modelData.icon || "terminal")
-                                                    size: 10.5
-                                                    stroke: 1.75
-                                                    color: Theme.accent
-                                                }
-                                            }
-
-                                            Rectangle {
-                                                id: pCatBadge
-                                                anchors.left: pStepIconBox.right
-                                                anchors.leftMargin: 6
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                width: pCatBadgeText.implicitWidth + 10
-                                                height: 16
-                                                radius: 4
-                                                color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.07)
-
-                                                Text {
-                                                    id: pCatBadgeText
-                                                    anchors.centerIn: parent
-                                                    text: String(modelData.badge || "TOOL")
-                                                    color: Theme.textDim
-                                                    font.family: Theme.font
-                                                    font.pixelSize: 9
-                                                    font.weight: Font.Bold
-                                                    font.letterSpacing: 0.4
-                                                }
-                                            }
-
-                                            Text {
-                                                anchors.left: pCatBadge.right
-                                                anchors.leftMargin: 7
-                                                anchors.right: pStepMetaRow.left
-                                                anchors.rightMargin: 6
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                text: String(modelData.title || "")
-                                                color: Theme.ink
-                                                font.family: Theme.font
-                                                font.pixelSize: 12
-                                                font.weight: Font.DemiBold
-                                                elide: Text.ElideRight
-                                            }
-
-                                            Row {
-                                                id: pStepMetaRow
-                                                anchors.right: parent.right
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                spacing: 6
-
-                                                Text {
-                                                    visible: Number(modelData.durationMs || 0) > 0
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    text: panel.formatDuration(modelData.durationMs)
-                                                    color: Theme.textFaint
-                                                    font.family: "Consolas"
-                                                    font.pixelSize: 10
-                                                }
-
-                                                Rectangle {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: 15
-                                                    height: 15
-                                                    radius: 7.5
-                                                    color: Qt.rgba(pInnerCol.parent.stepAccent.r,
-                                                                   pInnerCol.parent.stepAccent.g,
-                                                                   pInnerCol.parent.stepAccent.b, 0.16)
-                                                    Glyph {
-                                                        anchors.centerIn: parent
-                                                        name: pInnerCol.parent.isError ? "close" : "check"
-                                                        size: 9
-                                                        stroke: 2.2
-                                                        color: pInnerCol.parent.stepAccent
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            width: parent.width
-                                            visible: String(modelData.detail || "").length > 0
-                                            text: String(modelData.detail || "")
-                                            color: Theme.accent
-                                            font.family: "Consolas"
-                                            font.pixelSize: 11
-                                            wrapMode: Text.WrapAnywhere
-                                            maximumLineCount: 2
-                                            elide: Text.ElideRight
-                                        }
-
-                                        Rectangle {
-                                            width: parent.width
-                                            height: pOutConsole.implicitHeight + 10
-                                            radius: 6
-                                            color: Theme.field
-                                            border.width: 1
-                                            border.color: Theme.borderSoft
-                                            visible: String(modelData.output || "").length > 0
-
-                                            Text {
-                                                id: pOutConsole
-                                                x: 8
-                                                y: 5
-                                                width: parent.width - 16
-                                                text: String(modelData.output || "")
-                                                color: Theme.textDim
-                                                font.family: "Consolas"
-                                                font.pixelSize: 11
-                                                wrapMode: Text.WrapAnywhere
-                                                maximumLineCount: 6
-                                                elide: Text.ElideRight
-                                            }
-                                        }
-                                    }
+                                    step: modelData
                                 }
                             }
                         }
@@ -1358,7 +1023,7 @@ Item {
                                        ? Qt.rgba(1.0, 0.42, 0.62, 0.18)
                                        : (loveHit.containsMouse ? Theme.tileActive : Theme.tile)
                                 border.width: 1
-                                border.color: panel.responseLoved ? "#ff6b9d" : Theme.border
+                                border.color: panel.responseLoved ? Theme.love : Theme.border
                                 scale: loveHit.pressed ? 0.92 : 1.0
                                 Behavior on scale { NumberAnimation { duration: 100 } }
 
@@ -1371,12 +1036,12 @@ Item {
                                         name: "heart"
                                         filled: panel.responseLoved
                                         size: 12
-                                        color: panel.responseLoved ? "#ff6b9d" : Theme.textDim
+                                        color: panel.responseLoved ? Theme.love : Theme.textDim
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: panel.responseLoved ? qsTr("Loved!") : qsTr("Thank Buddy")
-                                        color: panel.responseLoved ? "#ff6b9d" : Theme.ink
+                                        color: panel.responseLoved ? Theme.love : Theme.ink
                                         font.family: Theme.font
                                         font.pixelSize: 11
                                         font.weight: Font.DemiBold
@@ -1583,88 +1248,26 @@ Item {
                     Behavior on opacity { NumberAnimation { duration: 150 } }
                     Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
 
-                    function rrBox(x0, y0, x1, y1, r) {
-                        const cr = Math.max(0.5, Math.min(r, (x1 - x0) * 0.5, (y1 - y0) * 0.5))
-                        return "M " + (x0 + cr) + " " + y0
-                             + " L " + (x1 - cr) + " " + y0
-                             + " A " + cr + " " + cr + " 0 0 1 " + x1 + " " + (y0 + cr)
-                             + " L " + x1 + " " + (y1 - cr)
-                             + " A " + cr + " " + cr + " 0 0 1 " + (x1 - cr) + " " + y1
-                             + " L " + (x0 + cr) + " " + y1
-                             + " A " + cr + " " + cr + " 0 0 1 " + x0 + " " + (y1 - cr)
-                             + " L " + x0 + " " + (y0 + cr)
-                             + " A " + cr + " " + cr + " 0 0 1 " + (x0 + cr) + " " + y0 + " Z"
-                    }
-                    function rrRing(halfSize, r, thick) {
-                        const cx = width * 0.5, cy = height * 0.5
-                        const ro = halfSize + thick * 0.5
-                        const ri = Math.max(1, halfSize - thick * 0.5)
-                        return rrBox(cx - ro, cy - ro, cx + ro, cy + ro, r + thick * 0.5) + " "
-                             + rrBox(cx - ri, cy - ri, cx + ri, cy + ri, Math.max(1, r - thick * 0.5))
-                    }
-
-                    Shape {
-                        anchors.fill: parent
-                        preferredRendererType: Shape.CurveRenderer
-                        opacity: followSendBtn.hasText || followSendHit.containsMouse ? 0.28 : 0.16
-                        ShapePath {
-                            strokeColor: "transparent"
-                            strokeWidth: -1
-                            fillRule: ShapePath.OddEvenFill
-                            fillGradient: ConicalGradient {
-                                centerX: followSendBtn.width * 0.5
-                                centerY: followSendBtn.height * 0.5
-                                angle: 0
-                                GradientStop { position: 0.00; color: "#d875ff" }
-                                GradientStop { position: 0.28; color: "#936aff" }
-                                GradientStop { position: 0.44; color: "#6662ff" }
-                                GradientStop { position: 0.78; color: "#df80ff" }
-                                GradientStop { position: 0.90; color: "#f2f0ff" }
-                                GradientStop { position: 1.00; color: "#d875ff" }
-                            }
-                            PathSvg { path: followSendBtn.rrRing(11.5, 7.5, 3.8) }
-                        }
-                    }
-
+                    // Stone send button: light thumb when there is text, quiet well otherwise.
                     Rectangle {
                         anchors.centerIn: parent
-                        width: 23
-                        height: 23
-                        radius: 7.5
-                        color: followSendHit.pressed ? "#121218" : (followSendHit.containsMouse ? "#1e1e28" : "#17171f")
-                        antialiasing: true
-                    }
-
-                    Shape {
-                        anchors.fill: parent
-                        preferredRendererType: Shape.CurveRenderer
-                        ShapePath {
-                            strokeColor: "transparent"
-                            strokeWidth: -1
-                            fillRule: ShapePath.OddEvenFill
-                            fillGradient: ConicalGradient {
-                                centerX: followSendBtn.width * 0.5
-                                centerY: followSendBtn.height * 0.5
-                                angle: 0
-                                GradientStop { position: 0.00; color: "#d875ff" }
-                                GradientStop { position: 0.14; color: "#c96eff" }
-                                GradientStop { position: 0.28; color: "#936aff" }
-                                GradientStop { position: 0.44; color: "#6662ff" }
-                                GradientStop { position: 0.64; color: "#b56bff" }
-                                GradientStop { position: 0.78; color: "#df80ff" }
-                                GradientStop { position: 0.90; color: "#f2f0ff" }
-                                GradientStop { position: 1.00; color: "#d875ff" }
-                            }
-                            PathSvg { path: followSendBtn.rrRing(11.5, 7.5, 1.5) }
-                        }
+                        width: 26
+                        height: 26
+                        radius: Theme.radiusSm + 2
+                        color: followSendBtn.hasText
+                               ? (followSendHit.containsMouse ? Theme.accentHover : Theme.accent)
+                               : (followSendHit.containsMouse ? Theme.glassFillActive : Theme.glassFill)
+                        border.width: followSendBtn.hasText ? 0 : 1
+                        border.color: Theme.glassBorder
+                        scale: followSendHit.pressed ? 0.94 : 1
+                        Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
                     }
 
                     Glyph {
                         anchors.centerIn: parent
                         name: "send"
-                        size: 12
-                        stroke: 1.85
-                        color: followSendBtn.hasText || followSendHit.containsMouse ? "#df96ff" : "#ba82ff"
+                        size: 14
+                        color: followSendBtn.hasText ? Theme.inverse : Theme.textDim
                     }
                     MouseArea {
                         id: followSendHit
