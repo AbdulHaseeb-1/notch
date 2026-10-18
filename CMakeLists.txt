@@ -35,6 +35,8 @@ qt_add_executable(noch
     src/RunningApps.h
     src/Appearance.cpp
     src/Appearance.h
+    src/AgentPolicy.cpp
+    src/AgentPolicy.h
     src/IconSet.cpp
     src/IconSet.h
     src/BuddyProvider.cpp
@@ -143,3 +145,17 @@ set_target_properties(noch PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
+# Unit tests (pure-logic modules only): cmake -DNOCH_BUILD_TESTS=ON, then ctest.
+option(NOCH_BUILD_TESTS "Build unit tests" OFF)
+if(NOCH_BUILD_TESTS)
+    enable_testing()
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(tst_agentpolicy tests/tst_agentpolicy.cpp src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_agentpolicy PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME tst_agentpolicy COMMAND tst_agentpolicy)
+    qt_add_executable(tst_iconset tests/tst_iconset.cpp src/IconSet.cpp src/IconSet.h)
+    target_link_libraries(tst_iconset PRIVATE Qt6::Core Qt6::Test)
+    target_compile_definitions(tst_iconset PRIVATE NOCH_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml/icons")
+    add_test(NAME tst_iconset COMMAND tst_iconset)
+endif()
