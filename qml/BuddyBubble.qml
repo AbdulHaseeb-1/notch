@@ -88,6 +88,13 @@ Item {
     readonly property string fullResponse: payload && payload.response ? String(payload.response) : ""
     readonly property bool richKind: kind === "chart" || kind === "research" || kind === "tasks" || kind === "help"
     readonly property bool revealing: phase === "answer" && kind === "chat" && revealed < tokens.length
+    // How much of the answer the reader has actually seen (1 = all of it).
+    // Buddy keeps this so an interrupted answer can be resumed where it
+    // stopped rather than starting over from the first word.
+    readonly property real progress: phase === "answer" && kind === "chat" && tokens.length > 0
+                                     ? Math.max(0, Math.min(1, revealed / tokens.length)) : 1.0
+    // Set by Buddy just before showAnswer() to resume at a fraction of the text.
+    property real resumeFrom: 0
     readonly property real side: flipped ? -1 : 1
     readonly property real vDir: above ? -1 : 1
 
@@ -135,9 +142,15 @@ Item {
         payload = data
         if (k === "chat") {
             tokens = tokenize(fullResponse)
-            revealed = 0
-            finishedSent = false
+            // Resume where the reader stopped if this answer was interrupted;
+            // a brand-new answer starts from the first word.
+            const from = Math.max(0, Math.min(1, Number(resumeFrom) || 0))
+            revealed = Math.min(tokens.length, Math.round(tokens.length * from))
+            resumeFrom = 0
+            finishedSent = revealed >= tokens.length
             chatFlick.contentY = 0
+            if (revealed > 0)
+                Qt.callLater(function() { tb.followReveal() })
         }
         field.text = ""
         followField.input.text = ""
@@ -147,6 +160,11 @@ Item {
         // Rich cards are ready at once; chat waits for its cascade to finish.
         if (richKind)
             Qt.callLater(function() { cardAsk.input.forceActiveFocus() })
+    }
+    // Marks the answer as fully read (used when it moves to the result panel).
+    function revealAll() {
+        revealed = tokens.length
+        finishedSent = true
     }
     function showNote(text, icon) {
         kind = "note"
@@ -170,9 +188,6 @@ Item {
         closing = true
         popIn.stop()
         popOut.restart()
-    }
-    function revealAll() {
-        revealed = tokens.length
     }
     function showHistory() {
         noteTimer.stop()
@@ -1628,7 +1643,7 @@ Item {
                                     text: String(modelData.badge || "TOOL")
                                     color: parent.parent.isRunning ? t.accent : t.textDim
                                     font.family: t.font
-                                    font.pixelSize: 8.5
+                                    font.pixelSize: 9
                                     font.weight: Font.Bold
                                     font.letterSpacing: 0.4
                                 }
@@ -1658,7 +1673,7 @@ Item {
                                     : (tb.formatDuration(modelData.durationMs) || qsTr("DONE")))
                                 color: parent.isRunning ? t.accent : (parent.isError ? t.danger : t.textFaint)
                                 font.family: "Consolas"
-                                font.pixelSize: 9.5
+                                font.pixelSize: 10
                                 font.weight: Font.Bold
                             }
                         }
@@ -1755,7 +1770,7 @@ Item {
                                     text: tb.formatDuration(tb.responseMeta ? tb.responseMeta.durationMs : 0)
                                     color: t.textDim
                                     font.family: "Consolas"
-                                    font.pixelSize: 9.5
+                                    font.pixelSize: 10
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -1889,7 +1904,7 @@ Item {
                                                         text: String(modelData.badge || "TOOL")
                                                         color: t.textDim
                                                         font.family: t.font
-                                                        font.pixelSize: 8.5
+                                                        font.pixelSize: 9
                                                         font.weight: Font.Bold
                                                         font.letterSpacing: 0.4
                                                     }
@@ -1921,7 +1936,7 @@ Item {
                                                         text: tb.formatDuration(modelData.durationMs)
                                                         color: t.textFaint
                                                         font.family: "Consolas"
-                                                        font.pixelSize: 9.5
+                                                        font.pixelSize: 10
                                                     }
 
                                                     Rectangle {
@@ -1974,7 +1989,7 @@ Item {
                                                     text: String(modelData.output || "")
                                                     color: t.textDim
                                                     font.family: "Consolas"
-                                                    font.pixelSize: 9.5
+                                                    font.pixelSize: 10
                                                     wrapMode: Text.WrapAnywhere
                                                     maximumLineCount: 4
                                                     elide: Text.ElideRight
@@ -2041,7 +2056,7 @@ Item {
                                               .arg(String(tb.responseMeta && tb.responseMeta.advisorFocus ? tb.responseMeta.advisorFocus : "GENERAL").toUpperCase())
                                         color: t.accent
                                         font.family: t.font
-                                        font.pixelSize: 9.5
+                                        font.pixelSize: 10
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
                                     }
@@ -2093,7 +2108,7 @@ Item {
                                         text: qsTr("AGENT TASKS (%1)").arg(tb.agentTodos.length)
                                         color: t.textDim
                                         font.family: t.font
-                                        font.pixelSize: 9.5
+                                        font.pixelSize: 10
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
                                     }
@@ -2281,7 +2296,7 @@ Item {
                                         }
                                         color: t.textFaint
                                         font.family: "Consolas"
-                                        font.pixelSize: 9.5
+                                        font.pixelSize: 10
                                     }
                                 }
                             }

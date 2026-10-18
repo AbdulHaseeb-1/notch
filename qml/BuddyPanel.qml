@@ -204,6 +204,13 @@ Item {
             streamTimer.stop()
         } else {
             resetBody()
+            // Reopening a reply that was interrupted mid-cascade picks the
+            // typewriter back up where it stopped instead of showing it blank.
+            if (kind === "chat" && phase === "ready"
+                    && revealedChars < fullResponse.length) {
+                isStreaming = true
+                streamTimer.restart()
+            }
         }
     }
 
@@ -633,7 +640,7 @@ Item {
                                     text: String(modelData.title || "")
                                     color: parent.isRunning ? t.ink : t.inkSoft
                                     font.family: t.font
-                                    font.pixelSize: 11.5
+                                    font.pixelSize: 12
                                     font.weight: parent.isRunning ? Font.DemiBold : Font.Medium
                                     elide: Text.ElideRight
                                 }
@@ -649,7 +656,7 @@ Item {
                                     color: parent.isRunning ? t.accent
                                          : (parent.isError ? t.danger : t.textFaint)
                                     font.family: "Consolas"
-                                    font.pixelSize: 9.5
+                                    font.pixelSize: 10
                                     font.weight: Font.Bold
                                 }
                             }
@@ -890,7 +897,7 @@ Item {
                                     text: panel.toolsExpanded ? qsTr("Hide trace ▴") : qsTr("Inspect trace ▾")
                                     color: t.accent
                                     font.family: t.font
-                                    font.pixelSize: 10.5
+                                    font.pixelSize: 11
                                     font.weight: Font.DemiBold
                                 }
                             }
@@ -996,7 +1003,7 @@ Item {
                                                 text: String(modelData.title || "")
                                                 color: t.ink
                                                 font.family: t.font
-                                                font.pixelSize: 11.5
+                                                font.pixelSize: 12
                                                 font.weight: Font.DemiBold
                                                 elide: Text.ElideRight
                                             }
@@ -1041,7 +1048,7 @@ Item {
                                             text: String(modelData.detail || "")
                                             color: t.accent
                                             font.family: "Consolas"
-                                            font.pixelSize: 10.5
+                                            font.pixelSize: 11
                                             wrapMode: Text.WrapAnywhere
                                             maximumLineCount: 2
                                             elide: Text.ElideRight
@@ -1064,7 +1071,7 @@ Item {
                                                 text: String(modelData.output || "")
                                                 color: t.textDim
                                                 font.family: "Consolas"
-                                                font.pixelSize: 10.5
+                                                font.pixelSize: 11
                                                 wrapMode: Text.WrapAnywhere
                                                 maximumLineCount: 6
                                                 elide: Text.ElideRight
@@ -1120,7 +1127,7 @@ Item {
                                       .replace(/[#*`]/g, "").trim()
                                 color: t.inkSoft
                                 font.family: t.font
-                                font.pixelSize: 11.5
+                                font.pixelSize: 12
                                 wrapMode: Text.WordWrap
                                 maximumLineCount: 4
                                 elide: Text.ElideRight

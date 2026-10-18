@@ -1,9 +1,12 @@
 #pragma once
 
 #include <QHash>
+#include <QElapsedTimer>
+#include <QMediaDevices>
 #include <QObject>
 #include <QSoundEffect>
 #include <QString>
+#include <QTimer>
 
 // Procedural sound-effects engine for Noch's desktop buddy. Synthesizes soft
 // felt-mallet / kalimba-like tones (detuned warm body, fast-fading octave
@@ -48,6 +51,8 @@ signals:
 
 private:
     void rebuildEffects();
+    void scheduleRecovery();
+    void recoverEffects();
     void stopEffects();
     double pitchMultiplier() const;
     double outputGain() const;
@@ -58,8 +63,12 @@ private:
     QString m_style = QStringLiteral("warm"); // "cute" | "warm" | "mellow"
     QHash<QString, QSoundEffect *> m_effects;
     QHash<QString, int> m_cueMs;         // how long each cue sounds, in ms
-    QHash<QString, qint64> m_lastPlayMs; // when each cue was last started
-    qint64 m_lastSpeakMs = 0;            // last "speak" attempt, played or not
+    QHash<QString, qint64> m_lastPlayMs; // monotonic time each cue was last started
+    QElapsedTimer m_clock;
+    QMediaDevices m_mediaDevices;
+    QTimer m_recoveryTimer;
+    int m_recoveryAttempts = 0;
+    qint64 m_lastSpeakMs = -1;           // last "speak" attempt, played or not
     qint64 m_speakRunStartMs = 0;        // start of the current run of blips
     int m_lastSpeakVariant = 0;
 };

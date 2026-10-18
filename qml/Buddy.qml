@@ -33,9 +33,37 @@ Item {
     readonly property bool dragging: buddyHit.pressed && buddyHit.dragged
     // Eyes stop following the cursor while the buddy ponders or reads its answer.
     readonly property bool gazeLock: session === "thinking" || thought.revealing
+    // True for the whole time a reply is being produced: waiting on the model,
+    // running a local task, or reading the words out. The orb keeps its neon
+    // halo lit meanwhile, so the user can see that work continues even after
+    // the bubble has been tucked away by a click somewhere else.
+    readonly property bool busy: awaitingReply || thinkTimer.running
+                                || (thought.visible && thought.revealing)
+                                || (!!resultPanel && resultPanel.open
+                                    && (resultPanel.phase === "loading" || resultPanel.isStreaming))
+                                || (!!resultPanel && replyToPanel && awaitingReply)
+
+    // The answer last shown. An interrupted one is kept here so clicking the
+    // orb continues the same reply instead of starting a blank prompt.
+    property string lastAnswerKind: ""
+    property string lastAnswerTitle: ""
+    property var lastAnswerPayload: null
+    property bool lastAnswerSimulated: false
+    property real lastAnswerReveal: 1.0
+    readonly property bool hasAnswerToContinue: lastAnswerPayload !== null
+                                                && lastAnswerReveal < 0.999
+    // A popped-out panel holding an answer that is either still being made or
+    // only half read out. Closing the panel must not lose that either.
+    readonly property bool panelHasMoreToRead: !!resultPanel
+        && ((resultPanel.kind === "chat" && resultPanel.phase === "ready"
+             && resultPanel.revealedChars < resultPanel.fullResponse.length)
+            || (replyToPanel && awaitingReply))
+    // True when clicking the orb should reopen work in progress rather than
+    // start a fresh prompt.
+    readonly property bool canContinue: busy || hasAnswerToContinue || panelHasMoreToRead
 
     // Everything the click-through mask depends on, as one comparable string.
-    readonly property bool glowing: neon > 0.02 || sparkAnim.running || burstAnim.running
+    readonly property bool glowing: neon > 0.02 || busy || sparkAnim.running || burstAnim.running
     readonly property string maskSig: [glowing, emoteChip.visible, Math.round(emoteChip.width),
                                        thought.maskSig].join("|")
 
@@ -287,6 +315,10 @@ Item {
 
     // The answer has finished revealing: glance back at the user, pleased.
     function answerSettled() {
+        rememberAnswer()
+        // Fully read: nothing left to "continue", so the next click prompts.
+        if (!hasAnswerToContinue)
+            forgetAnswer()
         setMood("happy", 1800)
         hop(60)
         const c = overlay.cursorPos()
@@ -564,7 +596,8 @@ Item {
     FrameAnimation {
         id: gazeSpring
         running: buddy.visible && !buddy.motionPaused
-                 && (buddy.springing || buddy.session !== "idle" || buddy.mood !== "neutral" || buddyHit.containsMouse)
+                 && (buddy.springing || buddy.session !== "idle" || buddy.busy
+                     || buddy.mood !== "neutral" || buddyHit.containsMouse)
         onTriggered: {
             const dt = Math.min(0.033, Math.max(0.004, frameTime))
             buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
@@ -591,7 +624,8 @@ Item {
             // Curious: one eye a touch bigger. Pondering: a slight one-eyed squint.
             const wantAsymL = buddy.mood === "curious" ? 0.18 : (buddy.mood === "thinking" ? 0.05 : 0.0)
             const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
-            const wantNeon = (buddy.mood === "happy" || buddy.mood === "love") ? 1.0
+            const wantNeon = buddy.busy ? 1.0
+                           : (buddy.mood === "happy" || buddy.mood === "love") ? 1.0
                            : (buddyHit.containsMouse && !buddy.dragging && buddy.session === "idle" ? 0.55 : 0.0)
 
             const expRate = Math.min(1.0, dt * 14.0)
@@ -658,9 +692,10 @@ Item {
         height: width
         radius: width / 2
         color: "transparent"
-        border.width: buddy.solidRing && (buddy.session === "thinking" || buddy.mood === "speaking") ? 2 : 0
+        border.width: buddy.solidRing && (buddy.session === "thinking" || buddy.busy
+                                          || buddy.mood === "speaking") ? 2 : 0
         border.color: t.accent
-        opacity: buddy.session === "thinking"
+        opacity: (buddy.session === "thinking" || buddy.busy)
                  ? (0.45 + 0.35 * Math.sin(buddy.breathPhase * 2.0))
                  : (buddy.mood === "speaking" ? 0.55 * (1 - buddy.neon) : 0)
         visible: buddy.solidRing && opacity > 0.01
@@ -682,7 +717,7 @@ Item {
                     : (buddyHit.containsMouse || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
         border.color: !buddy.solidRing ? "transparent"
                     : (buddy.mood === "error" ? t.danger
-                    : (buddy.session === "thinking" || buddy.mood === "speaking" ? t.accent
+                    : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? t.accent
                     : (buddyHit.containsMouse || buddy.session === "input" ? t.accent : "#2c2c35")))
         Behavior on border.color { ColorAnimation { duration: 140 } }
 
@@ -721,7 +756,7 @@ Item {
                 radius: width / 2
                 color: buddy.mood === "love" ? "#ffd1e3"
                      : (buddy.mood === "error" ? t.danger
-                     : (buddy.session === "thinking" ? t.accent : "#ffffff"))
+                     : ((buddy.session === "thinking" || buddy.busy) ? t.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
                 antialiasing: true
             }
@@ -765,7 +800,7 @@ Item {
                 radius: width / 2
                 color: buddy.mood === "love" ? "#ffd1e3"
                      : (buddy.mood === "error" ? t.danger
-                     : (buddy.session === "thinking" ? t.accent : "#ffffff"))
+                     : ((buddy.session === "thinking" || buddy.busy) ? t.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
                 antialiasing: true
             }
@@ -848,7 +883,10 @@ Item {
         y: orb.y - pad
         width: orb.width + 2 * pad
         height: width
-        opacity: buddy.neon
+        // While a reply is in flight the halo stays lit and breathes gently,
+        // so the orb reads as "still working" even with the bubble tucked away.
+        opacity: buddy.busy ? buddy.neon * (0.80 + 0.20 * Math.sin(buddy.breathPhase * 1.7))
+                            : buddy.neon
         visible: opacity > 0.01
         // Squash and press with the orb so the ring always hugs its rim.
         transform: Scale {
@@ -1013,6 +1051,26 @@ Item {
     // the popped-out result panel when the request was asked from there.
     property bool replyToPanel: false
 
+    // The window lost focus (the user clicked somewhere else) or another
+    // surface took over. Everything is tucked away, but nothing in flight is
+    // cancelled: the orb keeps glowing and the reply pops back up on arrival.
+    function stash() {
+        rememberAnswer()
+        thought.close()
+        // A request asked from the panel keeps replyToPanel set, so present()
+        // puts the answer back in the panel and only then reveals it.
+        if (resultPanel)
+            resultPanel.open = false
+        session = canContinue ? (busy ? "thinking" : "result") : "idle"
+        if (!busy)
+            setMood("neutral", 0)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("dismiss")
+    }
+
+    // Abandons the request in flight. Only a deliberate user decision (New
+    // request, closing the panel that asked, a superseding prompt) may do
+    // this — losing window focus must never cut a reply off.
     function cancelPending() {
         thinkTimer.stop()
         if (awaitingReply) {
@@ -1022,14 +1080,108 @@ Item {
         }
     }
 
-    function openInput() {
+    // A click on the orb while the bubble is up: collapse it, keep working.
+    function stashBubble() {
+        if (!thought.visible || thought.closing)
+            return
+        rememberAnswer()
+        thought.close()
+        if (session !== "thinking")
+            session = canContinue ? (busy ? "thinking" : "result") : "idle"
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("dismiss")
+    }
+
+    // Keeps what was on screen so "continue" can reopen the exact same answer.
+    function rememberAnswer() {
+        if (thought.phase !== "answer" || thought.kind === "note")
+            return
+        lastAnswerKind = thought.kind
+        lastAnswerTitle = thought.title
+        lastAnswerPayload = thought.payload
+        lastAnswerSimulated = thought.simulated
+        lastAnswerReveal = thought.progress
+    }
+
+    function forgetAnswer() {
+        lastAnswerKind = ""
+        lastAnswerTitle = ""
+        lastAnswerPayload = null
+        lastAnswerSimulated = false
+        lastAnswerReveal = 1.0
+    }
+
+    // The orb was clicked. While a reply is still being produced this only
+    // brings the bubble back to watch it; after an interruption it resumes the
+    // half-read answer where it stopped; otherwise it opens the prompt.
+    // `forcePrompt` is for the explicit "New request" action.
+    function openInput(forcePrompt) {
         activationRequested()
+        if (!forcePrompt && canContinue) {
+            resumeReply()
+            return
+        }
+        openPrompt()
+    }
+
+    // Brings back whatever the buddy was in the middle of: the thinking
+    // bubble while the model works, or the answer it had not finished
+    // revealing.
+    function resumeReply() {
+        activationRequested()
+        // A reply that belongs to the popped-out panel goes back there first.
+        if (resultPanel && replyToPanel
+                && (panelHasMoreToRead || resultPanel.phase === "loading" || awaitingReply)) {
+            resultPanel.open = true
+            resultPanel.clampIntoView()
+            session = "result"
+            setMood(resultPanel.phase === "loading" ? "thinking" : "speaking", 0)
+            hop(55)
+            if (typeof buddySfx !== "undefined" && buddySfx)
+                buddySfx.play("pop")
+            return
+        }
+        // Still waiting on the provider / a local task: show it pondering.
+        if (awaitingReply || thinkTimer.running) {
+            session = "thinking"
+            setMood("thinking", 0)
+            hop(55)
+            thought.think()
+            lookAtBubble(18, 22)
+            if (typeof buddySfx !== "undefined" && buddySfx)
+                buddySfx.play("pop")
+            return
+        }
+        // An answer was on screen when it got tucked away: show it again from
+        // the point the reader had reached.
+        if (lastAnswerPayload !== null) {
+            resumeAnswerBubble()
+            return
+        }
+        openPrompt()
+    }
+
+    function resumeAnswerBubble() {
+        thought.resumeFrom = lastAnswerReveal
+        thought.showAnswer(lastAnswerKind, lastAnswerTitle,
+                           lastAnswerPayload, lastAnswerSimulated)
+        session = "result"
+        setMood(lastAnswerKind === "chat" ? "speaking" : "happy", 0)
+        hop(60)
+        lookAtBubble(24, 0)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("pop")
+    }
+
+    // Plain "type a new question" path. The conversation thread is kept across
+    // a collapse, so a follow-up typed after the bubble was hidden still
+    // carries the conversation it belongs to.
+    function openPrompt() {
+        const wasShown = thought.visible && !thought.closing
         cancelPending()
+        forgetAnswer()
         if (resultPanel)
             resultPanel.open = false
-        const wasShown = thought.visible && !thought.closing
-        if (!wasShown)
-            conversation = []
         session = "input"
         setMood("listening", 0)
         hop(wasShown ? 50 : 85)
@@ -1039,36 +1191,39 @@ Item {
             buddySfx.play(wasShown ? "pop" : "wake")
     }
 
-    // The bubble was closed: by its own x / Esc, a quick note timing out,
-    // or a click on the orb.
+    // The bubble was closed by its own x / Esc. Even then nothing in flight is
+    // thrown away: the orb keeps glowing and the answer pops back when ready.
+    // Only a deliberate new request or retry supersedes the work.
     function bubbleClosed() {
         const quiet = thought.kind === "note" && thought.phase === "answer"
-        cancelPending()
-        session = resultPanel && resultPanel.open ? "result" : "idle"
-        setMood("neutral", 0)
+        rememberAnswer()
+        session = resultPanel && resultPanel.open ? "result"
+                : (canContinue ? (busy ? "thinking" : "result") : "idle")
+        if (!busy)
+            setMood("neutral", 0)
         blinkShut = true
         blinkOpen.restart()
         if (!quiet && typeof buddySfx !== "undefined" && buddySfx)
             buddySfx.play("dismiss")
     }
+    // A click on the orb while its bubble is open just folds it away.
     function dismissInput() {
-        thought.close()
-        bubbleClosed()
+        stashBubble()
     }
     // Close everything silently (the notch's closeAll, capability actions).
     function dismiss() {
         cancelPending()
+        forgetAnswer()
         thought.close()
         if (resultPanel)
             resultPanel.open = false
         session = "idle"
         setMood("neutral", 0)
     }
-    // The popped-out panel was closed with its own x.
+    // The popped-out panel was closed with its own x. Its answer stays
+    // available, and a request it started keeps running.
     function panelClosed() {
-        if (replyToPanel)
-            cancelPending()
-        session = thought.visible ? session : "idle"
+        session = thought.visible ? session : (replyToPanel && busy ? "thinking" : "idle")
         if (typeof buddySfx !== "undefined" && buddySfx)
             buddySfx.play("dismiss")
     }
@@ -1095,6 +1250,7 @@ Item {
         if (trimmed.length === 0 || session === "thinking")
             return
         lastRequest = trimmed
+        forgetAnswer()
         replyToPanel = !!resultPanel && resultPanel.open
         session = "thinking"
         gulp()
@@ -1285,12 +1441,20 @@ Item {
         recordHistory(kind, title, payload)
         if (kind === "chat" && payload && payload.response)
             rememberTurn(lastRequest, payload.response)
-        if (replyToPanel && resultPanel && resultPanel.open) {
+        if (replyToPanel && resultPanel) {
             setPanel(kind, title, payload, simulated)
             return
         }
+        // The bubble may have been tucked away while the reply was still being
+        // made (the user clicked somewhere else). showAnswer() pops it back out
+        // of the orb by itself, so the answer is never silently lost.
         thought.showAnswer(kind, title, payload, simulated)
         session = "result"
+        popForward()
+    }
+    // Result arriving from a tucked-away state: a fuller entrance (it may be
+    // off-screen focus, so make the arrival obvious).
+    function popForward() {
         eureka()
         if (typeof buddySfx !== "undefined" && buddySfx)
             buddySfx.play("reply")
@@ -1298,6 +1462,7 @@ Item {
     // A quick confirmation that tucks itself away.
     function note(text, icon) {
         awaitingReply = false
+        forgetAnswer()
         thought.showNote(text, icon)
         session = "result"
         setMood("happy", 2000)
@@ -1310,6 +1475,7 @@ Item {
     function setPanel(kind, title, payload, simulated) {
         if (!resultPanel)
             return
+        forgetAnswer()
         resultPanel.kind = kind
         resultPanel.title = title
         resultPanel.userPrompt = lastRequest
@@ -1343,6 +1509,8 @@ Item {
         resultPanel.simulated = sim
         resultPanel.phase = "ready"
         // It was already read in the bubble; no second typewriter pass.
+        thought.revealAll()
+        forgetAnswer()
         resultPanel.revealedChars = resultPanel.fullResponse.length
         resultPanel.isStreaming = false
         resultPanel.dragX = Math.round(at.x)

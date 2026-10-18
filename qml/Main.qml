@@ -246,13 +246,16 @@ Window {
         menuIndex = (menuIndex === i) ? -1 : i
     }
 
+    // Closing the app's own surfaces. This is what empty-notch clicks, Esc and
+    // launching an app reach, so it tucks the buddy away instead of dismissing
+    // it: a reply still being made keeps running and pops back when ready.
     function closeAll() {
         panelOpen = false
         musicOpen = false
         hubOpen = false
         paletteOpen = false
         menuIndex = -1
-        buddy.dismiss()
+        buddy.stash()
     }
 
     function toggleMusic() {
@@ -361,7 +364,17 @@ Window {
         toastTimer.restart()
     }
 
-    onActiveChanged: if (!active && !fileDialog.visible && !musicDialog.visible) closeAll()
+    // Clicking anywhere outside Noch must not cut a reply off: the flyouts
+    // close, but the buddy only tucks its bubble away and keeps working — the
+    // orb stays lit and pops the answer back up when it lands.
+    onActiveChanged: if (!active && !fileDialog.visible && !musicDialog.visible) {
+        panelOpen = false
+        musicOpen = false
+        hubOpen = false
+        paletteOpen = false
+        menuIndex = -1
+        buddy.stash()
+    }
 
     Shortcut { sequence: "Esc"; onActivated: root.closeAll() }
     Shortcut { sequence: "Ctrl+,"; onActivated: root.toggleSettings() }
@@ -1123,7 +1136,7 @@ Window {
             open = false
             buddy.panelClosed()
         }
-        onNewRequestRequested: buddy.openInput()
+        onNewRequestRequested: buddy.openInput(true)
         onFollowUpSubmitted: (text) => buddy.submit(text)
         onLoved: () => buddy.celebrate()
         onSpeakingTick: () => buddy.pulseSpeaking()

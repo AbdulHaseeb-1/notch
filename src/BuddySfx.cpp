@@ -1,8 +1,10 @@
 #include "BuddySfx.h"
 
-#include <QDateTime>
+#include <QAudioDevice>
+#include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QMediaDevices>
 #include <QRandomGenerator>
 #include <QUrl>
 #include <QtMath>
@@ -182,6 +184,14 @@ constexpr double Cs5 = 554.37, C6 = 1046.50;
 BuddySfx::BuddySfx(QObject *parent)
     : QObject(parent)
 {
+    m_clock.start();
+    m_recoveryTimer.setSingleShot(true);
+    m_recoveryTimer.setInterval(500);
+    connect(&m_recoveryTimer, &QTimer::timeout, this, &BuddySfx::recoverEffects);
+    connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        m_recoveryAttempts = 0;
+        scheduleRecovery();
+    });
     rebuildEffects();
 }
 
@@ -259,7 +269,7 @@ void BuddySfx::play(const QString &cue)
                 : (cue == QLatin1String("love"))    ? QStringLiteral("happy")
                 : cue;
 
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 now = m_clock.elapsed();
 
     if (key == QLatin1String("speak")) {
         // Keep the run of syllables short: after a couple of seconds of
@@ -292,10 +302,40 @@ void BuddySfx::play(const QString &cue)
     QSoundEffect *fx = m_effects.value(key, nullptr);
     if (!fx)
         fx = m_effects.value(QStringLiteral("wake"), nullptr);
-    if (fx) {
+    if (fx && fx->status() == QSoundEffect::Error) {
+        qWarning() << "BuddySfx: effect is in error state for cue" << key
+                   << "source" << fx->source();
+        scheduleRecovery();
+        return;
+    }
+    if (fx && fx->status() == QSoundEffect::Ready) {
         fx->setVolume(outputGain());
         fx->play();
+    } else if (fx) {
+        qWarning() << "BuddySfx: effect not ready for cue" << key
+                   << "status" << fx->status() << "source" << fx->source();
     }
+}
+
+void BuddySfx::scheduleRecovery()
+{
+    if (m_recoveryAttempts >= 3)
+        return;
+    if (!m_recoveryTimer.isActive())
+        m_recoveryTimer.start();
+}
+
+void BuddySfx::recoverEffects()
+{
+    ++m_recoveryAttempts;
+    qInfo() << "BuddySfx: reinitializing effects after audio backend change/failure";
+    stopEffects();
+    for (QSoundEffect *fx : std::as_const(m_effects)) {
+        if (fx)
+            fx->deleteLater();
+    }
+    m_effects.clear();
+    rebuildEffects();
 }
 
 void BuddySfx::rebuildEffects()
@@ -342,12 +382,16 @@ void BuddySfx::rebuildEffects()
             f.close();
         }
 
-        QSoundEffect *fx = m_effects.value(cue, nullptr);
-        if (!fx) {
-            fx = new QSoundEffect(this);
-            fx->setLoopCount(1);
-            m_effects.insert(cue, fx);
-        }
+        QSoundEffect *fx = new QSoundEffect(this);
+        fx->setLoopCount(1);
+        connect(fx, &QSoundEffect::statusChanged, this, [this, fx, cue] {
+            if (fx->status() == QSoundEffect::Error) {
+                qWarning() << "BuddySfx: failed to load cue" << cue
+                           << "from" << fx->source();
+                scheduleRecovery();
+            }
+        });
+        m_effects.insert(cue, fx);
         fx->setSource(QUrl::fromLocalFile(filePath));
         fx->setVolume(outputGain());
     }
