@@ -71,6 +71,7 @@ target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
 # noch.exe is self-contained - no qml/ folder needed beside it at run time.
 # Shared icon geometry, one instance for every Glyph.
 set_source_files_properties(qml/GlyphPaths.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/assets/send.svg PROPERTIES QT_RESOURCE_ALIAS "qml/assets/send.svg")
 
 qt_add_qml_module(noch
     URI noch
@@ -115,6 +116,8 @@ qt_add_qml_module(noch
         qml/BuddyResearchCard.qml
         qml/BuddyTasksCard.qml
         qml/BuddyHelpCard.qml
+    RESOURCES
+        qml/assets/send.svg
 )
 
 target_link_libraries(noch PRIVATE

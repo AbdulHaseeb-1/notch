@@ -113,6 +113,9 @@ Item {
     signal historyOpened()
 
     Theme { id: t }
+    readonly property color buddySurface: Qt.darker(t.surface, 1.22)
+    readonly property color buddyField: Qt.darker(t.field, 1.22)
+    readonly property color buddyRaised: Qt.darker(t.raised, 1.12)
     FontMetrics { id: bodyMetrics; font.family: t.font; font.pixelSize: 13 }
     FontMetrics { id: codeMetrics; font.family: "Consolas"; font.pixelSize: 12 }
 
@@ -734,183 +737,47 @@ Item {
         }
     }
 
-    component NeonSquircleRing: Shape {
-        id: nsr
-        property real halfSize: 13
-        property real cornerR: 8.5
-        property real thickness: 1.5
-        preferredRendererType: Shape.CurveRenderer
-
-        function rrBox(x0, y0, x1, y1, r) {
-            const cr = Math.max(0.5, Math.min(r, (x1 - x0) * 0.5, (y1 - y0) * 0.5))
-            return "M " + (x0 + cr) + " " + y0
-                 + " L " + (x1 - cr) + " " + y0
-                 + " A " + cr + " " + cr + " 0 0 1 " + x1 + " " + (y0 + cr)
-                 + " L " + x1 + " " + (y1 - cr)
-                 + " A " + cr + " " + cr + " 0 0 1 " + (x1 - cr) + " " + y1
-                 + " L " + (x0 + cr) + " " + y1
-                 + " A " + cr + " " + cr + " 0 0 1 " + x0 + " " + (y1 - cr)
-                 + " L " + x0 + " " + (y0 + cr)
-                 + " A " + cr + " " + cr + " 0 0 1 " + (x0 + cr) + " " + y0 + " Z"
-        }
-
-        readonly property string ringSvg: {
-            const cx = width * 0.5
-            const cy = height * 0.5
-            const ro = halfSize + thickness * 0.5
-            const ri = Math.max(1, halfSize - thickness * 0.5)
-            return rrBox(cx - ro, cy - ro, cx + ro, cy + ro, cornerR + thickness * 0.5) + " "
-                 + rrBox(cx - ri, cy - ri, cx + ri, cy + ri, Math.max(1, cornerR - thickness * 0.5))
-        }
-
-        ShapePath {
-            strokeColor: "transparent"
-            strokeWidth: -1
-            fillRule: ShapePath.OddEvenFill
-            fillGradient: ConicalGradient {
-                centerX: nsr.width * 0.5
-                centerY: nsr.height * 0.5
-                angle: 0
-                GradientStop { position: 0.00; color: "#d875ff" }
-                GradientStop { position: 0.14; color: "#c96eff" }
-                GradientStop { position: 0.28; color: "#936aff" }
-                GradientStop { position: 0.44; color: "#6662ff" }
-                GradientStop { position: 0.64; color: "#b56bff" }
-                GradientStop { position: 0.78; color: "#df80ff" }
-                GradientStop { position: 0.90; color: "#f2f0ff" }
-                GradientStop { position: 1.00; color: "#d875ff" }
-            }
-            PathSvg { path: nsr.ringSvg }
-        }
-    }
-
-    component NeonSendButton: Item {
-        id: nsb
+    component SendButton: Item {
+        id: sb
+        Theme { id: sendTheme }
         property bool active: false
-        property real boxSize: 27
-        property real cornerR: 8.5
-        property real iconSize: 13.5
         property string tip: qsTr("Send request")
         signal clicked()
 
-        width: boxSize + 7
-        height: boxSize + 7
-        opacity: nsb.active || nsbHit.containsMouse ? 1.0 : 0.78
-        scale: nsbHit.pressed ? 0.90 : (nsbHit.containsMouse ? 1.05 : 1.0)
-        Behavior on opacity { NumberAnimation { duration: 150 } }
-        Behavior on scale { NumberAnimation { duration: 130; easing.type: Easing.OutBack } }
+        width: 30
+        height: 30
+        scale: sendHit.pressed ? 0.96 : 1
+        Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
-        // Soft outer neon aura rings
-        Repeater {
-            model: [
-                { w: 7.5, o: nsb.active || nsbHit.containsMouse ? 0.13 : 0.07 },
-                { w: 4.5, o: nsb.active || nsbHit.containsMouse ? 0.24 : 0.14 },
-                { w: 2.5, o: nsb.active || nsbHit.containsMouse ? 0.40 : 0.24 }
-            ]
-            NeonSquircleRing {
-                required property var modelData
-                anchors.fill: parent
-                halfSize: nsb.boxSize * 0.5
-                cornerR: nsb.cornerR
-                thickness: modelData.w
-                opacity: modelData.o
-            }
-        }
-
-        // Deep dark squircle interior
         Rectangle {
-            anchors.centerIn: parent
-            width: nsb.boxSize
-            height: nsb.boxSize
-            radius: nsb.cornerR
-            color: nsbHit.pressed ? "#121218" : (nsbHit.containsMouse ? "#1e1e28" : "#17171f")
-            Behavior on color { ColorAnimation { duration: 120 } }
-            antialiasing: true
-
-            // Subtle inner top sheen
-            Rectangle {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 1
-                width: parent.width - 8
-                height: Math.round(parent.height * 0.35)
-                radius: height * 0.5
-                opacity: 0.04
-                gradient: Gradient {
-                    GradientStop { position: 0; color: "#ffffff" }
-                    GradientStop { position: 1; color: "transparent" }
-                }
-            }
-        }
-
-        // Crisp neon gradient border
-        NeonSquircleRing {
             anchors.fill: parent
-            halfSize: nsb.boxSize * 0.5
-            cornerR: nsb.cornerR
-            thickness: 1.55
+            radius: 9
+            color: sendHit.pressed || sendHit.containsMouse ? sendTheme.accentHover
+                 : sb.active ? sendTheme.accent : Qt.darker(sendTheme.field, 1.18)
+            antialiasing: true
+            Behavior on color { ColorAnimation { duration: 120 } }
         }
 
-        // Neon send icon with soft glow + gradient wing tint
-        Item {
+        Image {
             anchors.centerIn: parent
-            width: nsb.iconSize
-            height: nsb.iconSize
-
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-                transform: Scale { xScale: nsb.iconSize / 24; yScale: nsb.iconSize / 24 }
-
-                // Soft neon glow behind the icon strokes
-                ShapePath {
-                    strokeColor: "#b86bff"
-                    strokeWidth: 4.2 * 24 / Math.max(1, nsb.iconSize)
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: GlyphPaths.paths["send"] || "" }
-                }
-                opacity: nsb.active || nsbHit.containsMouse ? 0.34 : 0.18
-            }
-
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-                transform: Scale { xScale: nsb.iconSize / 24; yScale: nsb.iconSize / 24 }
-
-                // Subtle neon gradient fill inside the paper plane
-                ShapePath {
-                    strokeColor: "transparent"
-                    strokeWidth: 0
-                    fillGradient: LinearGradient {
-                        x1: 4; y1: 4; x2: 20; y2: 20
-                        GradientStop { position: 0.0; color: "#448a6bff" }
-                        GradientStop { position: 0.6; color: "#55cb75ff" }
-                        GradientStop { position: 1.0; color: "#66f2b8ff" }
-                    }
-                    PathSvg { path: "M20.5 3.5 L14.4 20.1 C14.2 20.7 13.4 20.7 13.2 20.1 L10.6 13.4 L3.9 10.8 C3.3 10.6 3.3 9.8 3.9 9.6 Z" }
-                }
-
-                // Crisp neon stroke
-                ShapePath {
-                    strokeColor: nsb.active || nsbHit.containsMouse ? "#df96ff" : "#ba82ff"
-                    strokeWidth: 1.85 * 24 / Math.max(1, nsb.iconSize)
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    joinStyle: ShapePath.RoundJoin
-                    PathSvg { path: GlyphPaths.paths["send"] || "" }
-                }
-            }
+            width: 15
+            height: 15
+            source: Qt.resolvedUrl("assets/send.svg")
+            sourceSize.width: 24
+            sourceSize.height: 24
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            opacity: sb.active ? 1 : 0.76
         }
 
         MouseArea {
-            id: nsbHit
+            id: sendHit
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             Accessible.role: Accessible.Button
-            Accessible.name: nsb.tip
-            onClicked: nsb.clicked()
+            Accessible.name: sb.tip
+            onClicked: sb.clicked()
         }
     }
 
@@ -922,10 +789,8 @@ Item {
         signal sent(string text)
         signal escaped()
         radius: height / 2
-        color: th.field
-        border.width: 1
-        border.color: afInput.activeFocus ? Qt.rgba(th.accent.r, th.accent.g, th.accent.b, 0.7) : th.fieldBorder
-        Behavior on border.color { ColorAnimation { duration: 140 } }
+        color: Qt.darker(th.field, 1.22)
+        border.width: 0
 
         function send() {
             const q = afInput.text.trim()
@@ -965,14 +830,10 @@ Item {
             }
         }
 
-        NeonSendButton {
+        SendButton {
             id: afSendBtn
             anchors.right: parent.right
-            anchors.rightMargin: 2
             anchors.verticalCenter: parent.verticalCenter
-            boxSize: 22
-            cornerR: 7
-            iconSize: 11.5
             active: afInput.text.trim().length > 0
             onClicked: af.send()
         }
@@ -1002,7 +863,7 @@ Item {
             visible: prog > 0.001
             opacity: Math.min(1, prog * 1.6)
             scale: Math.max(0, prog) * (1 + 0.22 * pulse * tb.mo)
-            color: t.surface
+            color: tb.buddySurface
             border.width: 1
             border.color: tb.phase === "thinking"
                           ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.35 + 0.5 * pulse)
@@ -1039,8 +900,8 @@ Item {
             id: surface
             anchors.fill: parent
             radius: Math.min(height / 2, 22)
-            color: t.surface
-            border.width: 1
+            color: tb.buddySurface
+            border.width: tb.phase === "input" ? 0 : 1
             border.color: tb.phase === "thinking"
                           ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.30 + 0.30 * Math.sin(tb.breathT * 2 * Math.PI) * tb.mo)
                           : (tb.phase === "error" ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.55)
@@ -1152,7 +1013,7 @@ Item {
                     tint: t.textFaint
                     onClicked: tb.showHistory()
                 }
-                NeonSendButton {
+                SendButton {
                     id: sendBtn
                     anchors.right: xBtn.left
                     anchors.rightMargin: 2
@@ -1733,7 +1594,7 @@ Item {
                                         width: 18
                                         height: 18
                                         radius: 6
-                                        color: t.raised
+                                        color: tb.buddyRaised
                                         border.width: 1
                                         border.color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.42)
                                         Glyph {
@@ -1842,7 +1703,7 @@ Item {
                                         width: toolDrawerCol.width
                                         height: stepInnerCol.implicitHeight + 12
                                         radius: 8
-                                        color: t.surface
+                                        color: tb.buddySurface
                                         border.width: 1
                                         border.color: isError
                                                       ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.35)
@@ -1976,7 +1837,7 @@ Item {
                                                 width: parent.width
                                                 height: stepOutText.implicitHeight + 8
                                                 radius: 5
-                                                color: t.field
+                                                color: tb.buddyField
                                                 border.width: 1
                                                 border.color: t.borderSoft
                                                 visible: String(modelData.output || "").length > 0
@@ -2321,8 +2182,8 @@ Item {
                     height: 14
                     visible: chatFlick.contentY > 1
                     gradient: Gradient {
-                        GradientStop { position: 0; color: t.surface }
-                        GradientStop { position: 1; color: Qt.rgba(t.surface.r, t.surface.g, t.surface.b, 0) }
+                        GradientStop { position: 0; color: tb.buddySurface }
+                        GradientStop { position: 1; color: Qt.rgba(tb.buddySurface.r, tb.buddySurface.g, tb.buddySurface.b, 0) }
                     }
                 }
                 Rectangle {
@@ -2332,8 +2193,8 @@ Item {
                     height: 16
                     visible: chatFlick.contentY < chatFlick.contentHeight - chatFlick.height - 1
                     gradient: Gradient {
-                        GradientStop { position: 0; color: Qt.rgba(t.surface.r, t.surface.g, t.surface.b, 0) }
-                        GradientStop { position: 1; color: t.surface }
+                        GradientStop { position: 0; color: Qt.rgba(tb.buddySurface.r, tb.buddySurface.g, tb.buddySurface.b, 0) }
+                        GradientStop { position: 1; color: tb.buddySurface }
                     }
                 }
 
