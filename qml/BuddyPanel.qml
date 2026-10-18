@@ -1174,11 +1174,12 @@ Item {
                                         text: {
                                             const m = panel.responseMeta || {}
                                             const parts = []
-                                            if (m.model) parts.push(String(m.model))
                                             if (Number(m.turns || 0) > 1) parts.push(m.turns + " turns")
                                             if (Number(m.handoffs || 0) > 0) parts.push(m.handoffs === 1 ? "1 handoff" : m.handoffs + " handoffs")
                                             if (Number(m.totalTokens || 0) > 0) parts.push(m.totalTokens + " tok")
                                             if (Number(m.durationMs || 0) > 0) parts.push(panel.formatDuration(m.durationMs))
+                                            // Model last: it is the part that elides first.
+                                            if (m.model) parts.push(String(m.model))
                                             return parts.join(" · ")
                                         }
                                         width: Math.min(implicitWidth, pMetaChip.room - 14 - 15)
