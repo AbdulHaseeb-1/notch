@@ -61,6 +61,11 @@ Item {
     // True when clicking the orb should reopen work in progress rather than
     // start a fresh prompt.
     readonly property bool canContinue: busy || hasAnswerToContinue || panelHasMoreToRead
+    // Set when a reply is requested. A click elsewhere leaves it set so the
+    // answer pops back up on its own; an explicit x / Esc clears it, so a
+    // deliberately closed bubble stays closed (the answer is still resumable
+    // from the orb).
+    property bool autoPopPending: true
 
     // Everything the click-through mask depends on, as one comparable string.
     readonly property bool glowing: neon > 0.02 || busy || sparkAnim.running || burstAnim.running
@@ -1055,16 +1060,21 @@ Item {
     // surface took over. Everything is tucked away, but nothing in flight is
     // cancelled: the orb keeps glowing and the reply pops back up on arrival.
     function stash() {
+        const hadSomething = (thought.visible && !thought.closing)
+                             || (!!resultPanel && resultPanel.open)
         rememberAnswer()
         thought.close()
         // A request asked from the panel keeps replyToPanel set, so present()
         // puts the answer back in the panel and only then reveals it.
         if (resultPanel)
             resultPanel.open = false
+        // Clicked away rather than closed on purpose: let the answer reappear.
+        autoPopPending = true
         session = canContinue ? (busy ? "thinking" : "result") : "idle"
         if (!busy)
             setMood("neutral", 0)
-        if (typeof buddySfx !== "undefined" && buddySfx)
+        // Only acknowledge an actual fade-out (startup focus loss is silent).
+        if (hadSomething && typeof buddySfx !== "undefined" && buddySfx)
             buddySfx.play("dismiss")
     }
 
@@ -1129,6 +1139,7 @@ Item {
     // revealing.
     function resumeReply() {
         activationRequested()
+        autoPopPending = true
         // A reply that belongs to the popped-out panel goes back there first.
         if (resultPanel && replyToPanel
                 && (panelHasMoreToRead || resultPanel.phase === "loading" || awaitingReply)) {
@@ -1197,6 +1208,9 @@ Item {
     function bubbleClosed() {
         const quiet = thought.kind === "note" && thought.phase === "answer"
         rememberAnswer()
+        // The user closed it on purpose: don't pop it back open when the reply
+        // lands. It stays resumable from the orb, though.
+        autoPopPending = false
         session = resultPanel && resultPanel.open ? "result"
                 : (canContinue ? (busy ? "thinking" : "result") : "idle")
         if (!busy)
@@ -1251,6 +1265,7 @@ Item {
             return
         lastRequest = trimmed
         forgetAnswer()
+        autoPopPending = true
         replyToPanel = !!resultPanel && resultPanel.open
         session = "thinking"
         gulp()
@@ -1361,10 +1376,11 @@ Item {
     }
     function showError(message) {
         awaitingReply = false
-        if (replyToPanel && resultPanel && resultPanel.open) {
+        if (replyToPanel && resultPanel) {
             resultPanel.errorMessage = message
             resultPanel.phase = "error"
-        } else {
+            resultPanel.open = true
+        } else if (autoPopPending || !thought.visible) {
             thought.showError(message)
         }
         session = "result"
@@ -1438,6 +1454,7 @@ Item {
     // Show a finished result: in the bubble, or in the panel it came from.
     function present(kind, title, payload, simulated) {
         awaitingReply = false
+        autoPopPending = true
         recordHistory(kind, title, payload)
         if (kind === "chat" && payload && payload.response)
             rememberTurn(lastRequest, payload.response)
@@ -1446,11 +1463,29 @@ Item {
             return
         }
         // The bubble may have been tucked away while the reply was still being
-        // made (the user clicked somewhere else). showAnswer() pops it back out
-        // of the orb by itself, so the answer is never silently lost.
-        thought.showAnswer(kind, title, payload, simulated)
-        session = "result"
-        popForward()
+        // made. Pop it back out unless the user closed it on purpose; either
+        // way the answer is kept so the orb can resume it.
+        const reopen = autoPopPending || !thought.visible
+        if (reopen) {
+            thought.showAnswer(kind, title, payload, simulated)
+            session = "result"
+            popForward()
+            return
+        }
+        rememberAnswerFrom(kind, title, payload, simulated)
+        session = canContinue ? "result" : "idle"
+        setMood("happy", 1600)
+        neonBurst(true)
+    }
+    // Caches an answer that arrived while the bubble was deliberately closed.
+    function rememberAnswerFrom(kind, title, payload, simulated) {
+        if (kind === "note")
+            return
+        lastAnswerKind = kind
+        lastAnswerTitle = title
+        lastAnswerPayload = payload
+        lastAnswerSimulated = simulated
+        lastAnswerReveal = 0
     }
     // Result arriving from a tucked-away state: a fuller entrance (it may be
     // off-screen focus, so make the arrival obvious).
@@ -1463,7 +1498,8 @@ Item {
     function note(text, icon) {
         awaitingReply = false
         forgetAnswer()
-        thought.showNote(text, icon)
+        if (autoPopPending || !thought.visible)
+            thought.showNote(text, icon)
         session = "result"
         setMood("happy", 2000)
         hop(105)
