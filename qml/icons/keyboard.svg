@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" data-source="lucide:keyboard">
+  <path d="M10 8h.01"/>
+  <path d="M12 12h.01"/>
+  <path d="M14 8h.01"/>
+  <path d="M16 12h.01"/>
+  <path d="M18 8h.01"/>
+  <path d="M6 8h.01"/>
+  <path d="M7 16h10"/>
+  <path d="M8 12h.01"/>
+  <path d="M4 4 H20 A2 2 0 0 1 22 6 V18 A2 2 0 0 1 20 20 H4 A2 2 0 0 1 2 18 V6 A2 2 0 0 1 4 4 Z"/>
+</svg>

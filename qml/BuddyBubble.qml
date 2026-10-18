@@ -755,16 +755,11 @@ Item {
             Behavior on color { ColorAnimation { duration: 120 } }
         }
 
-        Image {
+        Glyph {
             anchors.centerIn: parent
-            width: 15
-            height: 15
-            source: Qt.resolvedUrl("assets/send.svg")
-            sourceSize.width: 24
-            sourceSize.height: 24
-            fillMode: Image.PreserveAspectFit
-            smooth: true
-            opacity: sb.active ? 1 : 0.76
+            name: "send"
+            size: 15
+            color: sb.active ? Theme.inverse : Theme.textDim
         }
 
         MouseArea {

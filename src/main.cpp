@@ -26,6 +26,7 @@
 #include "FullscreenWatcher.h"
 #include "GlassBackdrop.h"
 #include "GlobalHotkey.h"
+#include "IconSet.h"
 #include "MediaHub.h"
 #include "MusicPlayer.h"
 #include "NightLight.h"
@@ -147,6 +148,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("dock"), dock);
     engine.rootContext()->setContextProperty(QStringLiteral("player"), player);
     engine.rootContext()->setContextProperty(QStringLiteral("appearance"), appearance);
+    engine.rootContext()->setContextProperty(QStringLiteral("iconSet"), new IconSet(&app));
     engine.rootContext()->setContextProperty(QStringLiteral("buddyProvider"), buddyProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("buddySfx"), buddySfx);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
