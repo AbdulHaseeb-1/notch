@@ -1,0 +1,103 @@
+# Buddy agent safety layer
+
+Noch's Buddy can run a multi-turn tool loop (shell, file editor, computer use,
+web, memory, …). Every tool call the model makes passes through a small safety
+layer before anything runs. Code: `src/AgentPolicy.{h,cpp}` (pure, unit-tested
+in `tests/tst_agentpolicy.cpp`) and the gate in `src/BuddyProvider.cpp`
+(`gateAndExecute`, `resolveApproval`, `guardToolOutput`, `compactContext`,
+`scheduleRetry`, `finishTrace`).
+
+## Evaluation order
+
+Modelled on the Claude Agent SDK permission flow
+(hooks → deny rules → ask rules → permission mode → allow rules → canUseTool):
+
+1. **Loop guard.** If the same tool runs with identical input more than twice
+   in one task, the call is skipped and the model is told to change approach.
+2. **Input guardrail.** Arguments that contain the user's API key are blocked.
+3. **Hard deny rules.** These apply in every mode, including *Trusted*:
+   destructive shell patterns (`rm -rf /`, `format`, `diskpart`, `mkfs`, fork
+   bombs, `curl … | sh`, registry or boot edits, disabling Defender, …), writes
+   to OS folders, credential stores (`~/.ssh`, `~/.aws`, …) and `.git/hooks`.
+4. **Read-only fast path.** Read-only shell commands (`ls`, `dir`, `cat`,
+   `git status/log/diff`, `Get-ChildItem`, … with no redirects, substitution
+   or `tee`), editor `view`, observing computer actions (screenshot, cursor
+   position, wait), memory, search, todo and advisor run without asking.
+5. **Permission mode** (Settings › Buddy › Safety & permissions):
+
+   | Mode | Shell with side effects | File edits | Computer control |
+   |---|---|---|---|
+   | Ask (`default`) | ask | ask | ask |
+   | Auto-edit (`acceptEdits`) | ask | allowed inside the workspace folder | ask |
+   | Plan (`plan`) | denied | denied | denied |
+   | Trusted (`bypass`) | allowed | allowed | allowed |
+
+   Hard-deny rules still apply in Trusted mode. Editing secrets files (`.env`,
+   `*.pem`, `id_rsa`, …) always asks, and so does fetching private or
+   `file://` URLs.
+6. **Session grants.** *Always allow* on an approval card trusts that tool for
+   the rest of the app session. Changing the mode clears every grant.
+7. **Unknown tools are denied.**
+
+Commands the user types directly (for example `run: …`) count as already
+approved, so they skip *ask*. Hard-deny rules still apply to them.
+
+## Human in the loop
+
+An *ask* verdict pauses the run. The call shows as **waiting** in the trace,
+and an approval card offers **Deny**, **Always allow** and **Allow once**
+(Enter allows once, Esc denies). An approval left unanswered for 120 s is
+declined. Like a hook timeout, it is treated as a block.
+
+Declined and denied calls are not errors. The model receives a `tool_result`
+that explains why the call did not run and tells it not to retry the same
+action. This follows the OpenAI Agents SDK rejection message and the Claude
+Agent SDK deny reason.
+
+## Output guardrails
+
+- **Secret redaction**, on by default: API keys, bearer tokens, private-key
+  blocks, AWS keys, GitHub/Slack/OpenAI/Anthropic tokens and the configured
+  API key are masked in tool output, the final answer and saved traces.
+- **Untrusted content fencing:** `web_fetch` and `web_search` results are
+  wrapped in `<untrusted_content>`. The system prompt tells the model that
+  everything inside is data, never instructions.
+- **Prompt-injection flag:** text that targets agents ("ignore previous
+  instructions", "you are now", "exfiltrate", …) gets a guardrail banner, and
+  the step shows *Possible prompt injection* in the trace.
+
+## Context and cost
+
+- **Context editing:** before each model call, the newest 4 tool results stay
+  verbatim. Older results over 600 characters are replaced with a short
+  placeholder, and older screenshots are dropped. This follows Anthropic's
+  "clear tool uses" strategy.
+- **Prompt caching (Anthropic):** the system prompt and the tool block carry
+  `cache_control: {type: "ephemeral"}`. Cache hits are counted from
+  `cache_read_input_tokens` (Anthropic) or `prompt_tokens_details.cached_tokens`
+  (OpenAI) and reported in the response meta.
+- **Max turns:** after 12 tool rounds the run stops and says so (as with
+  `max_turns` in the OpenAI Agents SDK).
+
+## Error recovery
+
+The provider retries HTTP 408/409/425/429/500/502/503/504/529 and dropped or
+timed-out connections up to 3 times. Backoff is 1 s, 2 s, then 4 s plus
+jitter, and a `retry-after` header is honoured (capped at 20 s). A failed tool
+returns `is_error: true` to the model, so the model can recover.
+
+## Traces
+
+When *Keep run traces* is on, each run writes
+`<AppData>/traces/trace-<id>.json`. A trace holds model calls, tool calls,
+permission decisions, approvals, guardrail hits, retries and compactions,
+along with token totals. The newest 40 traces are kept. Secrets are redacted
+before a trace is written.
+
+## Sources
+
+- Claude Agent SDK: permissions, hooks, sessions and the secure deployment
+  guide (docs.claude.com/en/docs/agent-sdk/…)
+- Anthropic: context editing, prompt caching, API errors (429 / 529 overloaded)
+- OpenAI Agents SDK: guardrails, human-in-the-loop (`needsApproval`,
+  interruptions), tracing, running agents (`max_turns`)
