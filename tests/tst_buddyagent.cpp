@@ -100,6 +100,29 @@ QByteArray toolUse(const QString &id, const QString &command)
     return QJsonDocument(msg).toJson(QJsonDocument::Compact);
 }
 
+QByteArray toolUseNamed(const QString &id, const QString &name, const QJsonObject &input)
+{
+    QJsonObject msg{
+        { "id", "msg_" + id }, { "type", "message" }, { "role", "assistant" },
+        { "content", QJsonArray{ QJsonObject{ { "type", "tool_use" }, { "id", id }, { "name", name }, { "input", input } } } },
+        { "stop_reason", "tool_use" }, { "usage", QJsonObject{ { "input_tokens", 10 }, { "output_tokens", 5 } } },
+    };
+    return QJsonDocument(msg).toJson(QJsonDocument::Compact);
+}
+
+QStringList toolNames(const QJsonObject &req)
+{
+    QStringList out;
+    for (const QJsonValue &t : req.value("tools").toArray())
+        out << t.toObject().value("name").toString();
+    return out;
+}
+
+QString systemText(const QJsonObject &req)
+{
+    return req.value("system").toArray().first().toObject().value("text").toString();
+}
+
 QByteArray text(const QString &t)
 {
     QJsonObject msg{
@@ -461,6 +484,85 @@ private slots:
         bp->sendMessage("hi");
         QVERIFY(ready.wait(5000));
         QVERIFY(!fake->requests.first().contains("stream"));
+    }
+
+    void handoffToSpecialistRestrictsTools() {
+        bp->setAllowWebSearch(true);
+        fake->queue = {
+            { 200, toolUseNamed("h1", "transfer_to_research", QJsonObject{ { "reason", "needs current sources" } }) },
+            { 200, toolUse("b1", "echo not-allowed-here") },
+            { 200, toolUseNamed("h2", "transfer_to_buddy", QJsonObject{ { "reason", "done researching" } }) },
+            { 200, text("research summary") } };
+        QSignalSpy agentSpy(bp, &BuddyProvider::activeAgentChanged);
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("what's new in Qt 6.10?");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(fake->requests.size(), 4);
+        // Buddy's toolset offers both specialists.
+        const QStringList t0 = toolNames(fake->requests.at(0));
+        QVERIFY(t0.contains("bash"));
+        QVERIFY(t0.contains("transfer_to_research"));
+        QVERIFY(t0.contains("transfer_to_code"));
+        // The research specialist: web tools, no bash, can hand back.
+        const QStringList t1 = toolNames(fake->requests.at(1));
+        QVERIFY(t1.contains("web_search"));
+        QVERIFY(!t1.contains("bash"));
+        QVERIFY(t1.contains("transfer_to_buddy"));
+        QVERIFY(!t1.contains("transfer_to_code"));
+        QVERIFY(systemText(fake->requests.at(1)).contains("research specialist"));
+        // An out-of-set call is refused, not run.
+        const QVariantList steps = bp->toolSteps();
+        QCOMPARE(steps.at(1).toMap().value("status").toString(), QStringLiteral("denied"));
+        QCOMPARE(steps.at(0).toMap().value("badge").toString(), QStringLiteral("HANDOFF"));
+        // Handed back: Buddy's tools again.
+        QVERIFY(toolNames(fake->requests.at(3)).contains("bash"));
+        QCOMPARE(bp->activeAgent(), QStringLiteral("buddy"));
+        QCOMPARE(bp->responseMeta().value("handoffs").toInt(), 2);
+        QVERIFY(agentSpy.size() >= 2);
+    }
+
+    void handoffsOffHidesTransferTools() {
+        bp->setHandoffs(false);
+        fake->queue = { { 200, text("plain") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        for (const QString &n : toolNames(fake->requests.first()))
+            QVERIFY(!n.startsWith("transfer_to_"));
+    }
+
+    void longHistoryIsSummarised() {
+        QVariantList ctx;
+        for (int i = 0; i < 12; ++i) {
+            ctx << QVariantMap{ { "role", "user" }, { "content", QStringLiteral("question %1 ").arg(i) + QString(1500, 'q') } };
+            ctx << QVariantMap{ { "role", "assistant" }, { "content", QString(1500, 'a') } };
+        }
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("latest", ctx);
+        QVERIFY(ready.wait(5000));
+        const QJsonArray msgs = fake->requests.first().value("messages").toArray();
+        QVERIFY(msgs.first().toObject().value("content").toString().startsWith("[Session memory]"));
+        QVERIFY(msgs.first().toObject().value("content").toString().contains("question 0"));
+        // ~3012 chars per turn in a 24k budget: 7 newest turns verbatim,
+        // 2 summary messages, and the new question.
+        QCOMPARE(msgs.size(), 2 + 7 * 2 + 1);
+        QCOMPARE(msgs.last().toObject().value("content").toString(), QStringLiteral("latest"));
+    }
+
+    void memoryIndexInSystemPrompt() {
+        bp->setAllowMemory(true);
+        QDir().mkpath(bp->memoriesPath());
+        QFile f(QDir(bp->memoriesPath()).filePath("prefs.md"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("likes dark themes");
+        f.close();
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        QVERIFY(systemText(fake->requests.first()).contains("/memories/prefs.md"));
+        QFile::remove(f.fileName());
     }
 
     void cancelDuringApprovalStopsRun() {

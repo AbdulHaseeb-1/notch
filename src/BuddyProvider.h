@@ -82,6 +82,11 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
     Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
     Q_PROPERTY(bool streaming READ streaming NOTIFY streamTextChanged)
+    // Handoffs (OpenAI Agents SDK style): Buddy can transfer the run to a
+    // specialist with its own instructions and a restricted toolset.
+    Q_PROPERTY(bool handoffs READ handoffs WRITE setHandoffs NOTIFY agentConfigChanged)
+    Q_PROPERTY(QString activeAgent READ activeAgent NOTIFY activeAgentChanged)
+    Q_PROPERTY(QString activeAgentTitle READ activeAgentTitle NOTIFY activeAgentChanged)
     // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
     // badge, icon, title, detail, reason, rule, secondsLeft }.
     Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
@@ -144,6 +149,21 @@ public:
     void setStreamReplies(bool on);
     QString streamText() const { return m_streamText; }
     bool streaming() const { return m_streamingNow; }
+    bool handoffs() const { return m_handoffs; }
+    void setHandoffs(bool on);
+    QString activeAgent() const { return m_activeAgent; }
+    QString activeAgentTitle() const;
+    // Specialist registry (static): id -> title, icon, allowed tools, instructions.
+    struct AgentProfile {
+        QString id;
+        QString title;
+        QString icon;
+        QStringList tools;      // empty = every enabled tool
+        QString handoffDescription;
+        QString instructions;
+    };
+    static const QList<AgentProfile> &agentProfiles();
+    static const AgentProfile *profileFor(const QString &id);
     QVariantMap pendingApproval() const { return m_pendingApproval; }
 
     QVariantList toolSteps() const { return m_toolSteps; }
@@ -189,6 +209,7 @@ signals:
     void agentTodosChanged();
     void pendingApprovalChanged();
     void streamTextChanged();
+    void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
 
     void responseReady(const QString &text);
@@ -290,6 +311,14 @@ private:
     bool m_streamingNow = false;
     QString m_streamText;
     QTimer m_streamEmitTimer;
+    // handoffs
+    bool m_handoffs = true;
+    QString m_activeAgent = QStringLiteral("buddy");
+    int m_handoffCount = 0;
+    void setActiveAgent(const QString &id);
+    bool toolAllowedForActiveAgent(const QString &tool) const;
+    void executeHandoff(const PendingToolCall &call);
+    QString memoryIndex() const;
     quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
     QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
     QList<ToolOutcome> m_completedTools;
