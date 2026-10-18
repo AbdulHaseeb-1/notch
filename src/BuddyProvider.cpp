@@ -500,11 +500,11 @@ void BuddyProvider::onApprovalTick()
         clearPendingApproval();
         ++m_deniedCalls;
         setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("No answer within %1 s — skipped").arg(kApprovalTimeoutSec) } });
+        m_stepStatusOverride = QStringLiteral("denied");
         finishCurrentToolCall(call,
             QStringLiteral("The user did not approve this tool call within %1 seconds, so it was not run. "
                            "Continue without it, or explain what you need and why.").arg(kApprovalTimeoutSec),
             QString(), true);
-        setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("denied") } });
         return;
     }
     m_pendingApproval[QStringLiteral("secondsLeft")] = m_approvalSecondsLeft;
@@ -533,6 +533,7 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
     }
     ++m_deniedCalls;
     setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("Declined by you") } });
+    m_stepStatusOverride = QStringLiteral("denied");
     finishCurrentToolCall(call,
         QStringLiteral("The user declined this tool call, so it was not run. Do not retry the same action; "
                        "continue without it or ask the user how they want to proceed."),
@@ -1757,6 +1758,7 @@ void BuddyProvider::runDirectAdvisor(const QString &question)
 
 void BuddyProvider::cancel()
 {
+    ++m_runGeneration;
     m_pendingTools.clear();
     m_completedTools.clear();
     m_retryTimer.stop();
@@ -2380,8 +2382,8 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
         addSpan(QJsonObject{ { "type", "guardrail" }, { "tool", call.name }, { "rule", rule } });
         setStepFields(call.stepIndex, { { QStringLiteral("policy"), rule },
                                         { QStringLiteral("policyNote"), note } });
+        m_stepStatusOverride = QStringLiteral("denied");
         finishCurrentToolCall(call, toModel, QString(), true);
-        setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("denied") } });
     };
 
     // Loop guard: the same tool with the same input again and again means
@@ -2631,6 +2633,8 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
                                           const QString &imageBase64, bool isError)
 {
     bool flagged = false;
+    const QString statusOverride = m_stepStatusOverride;
+    m_stepStatusOverride.clear();
     const QString guarded = isError ? redact(output) : guardToolOutput(call, output, &flagged);
     const QString capped = capOutput(guarded);
     const int elapsedMs = m_stepTimer.isValid() ? qMax(1, int(m_stepTimer.elapsed())) : 1;
@@ -2638,7 +2642,8 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
         QVariantMap step = m_toolSteps.at(call.stepIndex).toMap();
         // Structured result fields for the trace UI.
         step[QStringLiteral("output")] = redact(output).left(800);
-        step[QStringLiteral("status")] = isError ? QStringLiteral("error") : QStringLiteral("done");
+        step[QStringLiteral("status")] = !statusOverride.isEmpty() ? statusOverride
+                                       : isError ? QStringLiteral("error") : QStringLiteral("done");
         step[QStringLiteral("durationMs")] = elapsedMs;
         step[QStringLiteral("chars")] = output.size();
         step[QStringLiteral("truncated")] = output.size() > kMaxToolOutputChars;
@@ -2650,7 +2655,8 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
         emit toolStepsChanged();
     }
     addSpan(QJsonObject{ { "type", "tool" }, { "tool", call.name }, { "ms", elapsedMs },
-                         { "status", isError ? "error" : "ok" }, { "outputChars", output.size() },
+                         { "status", !statusOverride.isEmpty() ? statusOverride : (isError ? QStringLiteral("error") : QStringLiteral("ok")) },
+                         { "outputChars", output.size() },
                          { "flagged", flagged } });
 
     ToolOutcome outcome;
@@ -2661,7 +2667,13 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
     outcome.isError = isError;
     m_completedTools.append(outcome);
 
-    QTimer::singleShot(35, this, &BuddyProvider::processNextToolCall);
+    // Deferred so the UI can paint the finished step; dropped if the run was
+    // cancelled (or replaced) in the meantime.
+    const quint64 gen = m_runGeneration;
+    QTimer::singleShot(35, this, [this, gen] {
+        if (gen == m_runGeneration)
+            processNextToolCall();
+    });
 }
 
 void BuddyProvider::executeBashTool(const PendingToolCall &call)
@@ -2675,10 +2687,14 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
 
     QProcess *proc = new QProcess(this);
     m_activeProcess = proc;
-    if (!workDir.isEmpty() && QDir(workDir).exists())
+    if (!workDir.isEmpty() && QDir(workDir).exists()) {
         proc->setWorkingDirectory(workDir);
-    else
-        proc->setWorkingDirectory(QDir::homePath());
+    } else {
+        // Safe default: start in the agent workspace folder (created on
+        // demand) rather than the user's home, so relative paths land there.
+        const QString ws = effectiveWorkspace();
+        proc->setWorkingDirectory(QDir().mkpath(ws) ? ws : QDir::homePath());
+    }
 
     proc->setProcessChannelMode(QProcess::MergedChannels);
 
@@ -2776,7 +2792,10 @@ void BuddyProvider::executeComputerTool(const PendingToolCall &call)
 
     if (action == QLatin1String("wait")) {
         const double secs = qBound(0.1, call.input.value(QStringLiteral("duration")).toDouble(1.0), 8.0);
-        QTimer::singleShot(qRound(secs * 1000), this, [this, call, secs]() {
+        const quint64 gen = m_runGeneration;
+        QTimer::singleShot(qRound(secs * 1000), this, [this, call, secs, gen]() {
+            if (gen != m_runGeneration)
+                return;
             finishCurrentToolCall(call, QStringLiteral("Waited %1 seconds.").arg(secs, 0, 'f', 1), QString(), false);
         });
         return;

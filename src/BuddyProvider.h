@@ -268,7 +268,9 @@ private:
 
     QJsonArray m_agentMessages;
     QList<PendingToolCall> m_pendingTools;
-    PendingToolCall m_approvalCall;      // the call waiting on pendingApproval
+    PendingToolCall m_approvalCall;
+    quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
+    QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
     QList<ToolOutcome> m_completedTools;
 
     QPointer<QNetworkReply> m_chatReply;
