@@ -33,6 +33,18 @@ Item {
 
 
     property int tab: 0
+    focus: true
+    Keys.onPressed: (event) => {
+        if (event.modifiers & Qt.ControlModifier) {
+            if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                tab = (tab + (event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? 2 : 1)) % 3
+                event.accepted = true
+            } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_3) {
+                tab = event.key - Qt.Key_1
+                event.accepted = true
+            }
+        }
+    }
     property string appFilter: ""
     property var availableList: []
 

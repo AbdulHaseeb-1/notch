@@ -95,6 +95,9 @@ Item {
 
             TextInput {
                 id: paletteInput
+                Accessible.role: Accessible.EditableText
+                Accessible.name: qsTr("Command palette")
+                Accessible.description: qsTr("Search apps, windows and commands")
                 anchors.left: parent.left
                 anchors.leftMargin: 46
                 anchors.right: clearBtn.visible ? clearBtn.left : parent.right
@@ -127,6 +130,8 @@ Item {
                     pcard.move(-1)
                     event.accepted = true
                 }
+                Keys.onReturnPressed: (event) => { pcard.runCurrent(); event.accepted = true }
+                Keys.onEnterPressed: (event) => { pcard.runCurrent(); event.accepted = true }
                 Keys.onEscapePressed: (event) => {
                     pcard.dismissed()
                     event.accepted = true

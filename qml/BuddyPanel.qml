@@ -1284,6 +1284,8 @@ Item {
 
                 TextInput {
                     id: followUpInput
+                    Accessible.role: Accessible.EditableText
+                    Accessible.name: qsTr("Follow-up message")
                     anchors.left: parent.left
                     anchors.leftMargin: 32
                     anchors.right: followSendBtn.left

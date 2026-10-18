@@ -1092,7 +1092,7 @@ Window {
         id: buddy
         visible: cfg.buddyEnabled
         solidRing: cfg.buddySolidRing
-        motionPaused: root.fullscreenGuard
+        motionPaused: root.fullscreenGuard || !visible
         s: root.s
         desktop: root.contentItem
         focusTimer: sessionTimer

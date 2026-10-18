@@ -26,10 +26,30 @@ Rectangle {
     border.width: 1
     border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.38)
     focus: visible
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Dialog
+    Accessible.name: qsTr("Allow Buddy to run this tool?")
+    Accessible.description: String(request.title || "")
 
-    Keys.onReturnPressed: card.decided(true, false)
-    Keys.onEnterPressed: card.decided(true, false)
-    Keys.onEscapePressed: card.decided(false, false)
+    Keys.onReturnPressed: (event) => { card.decided(true, false); event.accepted = true }
+    Keys.onEnterPressed: (event) => { card.decided(true, false); event.accepted = true }
+    Keys.onEscapePressed: (event) => { card.decided(false, false); event.accepted = true }
+    Keys.onLeftPressed: (event) => { focusDeny(); event.accepted = true }
+    Keys.onRightPressed: (event) => { focusAllow(); event.accepted = true }
+    Keys.onTabPressed: (event) => { cycleFocus(1); event.accepted = true }
+    Keys.onBacktabPressed: (event) => { cycleFocus(-1); event.accepted = true }
+    Keys.onSpacePressed: (event) => {
+        if (focusIdx === 0) card.decided(false, false)
+        else if (focusIdx === 1) card.decided(true, true)
+        else card.decided(true, false)
+        event.accepted = true
+    }
+
+    property int focusIdx: 2   // 0 deny, 1 always, 2 allow
+    function focusDeny() { focusIdx = 0 }
+    function focusAllow() { focusIdx = 2 }
+    function cycleFocus(d) { focusIdx = (focusIdx + d + 3) % 3 }
+    onVisibleChanged: if (visible) { focusIdx = 2; forceActiveFocus() }
 
     function clock(sec) {
         const s = Math.max(0, sec)
@@ -41,14 +61,17 @@ Rectangle {
         property string label
         property string icon
         property bool primary: false
+        property bool keyed: false
         signal clicked()
         width: lbl.implicitWidth + (icon.length ? 34 : 22)
         height: 28
         radius: Theme.radiusSm + 1
         color: primary ? (ma.pressed ? Theme.stone200 : ma.containsMouse ? Theme.stone50 : Theme.stone100)
                        : (ma.pressed ? Theme.glassFillActive : ma.containsMouse ? Theme.glassFillHover : Theme.glassFill)
-        border.width: primary ? 0 : 1
-        border.color: Theme.glassBorderStrong
+        border.width: (primary && !keyed) ? 0 : 1
+        border.color: keyed ? Theme.accent : Theme.glassBorderStrong
+        Accessible.role: Accessible.Button
+        Accessible.name: b.label
         scale: ma.pressed ? 0.97 : 1
         Behavior on scale { NumberAnimation { duration: 90 } }
         Row {
@@ -209,9 +232,9 @@ Rectangle {
             anchors.right: parent.right
             spacing: 6
 
-            ActBtn { label: qsTr("Deny"); icon: "close"; onClicked: card.decided(false, false) }
-            ActBtn { label: qsTr("Always allow"); onClicked: card.decided(true, true) }
-            ActBtn { label: qsTr("Allow once"); icon: "check"; primary: true; onClicked: card.decided(true, false) }
+            ActBtn { label: qsTr("Deny"); icon: "close"; keyed: card.focusIdx === 0; onClicked: card.decided(false, false) }
+            ActBtn { label: qsTr("Always allow"); keyed: card.focusIdx === 1; onClicked: card.decided(true, true) }
+            ActBtn { label: qsTr("Allow once"); icon: "check"; primary: true; keyed: card.focusIdx === 2; onClicked: card.decided(true, false) }
         }
     }
 }

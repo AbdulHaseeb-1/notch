@@ -16,13 +16,18 @@ Modelled on the Claude Agent SDK permission flow
    in one task, the call is skipped and the model is told to change approach.
 2. **Input guardrail.** Arguments that contain the user's API key are blocked.
 3. **Hard deny rules.** These apply in every mode, including *Trusted*:
-   destructive shell patterns (`rm -rf /`, `format`, `diskpart`, `mkfs`, fork
-   bombs, `curl … | sh`, registry or boot edits, disabling Defender, …), writes
-   to OS folders, credential stores (`~/.ssh`, `~/.aws`, …) and `.git/hooks`.
+   destructive shell patterns (`rm -rf /`, `rm --recursive --force /`,
+   `find / -delete`, `format`, `diskpart`, `mkfs`, fork bombs, `curl … | sh`,
+   registry or boot edits, disabling Defender, …), writes to OS folders,
+   credential stores (`~/.ssh`, `~/.aws`, …), Noch's own settings/data, and
+   `.git/hooks`. Symlinks are followed before the path check.
 4. **Read-only fast path.** Read-only shell commands (`ls`, `dir`, `cat`,
    `git status/log/diff`, `Get-ChildItem`, … with no redirects, substitution
    or `tee`), editor `view`, observing computer actions (screenshot, cursor
    position, wait), memory, search, todo and advisor run without asking.
+   Opaque commands (`bash -c`, `python -c`, encoded PowerShell, a variable as
+   the program) always ask, even in Trusted mode, because the gate cannot see
+   what they will run.
 5. **Permission mode** (Settings › Buddy › Safety & permissions):
 
    | Mode | Shell with side effects | File edits | Computer control |
@@ -33,8 +38,11 @@ Modelled on the Claude Agent SDK permission flow
    | Trusted (`bypass`) | allowed | allowed | allowed |
 
    Hard-deny rules still apply in Trusted mode. Editing secrets files (`.env`,
-   `*.pem`, `id_rsa`, …) always asks, and so does fetching private or
-   `file://` URLs.
+   `*.pem`, `id_rsa`, …) always asks. Only http(s) URLs can be fetched;
+   private, loopback and metadata hosts always ask (even in Trusted).
+   `file://` and other schemes are denied. After a prompt-injection flag in
+   the same run, Trusted mode and session grants stop auto-approving side
+   effects until the next message.
 6. **Session grants.** *Always allow* on an approval card trusts that tool for
    the rest of the app session. Changing the mode clears every grant.
 7. **Unknown tools are denied.**
@@ -60,11 +68,14 @@ Agent SDK deny reason.
   blocks, AWS keys, GitHub/Slack/OpenAI/Anthropic tokens and the configured
   API key are masked in tool output, the final answer and saved traces.
 - **Untrusted content fencing:** `web_fetch` and `web_search` results are
-  wrapped in `<untrusted_content>`. The system prompt tells the model that
-  everything inside is data, never instructions.
+  wrapped in `<untrusted_content>` after invisible characters are stripped
+  and any attempt to close the fence early is neutralised. The system prompt
+  tells the model that everything inside is data, never instructions.
 - **Prompt-injection flag:** text that targets agents ("ignore previous
-  instructions", "you are now", "exfiltrate", …) gets a guardrail banner, and
-  the step shows *Possible prompt injection* in the trace.
+  instructions", "you are now", "exfiltrate", …), including smuggled
+  zero-width forms, gets a guardrail banner, taints the run, and the step
+  shows *Possible prompt injection* in the trace. The approval card shows
+  bidi/zero-width characters as visible markers so nothing is hidden.
 
 ## Context and cost
 

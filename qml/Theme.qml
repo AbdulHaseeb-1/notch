@@ -78,6 +78,11 @@ QtObject {
     readonly property color accent: "#d9d2c7"
     readonly property color accentHover: "#ebe6dd"
     readonly property color accentSoft: "#1fd9d2c7"
+    // Keyboard focus: a soft stone ring. Use Theme.focusBorder(active) on
+    // controls and Theme.focusGlow(active) as an outer glow when needed.
+    readonly property color focusRing: "#66ebe6dd"
+    function focusBorder(active) { return active ? accent : fieldBorder }
+    function focusGlow(active) { return active ? focusRing : "transparent" }
     readonly property color badge: stone200
 
     readonly property color danger: "#e07a6e"

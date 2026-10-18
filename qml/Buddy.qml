@@ -227,6 +227,36 @@ Item {
         }
     }
 
+    // Reactions can overlap (a tool error while an approval is pending, a
+    // success hop while the user is typing). Higher priority wins; a lower
+    // one is ignored until the current reaction expires. Priority 0 = idle.
+    //   1 typing/hover  2 tool tick  3 success  4 approval  5 error  6 celebrate
+    property int reactPriority: 0
+    function react(m, durationMs, priority, strength) {
+        const p = priority === undefined ? 1 : priority
+        if (p < reactPriority)
+            return false
+        reactPriority = p
+        setMood(m, durationMs || 0)
+        if (strength)
+            hop(strength)
+        if (durationMs && durationMs > 0) {
+            reactClearTimer.interval = durationMs
+            reactClearTimer.restart()
+        } else {
+            reactClearTimer.stop()
+            // Sticky moods (sleepy, thinking) clear priority immediately so
+            // the next event can still interrupt them.
+            if (p < 4)
+                reactPriority = 0
+        }
+        return true
+    }
+    Timer {
+        id: reactClearTimer
+        onTriggered: buddy.reactPriority = 0
+    }
+
     function setMood(m, durationMs) {
         mood = m
         springing = true
@@ -261,8 +291,8 @@ Item {
 
     // Small success beat when an agent run finishes cleanly with tools.
     function nodHappy() {
-        setMood("happy", 1500)
-        hop(70)
+        if (!react("happy", 1500, 3, 70))
+            return
         neonBurst(false)
     }
 
@@ -297,8 +327,8 @@ Item {
     onSessionChanged: { wake(); dozeTimer.restart() }
 
     function celebrate() {
-        setMood("love", 3000)
-        hop(145)
+        if (!react("love", 3000, 6, 145))
+            return
         targetRoll = 12 * mo
         neonBurst(true)
         if (!thought.visible)
@@ -1438,8 +1468,8 @@ Item {
         }
         session = "result"
         // A sympathetic droop: squinted eyes, head tilted, looking down.
-        setMood("error", 2600)
-        shake()
+        if (react("error", 2600, 5, 0))
+            shake()
         targetRoll = -10 * mo
         targetPitch = -12 * mo
         springing = true
@@ -1843,13 +1873,12 @@ Item {
             const waiting = p && p.id !== undefined
             if (waiting && !approvalNudge.running) {
                 buddy.wake()
-                buddy.setMood("surprised", 900)
-                buddy.hop(80)
+                buddy.react("surprised", 900, 4, 80)
                 buddy.lookAtBubble(24, 4)
                 if (BuddySound)
                     BuddySound.play("pop")
             }
-            approvalNudge.running = waiting
+            approvalNudge.running = waiting && buddy.visible && !buddy.motionPaused
         }
         function onToolStepsChanged() {
             const steps = BuddyAgent.toolSteps || []
@@ -1858,16 +1887,15 @@ Item {
             const last = steps[steps.length - 1]
             if (last.status === "error" && buddy.lastErrorStep !== last.id) {
                 buddy.lastErrorStep = String(last.id)
-                buddy.setMood("error", 900)   // a brief wince; the run carries on
-                buddy.shake()
+                if (buddy.react("error", 900, 5, 0))   // a brief wince; the run carries on
+                    buddy.shake()
             }
         }
         function onToolExecuted(name, summary) {
             if (!buddy.awaitingReply)
                 return
-            buddy.setMood("curious", 1600)
-            buddy.hop(42)
-            buddy.lookAtBubble(22, 6)
+            if (buddy.react("curious", 1600, 2, 42))
+                buddy.lookAtBubble(22, 6)
             if (BuddySound)
                 BuddySound.play("pop")
         }
@@ -1878,7 +1906,7 @@ Item {
         id: approvalNudge
         interval: 6000
         repeat: true
-        onTriggered: { buddy.setMood("curious", 1200); buddy.hop(48) }
+        onTriggered: buddy.react("curious", 1200, 4, 48)
     }
 
     Component.onCompleted: computeEyePoses()

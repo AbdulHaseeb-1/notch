@@ -24,6 +24,31 @@ Item {
 
     implicitWidth: 240
     implicitHeight: 32
+    activeFocusOnTab: true
+    focus: false
+    Accessible.role: Accessible.PageTabList
+    Accessible.name: qsTr("Section")
+    Accessible.description: {
+        const i = currentIndex
+        return i >= 0 && i < options.length ? String(options[i].label) : ""
+    }
+    Keys.onLeftPressed: (event) => { move(-1); event.accepted = true }
+    Keys.onRightPressed: (event) => { move(1); event.accepted = true }
+    Keys.onReturnPressed: (event) => { event.accepted = true }
+    function move(delta) {
+        if (options.length === 0) return
+        const i = currentIndex < 0 ? 0 : (currentIndex + delta + options.length) % options.length
+        picked(options[i].value)
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: height / 2
+        color: "transparent"
+        border.width: seg.activeFocus ? 1 : 0
+        border.color: Theme.focusRing
+        z: 2
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -75,6 +100,10 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    Accessible.role: Accessible.PageTab
+                    Accessible.name: String(cell.modelData.label || "")
+                    Accessible.checkable: true
+                    Accessible.checked: cell.selected
                     onClicked: seg.picked(cell.modelData.value)
                 }
             }

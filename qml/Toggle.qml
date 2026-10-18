@@ -11,6 +11,24 @@ Item {
     implicitWidth: 40
     implicitHeight: 22
     opacity: enabled2 ? 1 : 0.4
+    activeFocusOnTab: enabled2
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: qsTr("Toggle")
+    Accessible.checkable: true
+    Accessible.checked: checked
+    Accessible.onToggleAction: if (enabled2) { checked = !checked; toggled(checked) }
+    Keys.onSpacePressed: (event) => {
+        if (!enabled2) return
+        checked = !checked
+        toggled(checked)
+        event.accepted = true
+    }
+    Keys.onReturnPressed: (event) => {
+        if (!enabled2) return
+        checked = !checked
+        toggled(checked)
+        event.accepted = true
+    }
 
     Rectangle {
         id: track
@@ -18,9 +36,10 @@ Item {
         radius: height / 2
         color: toggle.checked ? (hit.containsMouse ? Theme.accentHover : Theme.accent)
                                : (hit.containsMouse ? Theme.stone600 : Theme.stone650)
-        border.width: toggle.checked ? 0 : 1
-        // Stronger rim so the off state still reads on raised cards.
-        border.color: hit.containsMouse ? Theme.stone400 : Theme.stone500
+        border.width: (toggle.checked && !toggle.activeFocus) ? 0 : 1
+        // Stronger rim so the off state still reads on raised cards; accent when keyed.
+        border.color: toggle.activeFocus ? Theme.accent
+                    : (hit.containsMouse ? Theme.stone400 : Theme.stone500)
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 
