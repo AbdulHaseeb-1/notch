@@ -79,6 +79,50 @@ Agent SDK deny reason.
 - **Max turns:** after 12 tool rounds the run stops and says so (as with
   `max_turns` in the OpenAI Agents SDK).
 
+## Streaming
+
+With *Stream replies* on (Settings, Buddy, Agent behaviour), Anthropic and
+OpenAI-compatible requests set `stream: true`. OpenAI also gets
+`stream_options.include_usage`. Ollama stays buffered. `StreamAccumulator`
+parses the SSE events and rebuilds the same JSON a buffered reply would have
+had, so the tool loop, guardrails and traces are unchanged. The live text is
+redacted before it reaches the UI and is coalesced to one update every 40 ms.
+Several cases fall back or fail safe:
+- A non-2xx reply, or a server that ignores `stream`, falls back to the
+  buffered path.
+- A stream `error` event is retried like a 5xx/529.
+- A stream that closes before the model finished (no `message_stop` or
+  `[DONE]`, and no stop reason) is retried and never used as the answer.
+- Cancel aborts the request and clears the live text.
+
+## Handoffs and specialists
+
+Following the OpenAI Agents SDK, handoffs are tools: Buddy is offered
+`transfer_to_research` and `transfer_to_code`.
+
+| Agent | Tools |
+| --- | --- |
+| Buddy | everything the user enabled |
+| Research specialist | `web_search`, `web_fetch`, `memory`, `todo_write`, `advisor` |
+| Code specialist | `glob_grep`, `str_replace_editor`, `bash`, `todo_write`, `memory` |
+
+A specialist can only hand back with `transfer_to_buddy`. Its toolset is
+enforced twice: in the request, where other tools are not offered, and in the
+gate, where an out-of-set call is denied with rule `agent:toolset`. The
+permission policy still applies to everything a specialist runs. Each handoff
+is a span in the trace. Every run, and every cancel, starts back at Buddy. The
+whole feature can be turned off with *Specialist handoffs*.
+
+## Session memory
+
+Earlier turns of the conversation are sent within a 24 000-character budget.
+Older turns are folded into one short "[Session memory] Earlier in this
+session I asked about: …" note instead of being dropped silently. When the
+memory tool is on, the system prompt lists up to 16 saved `/memories` files
+(the Claude Agent SDK memory-tool pattern). This list is taken once at the
+start of a run, so the system prompt stays byte-identical across turns and the
+prompt cache survives memory writes.
+
 ## Error recovery
 
 The provider retries HTTP 408/409/425/429/500/502/503/504/529 and dropped or

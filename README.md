@@ -112,7 +112,7 @@ cmake --build build
 | File | What it does |
 | --- | --- |
 | `qml/Main.qml` | Window, notch, reveal/auto-hide, resize, tooltip, context menu, click-through mask |
-| `qml/SettingsPanel.qml` | Settings flyout (General / Apps tabs; scrolls on short screens) |
+| `qml/SettingsPanel.qml` | Settings flyout (General / Apps / Buddy tabs; scrolls on short screens) |
 | `qml/Flyout.qml` | The spring-animated glass card every flyout and menu sits in |
 | `qml/HubPanel.qml` | The hub card: tab strip and the Timer / Clipboard pages |
 | `qml/FocusTimer.qml`, `qml/TimerView.qml`, `qml/TimerPill.qml` | Focus timer: logic, panel page and the live pill |
@@ -125,7 +125,9 @@ cmake --build build
 | `qml/icons/*.svg`, `src/IconSet.*`, `tools/build_icons.py` | SVG icon set, its loader, and the generator |
 | `qml/ToolStepRow.qml`, `ToolStepCard.qml`, `ToolTraceBar.qml`, `ToolStatusIcon.qml`, `ToolApprovalCard.qml` | Agent tool-call UI: live rows, trace cards, trace header, approval card |
 | `qml/BuddyBubble.qml`, `qml/BuddyPanel.qml`, `qml/Buddy.qml` | Desktop buddy: speech bubble (chat, trace, history), expanded panel, the character |
-| `src/BuddyProvider.*` | Buddy's model client and agent tool loop |
+| `src/BuddyProvider.*` | Buddy's model client and agent tool loop (streaming, handoffs, session memory) |
+| `src/StreamAccumulator.*` | SSE parser that rebuilds a streamed reply into the buffered response JSON |
+| `src/QmlSingletons.h` | Registers the backend objects as typed QML singletons (`Media`, `BuddyAgent`, `Dock`, …) |
 | `src/AgentPolicy.*` | Tool permission policy, secret redaction, injection heuristics (see `docs/agent-safety.md`) |
 | `qml/Toggle.qml`, `Segmented.qml`, `SizeSlider.qml`, `MenuRow.qml`, `MoreButton.qml`, `Glyph.qml` | Controls |
 | `src/DockController.*` | Pinned apps: discovery, persistence, launching, running detection, start-up entry |
@@ -159,6 +161,10 @@ cmake --build build-tests && ctest --test-dir build-tests
 
 `tst_agentpolicy` covers the permission policy, redaction and injection checks.
 `tst_iconset` checks that every SVG icon parses into usable path data.
-`tst_buddyagent` drives the real agent loop against a fake Anthropic server
-(deny, approve, reject, plan/bypass modes, 529 retry, redaction, compaction,
-loop guard, cancel during an approval).
+`tst_stream` checks the SSE parser (Anthropic events and OpenAI chunks, any
+chunking, cut-off tool input, error events, completeness).
+`tst_buddyagent` drives the real agent loop against a fake Anthropic/OpenAI
+server: deny, approve, reject, plan/bypass modes, 529 retry, redaction,
+compaction, loop guard, cancel during an approval, streamed text and tool
+calls, cancel mid-stream, stream error and truncation retries, specialist
+handoffs and their toolsets, session memory, and the per-run memory index.
