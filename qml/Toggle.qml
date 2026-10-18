@@ -1,6 +1,6 @@
 import QtQuick
 
-// Pill switch: white track + black knob when on (Grok style).
+// Pill switch: light stone track + dark knob when on, recessed stone when off.
 Item {
     id: toggle
     property bool checked: false
@@ -16,7 +16,10 @@ Item {
         id: track
         anchors.fill: parent
         radius: height / 2
-        color: toggle.checked ? Theme.accent : (hit.containsMouse ? Theme.press : Theme.border)
+        color: toggle.checked ? (hit.containsMouse ? Theme.accentHover : Theme.accent)
+                               : (hit.containsMouse ? Theme.stone600 : Theme.stone650)
+        border.width: toggle.checked ? 0 : 1
+        border.color: Theme.glassBorder
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 
@@ -27,7 +30,7 @@ Item {
         radius: width / 2
         y: 3
         x: toggle.checked ? parent.width - width - 3 : 3
-        color: toggle.checked ? Theme.inverse : Theme.text
+        color: toggle.checked ? Theme.inverse : Theme.stone300
         scale: hit.pressed ? 0.88 : 1
         Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on color { ColorAnimation { duration: 150 } }

@@ -1,6 +1,6 @@
 import QtQuick
 
-// Segmented control with a sliding white highlight.
+// Segmented control: recessed stone well with a sliding light-stone thumb.
 Item {
     id: seg
     property var options: []          // [{ label, value }]
@@ -27,8 +27,8 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: height / 2
-        color: Theme.raised
-        border.color: Theme.borderSoft
+        color: Theme.field
+        border.color: Theme.glassBorder
         border.width: 1
     }
 
@@ -64,7 +64,7 @@ Item {
                     text: cell.modelData.label
                     color: cell.selected ? Theme.inverse : (cellHit.containsMouse ? Theme.text : Theme.textDim)
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     font.weight: cell.selected ? Font.Bold : Font.Medium
                     Behavior on color { ColorAnimation { duration: 160 } }
                 }

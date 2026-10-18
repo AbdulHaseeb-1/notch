@@ -1,13 +1,14 @@
 import QtQuick
 
-// Solid, opaque surface for the notch, its pills, flyouts and menus.
-// Replaces the old translucent glass/sheen/rim-light effect with a crisp,
-// lightweight flat surface and subtle border.
+// Dark stone surface for the notch, its pills, flyouts and menus: one
+// near-opaque rectangle (Theme.surfaceAlpha) with a faint white hairline, so
+// panels read as smoked glass over the desktop without any blur, layer or
+// shader cost.
 Item {
     id: glass
 
 
-    property real radius: 22
+    property real radius: Theme.radiusXl
     property color tint: Theme.surface
     property color edge: "transparent"
     property bool shadowEnabled: false
@@ -17,9 +18,9 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: glass.r
-        color: Qt.rgba(glass.tint.r, glass.tint.g, glass.tint.b, 1.0)
+        color: Qt.rgba(glass.tint.r, glass.tint.g, glass.tint.b, Theme.surfaceAlpha)
         border.width: glass.edge.a > 0 ? 1.5 : 1
-        border.color: glass.edge.a > 0 ? glass.edge : Theme.border
+        border.color: glass.edge.a > 0 ? glass.edge : Theme.glassBorderStrong
         Behavior on border.color { ColorAnimation { duration: 150 } }
     }
 }

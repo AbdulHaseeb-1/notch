@@ -8,18 +8,19 @@ Flyout {
 
     objectName: "musicFlyout"
     open: root.musicOpen
-    radius: 28
+    radius: Theme.radiusXl + 4
     baseY: root.shownY + root.pillH + 12
 
     width: musicPanel.implicitWidth
     height: musicPanel.implicitHeight
-    x: Math.round(Math.max(12, (root.width - width) / 2))
+    x: Math.round(Math.max(Theme.screenMargin, (root.width - width) / 2))
 
     readonly property real targetHeight: musicPanel.targetHeight
 
     MusicPanel {
         id: musicPanel
         anchors.fill: parent
+        maxPanelWidth: root.width
         onCloseRequested: root.musicOpen = false
         onAddRequested: musicDialog.open()
         onToastRequested: (text) => root.showToast(text)

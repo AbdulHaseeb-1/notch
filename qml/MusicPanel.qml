@@ -111,7 +111,8 @@ Item {
     readonly property real artBezelW: artInnerW + 26
     readonly property real artBezelH: artInnerH + 26
 
-    implicitWidth: 380
+    property real maxPanelWidth: 100000
+    implicitWidth: Theme.fit(Theme.musicWidth, maxPanelWidth)
     readonly property real targetQueueHeight: panel.queueOpen && player.count > 0 && media.source !== "system"
                                               ? Math.min(player.count * 38 - 2, 176) + 18 : 0
     readonly property real targetHeight: body.implicitHeight - queueBox.height + targetQueueHeight

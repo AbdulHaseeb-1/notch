@@ -22,6 +22,7 @@ Flyout {
     PaletteCard {
         id: paletteCard
         anchors.fill: parent
+        maxPanelWidth: root.width
         onDismissed: root.closePalette()
     }
 }

@@ -722,7 +722,7 @@ Item {
         border.color: !buddy.solidRing ? "transparent"
                     : (buddy.mood === "error" ? Theme.danger
                     : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? Theme.accent
-                    : (buddyHit.containsMouse || buddy.session === "input" ? Theme.accent : "#2c2c35")))
+                    : (buddyHit.containsMouse || buddy.session === "input" ? Theme.accent : Theme.borderStrong)))
         Behavior on border.color { ColorAnimation { duration: 140 } }
 
         rotation: Math.max(-14, Math.min(14, buddy.gazeRoll * 0.55 + buddy.dragVelX * 0.18))
@@ -758,7 +758,7 @@ Item {
                 id: eyeLPill
                 anchors.fill: parent
                 radius: width / 2
-                color: buddy.mood === "love" ? "#ffd1e3"
+                color: buddy.mood === "love" ? Theme.loveSoft
                      : (buddy.mood === "error" ? Theme.danger
                      : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
@@ -802,7 +802,7 @@ Item {
                 id: eyeRPill
                 anchors.fill: parent
                 radius: width / 2
-                color: buddy.mood === "love" ? "#ffd1e3"
+                color: buddy.mood === "love" ? Theme.loveSoft
                      : (buddy.mood === "error" ? Theme.danger
                      : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
@@ -843,7 +843,7 @@ Item {
         id: ring
         property real midR: 30          // centre line of the stroke
         property real thickness: 2
-        property var stops: ["#3ee8ff", "#8b6cff", "#ff4fd8", "#ffb36b"]
+        property var stops: Theme.ringColors
         readonly property real outerR: midR + thickness / 2
         preferredRendererType: Shape.CurveRenderer
         ShapePath {

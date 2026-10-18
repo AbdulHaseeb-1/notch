@@ -1,6 +1,6 @@
 import QtQuick
 
-// Thin X-style slider: grey track, white fill, white knob that grows on hover.
+// Thin slider: recessed stone track, light-stone fill and a knob that grows on hover.
 Item {
     id: slider
     property real from: 0
@@ -27,7 +27,7 @@ Item {
         width: parent.width
         height: 4
         radius: 2
-        color: Theme.border
+        color: Theme.stone650
     }
 
     Rectangle {

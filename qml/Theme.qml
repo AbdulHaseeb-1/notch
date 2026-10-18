@@ -85,6 +85,9 @@ QtObject {
     readonly property color warning: "#d8b46e"
     readonly property color success: "#9cbf8e"
     readonly property color successSoft: "#1f9cbf8e"
+    // Muted rose for the 'thank Buddy' heart and love mood (only warm hue).
+    readonly property color love: "#d99aa8"
+    readonly property color loveSoft: "#f0d2d8"
     readonly property color running: "#d9d2c7"       // live tool steps: lit stone
 
     // The buddy's halo: four stops around the ring, in stone and warm silver.
@@ -133,5 +136,27 @@ QtObject {
     // Clamp a preferred width into the available screen width.
     function fit(preferred, available) {
         return Math.round(Math.max(280, Math.min(preferred, available - 2 * screenMargin)))
+    }
+
+    // ---- shared helpers for the agent trace UI ------------------------------
+    function formatDuration(ms) {
+        const n = Number(ms || 0)
+        if (n <= 0) return ""
+        if (n < 1000) return Math.round(n) + "ms"
+        if (n < 60000) return (n / 1000).toFixed(1) + "s"
+        return Math.floor(n / 60000) + "m " + Math.round((n % 60000) / 1000) + "s"
+    }
+    function statusColor(status) {
+        return status === "error" ? danger
+             : status === "running" ? running
+             : status === "denied" ? warning
+             : status === "pending" ? warning
+             : success
+    }
+    function statusIcon(status) {
+        return status === "error" ? "x-circle"
+             : status === "denied" ? "shield-alert"
+             : status === "pending" ? "hand"
+             : "check-circle"
     }
 }

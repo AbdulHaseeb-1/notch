@@ -15,7 +15,9 @@ Item {
     signal toastRequested(string text)
 
 
-    implicitWidth: 368
+    // Wider hub (timer + clipboard history), clamped to the screen.
+    property real maxPanelWidth: 100000
+    implicitWidth: Theme.fit(Theme.hubWidth, maxPanelWidth)
     // The size the card is heading for, for the click-through mask: using the
     // animated height would rebuild the window mask on every frame.
     readonly property real targetBodyHeight: Math.min(pageHeight(tab), maxBodyHeight)
