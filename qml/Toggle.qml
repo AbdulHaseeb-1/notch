@@ -19,7 +19,8 @@ Item {
         color: toggle.checked ? (hit.containsMouse ? Theme.accentHover : Theme.accent)
                                : (hit.containsMouse ? Theme.stone600 : Theme.stone650)
         border.width: toggle.checked ? 0 : 1
-        border.color: Theme.glassBorder
+        // Stronger rim so the off state still reads on raised cards.
+        border.color: hit.containsMouse ? Theme.stone400 : Theme.stone500
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 

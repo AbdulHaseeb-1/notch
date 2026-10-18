@@ -22,7 +22,7 @@ MAP = {
     "up": "chevron-up", "down": "chevron-down", "chevron-down": "chevron-down",
     "power": "power", "reset": "rotate-ccw", "settings": "settings-2", "list": "list",
     "play": "play", "pause": "pause", "prev": "skip-back", "next": "skip-forward",
-    "stop": "square", "note": "music-2", "notes": "music", "heart": "heart",
+    "stop": "square", "note": "music-2", "text": "text", "notes": "music", "heart": "heart",
     "volume": "volume-2", "mute": "volume-x", "shuffle": "shuffle", "repeat": "repeat",
     "more": "ellipsis", "edit": "pencil", "activity": "activity", "timer": "timer",
     "clipboard": "clipboard", "wifi": "wifi", "bluetooth": "bluetooth", "moon": "moon",

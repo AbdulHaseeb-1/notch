@@ -200,7 +200,9 @@ Item {
                 required property var modelData
 
                 width: list.width
-                height: view.rowH
+                // Size to the content so one- and two-line clips get the
+                // same padding (fixed rows left uneven gaps).
+                height: Math.max(view.rowH - 10, rowText.implicitHeight + 20)
                 readonly property bool hot: rowHover.hovered
 
                 HoverHandler { id: rowHover; cursorShape: Qt.PointingHandCursor }
@@ -212,7 +214,7 @@ Item {
                     if (/^(\$ |>|git |npm |cmake |cd |ls |dir |python|pip |winget )/.test(t)
                             || /[{};]\s*$/.test(t)) return "terminal"
                     if (row.modelData.lines > 1) return "doc"
-                    return "note"
+                    return "text"
                 }
 
                 // Glass row: transparent at rest, lifted on hover.
@@ -246,6 +248,7 @@ Item {
                 }
 
                 Column {
+                    id: rowText
                     anchors.left: kindTile.right
                     anchors.leftMargin: 11
                     anchors.right: actions.left

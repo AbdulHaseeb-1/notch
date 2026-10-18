@@ -159,4 +159,19 @@ QtObject {
              : status === "pending" ? "hand"
              : "check-circle"
     }
+
+    // Generic SVG glyph for an app with no icon yet (letters read as noise
+    // on dark stone). Shared by the dock, Settings lists and the palette.
+    function appGlyph(appName) {
+        const n = String(appName || "").toLowerCase()
+        if (/chrome|edge|firefox|browser|brave|opera|safari|vivaldi/.test(n)) return "globe"
+        if (/terminal|powershell|cmd|console|wsl|shell/.test(n)) return "terminal"
+        if (/code|studio|idea|vim|sublime|cursor|rider|zed/.test(n)) return "code"
+        if (/explorer|files|finder|folder|nautilus/.test(n)) return "folder"
+        if (/spotify|music|itunes|vlc|player|winamp/.test(n)) return "music"
+        if (/notepad|word|notes|obsidian|onenote|writer/.test(n)) return "doc"
+        if (/settings|control panel/.test(n)) return "settings"
+        if (/mail|outlook|thunderbird|slack|discord|teams|telegram|whatsapp/.test(n)) return "chat"
+        return "app"
+    }
 }

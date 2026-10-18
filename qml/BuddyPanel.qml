@@ -350,7 +350,12 @@ Item {
                 Text {
                     width: parent.width
                     visible: panel.kind === "chat"
-                    text: panel.phase === "loading" ? panel.thinkPhrases[panel.thinkStep]
+                    text: panel.phase === "loading"
+                          ? (panel.awaitingApproval ? qsTr("Paused on one step")
+                             : panel.hasLive ? qsTr("Answering live")
+                             : (BuddyAgent.activeAgent !== "buddy" && BuddyAgent.activeAgentTitle.length > 0)
+                               ? qsTr("%1 is on it").arg(BuddyAgent.activeAgentTitle)
+                             : panel.thinkPhrases[panel.thinkStep])
                         : (panel.isStreaming ? qsTr("Speaking…")
                         : (BuddyAgent && BuddyAgent.model ? BuddyAgent.model : qsTr("Companion")))
                     color: Theme.textDim
@@ -1008,6 +1013,7 @@ Item {
 
                             // Copy button
                             Rectangle {
+                                id: pCopyBtn
                                 width: copyRow.implicitWidth + 16
                                 height: 24
                                 radius: 12
@@ -1053,6 +1059,7 @@ Item {
 
                             // Retry button
                             Rectangle {
+                                id: pRetryBtn
                                 width: retryActionRow.implicitWidth + 16
                                 height: 24
                                 radius: 12
@@ -1090,6 +1097,7 @@ Item {
 
                             // Love / Thank Buddy reaction button
                             Rectangle {
+                                id: pLoveBtn
                                 width: loveRow.implicitWidth + 16
                                 height: 24
                                 radius: 12
@@ -1135,9 +1143,14 @@ Item {
 
                             // Anthropic Agent SDK Telemetry Badge on the right of actionRow
                             Rectangle {
+                                id: pMetaChip
                                 visible: panel.hasSdkTelemetry
                                 height: 24
-                                width: pSdkMetaRow.implicitWidth + 14
+                                // Whatever the three buttons leave; the text
+                                // elides instead of running off the card.
+                                readonly property real room: Math.max(64, actionRow.parent.width - 24 - pCopyBtn.width
+                                                                      - pRetryBtn.width - pLoveBtn.width - 3 * actionRow.spacing)
+                                width: Math.min(pSdkMetaRow.implicitWidth + 14, room)
                                 radius: 12
                                 color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.04)
                                 border.width: 1
@@ -1168,6 +1181,8 @@ Item {
                                             if (Number(m.durationMs || 0) > 0) parts.push(panel.formatDuration(m.durationMs))
                                             return parts.join(" · ")
                                         }
+                                        width: Math.min(implicitWidth, pMetaChip.room - 14 - 15)
+                                        elide: Text.ElideRight
                                         color: Theme.textDim
                                         font.family: "Consolas"
                                         font.pixelSize: 10

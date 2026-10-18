@@ -114,18 +114,7 @@ Item {
             border.width: 1
             border.color: Theme.tileEdge
 
-            readonly property string kind: {
-                const n = String(item.modelData.name || "").toLowerCase()
-                if (/chrome|edge|firefox|browser|brave|opera|safari|vivaldi/.test(n)) return "globe"
-                if (/terminal|powershell|cmd|console|wsl|shell/.test(n)) return "terminal"
-                if (/code|studio|idea|vim|sublime|cursor|rider|zed/.test(n)) return "code"
-                if (/explorer|files|finder|folder|nautilus/.test(n)) return "folder"
-                if (/spotify|music|itunes|vlc|player|winamp/.test(n)) return "music"
-                if (/notepad|word|notes|obsidian|onenote|writer/.test(n)) return "doc"
-                if (/settings|control panel/.test(n)) return "settings"
-                if (/mail|outlook|thunderbird/.test(n)) return "chat"
-                return "app"
-            }
+            readonly property string kind: Theme.appGlyph(item.modelData.name)
 
             Glyph {
                 anchors.centerIn: parent

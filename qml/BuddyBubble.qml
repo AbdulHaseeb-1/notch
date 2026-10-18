@@ -281,7 +281,7 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: (awaitingApproval || hasLive) ? 460
+    readonly property real thinkW: (awaitingApproval || hasLive || (hasTools && specialist.length > 0)) ? 460
                                  : (hasTools || activeToolSummary.length > 0)
                                  ? 420
                                  : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
@@ -1371,16 +1371,51 @@ Item {
                             elide: Text.ElideRight
                         }
 
-                        Text {
+                        Row {
                             id: stepCountText
                             visible: tb.hasTools || tb.specialist.length > 0
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            text: (tb.specialist.length > 0 ? tb.specialist + "  ·  " : "")
-                                  + (tb.toolSteps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(tb.toolSteps.length))
-                            color: Theme.textFaint
-                            font.family: Theme.monoFont
-                            font.pixelSize: Theme.fontXs
+                            spacing: 8
+
+                            // Which specialist owns the run after a handoff.
+                            Rectangle {
+                                visible: tb.specialist.length > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: specialistRow.implicitWidth + 14
+                                height: 20
+                                radius: 10
+                                color: Theme.tile
+                                border.width: 1
+                                border.color: Theme.border
+                                Row {
+                                    id: specialistRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    Glyph {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        name: "handoff"
+                                        size: 11
+                                        color: Theme.accent
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: tb.specialist
+                                        color: Theme.ink
+                                        font.family: Theme.font
+                                        font.pixelSize: Theme.fontXs
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
+                            Text {
+                                visible: tb.hasTools
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: tb.toolSteps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(tb.toolSteps.length)
+                                color: Theme.textFaint
+                                font.family: Theme.monoFont
+                                font.pixelSize: Theme.fontXs
+                            }
                         }
                     }
 

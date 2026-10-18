@@ -240,7 +240,7 @@ Item {
                     Glyph {
                         anchors.centerIn: parent
                         visible: !rowIcon.visible
-                        name: row.modelData.icon || "plus"
+                        name: row.modelData.icon || ((row.modelData.kind === "app" || row.modelData.kind === "window") ? Theme.appGlyph(row.modelData.title) : "plus")
                         size: 17
                         stroke: 1.9
                         color: Theme.text

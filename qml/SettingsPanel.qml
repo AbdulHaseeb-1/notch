@@ -1042,13 +1042,12 @@ Item {
                                         color: Theme.tile
                                         border.width: 1
                                         border.color: Theme.border
-                                        Text {
+                                        Glyph {
                                             anchors.centerIn: parent
-                                            text: (appRow.modelData.name || "?").charAt(0).toUpperCase()
-                                            color: Theme.ink
-                                            font.family: Theme.font
-                                            font.pixelSize: 11
-                                            font.weight: Font.Bold
+                                            name: Theme.appGlyph(appRow.modelData.name)
+                                            size: Math.round(parent.height * 0.58)
+                                            stroke: 1.6
+                                            color: Theme.inkSoft
                                         }
                                     }
                                 }
@@ -1294,13 +1293,12 @@ Item {
                                         color: Theme.tile
                                         border.width: 1
                                         border.color: Theme.border
-                                        Text {
+                                        Glyph {
                                             anchors.centerIn: parent
-                                            text: (candRow.modelData.name || "?").charAt(0).toUpperCase()
-                                            color: Theme.ink
-                                            font.family: Theme.font
-                                            font.pixelSize: 11
-                                            font.weight: Font.Bold
+                                            name: Theme.appGlyph(candRow.modelData.name)
+                                            size: Math.round(parent.height * 0.58)
+                                            stroke: 1.6
+                                            color: Theme.inkSoft
                                         }
                                     }
                                 }

@@ -255,7 +255,7 @@ Item {
                         height: 7
                         radius: 3.5
                         anchors.verticalCenter: parent.verticalCenter
-                        color: panel.dynAccent
+                        color: Media.hasTrack ? panel.dynAccent : Theme.textFaint
                         Behavior on color { ColorAnimation { duration: 280 } }
 
                         SequentialAnimation on opacity {
@@ -281,7 +281,7 @@ Item {
                         width: Math.min(implicitWidth, maxLabelWidth)
                         text: Media.sourceName && Media.sourceName.length > 0
                               ? Media.sourceName.toUpperCase()
-                              : qsTr("NOW PLAYING")
+                              : (Media.hasTrack ? qsTr("NOW PLAYING") : qsTr("MUSIC"))
                         color: Theme.ink
                         font.family: Theme.font
                         font.pixelSize: 10
