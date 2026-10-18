@@ -16,6 +16,8 @@ Flyout {
     x: Math.round(Math.max(Theme.screenMargin, (root.width - width) / 2))
 
     readonly property real targetHeight: settings.targetHeight
+    // Lets Main open Settings on a given tab (0 General, 1 Apps, 2 Buddy).
+    property alias tab: settings.tab
 
     SettingsPanel {
         id: settings

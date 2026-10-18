@@ -314,7 +314,7 @@ Window {
             revealed = true
         paletteOpen = true
         root.requestActivate()
-        paletteCard.takeFocus()
+        paletteFlyout.takeFocus()
     }
 
     function closePalette() {
@@ -723,7 +723,7 @@ Window {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    settings.tab = 1
+                                    panelItem.tab = 1
                                     root.panelOpen = true
                                 }
                             }
