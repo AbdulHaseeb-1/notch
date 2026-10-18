@@ -99,6 +99,28 @@ QJsonArray lastToolResults(const QList<QJsonObject> &reqs)
     return out;
 }
 
+QByteArray openAiToolCall(const QString &id, const QString &command)
+{
+    QJsonObject fn{ { "name", "bash" },
+                    { "arguments", QString::fromUtf8(QJsonDocument(QJsonObject{ { "command", command } }).toJson(QJsonDocument::Compact)) } };
+    QJsonObject msg{ { "role", "assistant" }, { "content", QJsonValue::Null },
+                     { "tool_calls", QJsonArray{ QJsonObject{ { "id", id }, { "type", "function" }, { "function", fn } } } } };
+    QJsonObject r{ { "id", "chatcmpl-1" }, { "object", "chat.completion" },
+                   { "choices", QJsonArray{ QJsonObject{ { "index", 0 }, { "message", msg }, { "finish_reason", "tool_calls" } } } },
+                   { "usage", QJsonObject{ { "prompt_tokens", 100 }, { "completion_tokens", 10 },
+                                           { "prompt_tokens_details", QJsonObject{ { "cached_tokens", 64 } } } } } };
+    return QJsonDocument(r).toJson(QJsonDocument::Compact);
+}
+
+QByteArray openAiText(const QString &t)
+{
+    QJsonObject r{ { "id", "chatcmpl-2" }, { "object", "chat.completion" },
+                   { "choices", QJsonArray{ QJsonObject{ { "index", 0 },
+                        { "message", QJsonObject{ { "role", "assistant" }, { "content", t } } }, { "finish_reason", "stop" } } } },
+                   { "usage", QJsonObject{ { "prompt_tokens", 50 }, { "completion_tokens", 5 } } } };
+    return QJsonDocument(r).toJson(QJsonDocument::Compact);
+}
+
 } // namespace
 
 class TstBuddyAgent : public QObject
@@ -256,6 +278,23 @@ private slots:
         QCOMPARE(steps.size(), 3);
         QCOMPARE(steps.at(1).toMap().value("status").toString(), QStringLiteral("done"));
         QCOMPARE(steps.at(2).toMap().value("status").toString(), QStringLiteral("denied"));
+    }
+
+    void openAiFormatDenyAndCachedTokens() {
+        bp->setProvider("openai");
+        bp->setApiBase(fake->base() + "/v1");
+        fake->queue = { { 200, openAiToolCall("call_1", "format c: /q") }, { 200, openAiText("not doing that") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("wipe c");
+        QVERIFY(ready.wait(5000));
+        QCOMPARE(fake->requests.size(), 2);
+        const QJsonArray msgs = fake->requests.constLast().value("messages").toArray();
+        const QJsonObject toolMsg = msgs.last().toObject();
+        QCOMPARE(toolMsg.value("role").toString(), QStringLiteral("tool"));
+        QCOMPARE(toolMsg.value("tool_call_id").toString(), QStringLiteral("call_1"));
+        QVERIFY(toolMsg.value("content").toString().contains("Permission denied"));
+        QCOMPARE(bp->responseMeta().value("cachedTokens").toInt(), 64);
+        QVERIFY(!fake->requests.first().value("system").isArray());   // cache markers are Anthropic-only
     }
 
     void cancelDuringApprovalStopsRun() {
