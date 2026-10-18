@@ -65,6 +65,7 @@ Window {
         property string buddyWorkspaceRoot: ""
         property bool buddyRedactSecrets: true
         property bool buddyKeepTraces: true
+        property bool buddyStreamReplies: true
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
         property real buddySfxVolume: 0.75
@@ -80,7 +81,7 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
-        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces,
+        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
@@ -1126,6 +1127,7 @@ Window {
     Binding { target: buddyProvider; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
     Binding { target: buddyProvider; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
     Binding { target: buddyProvider; property: "keepTraces"; value: cfg.buddyKeepTraces }
+    Binding { target: buddyProvider; property: "streamReplies"; value: cfg.buddyStreamReplies }
     Binding { target: buddySfx; property: "enabled"; value: cfg.buddySfxEnabled }
     Binding { target: buddySfx; property: "volume"; value: cfg.buddySfxVolume }
     Binding { target: buddySfx; property: "style"; value: cfg.buddySfxStyle }

@@ -47,6 +47,11 @@ Item {
     readonly property var citations: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.citations : []
     readonly property var pendingApproval: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    // Live streamed answer text while the model is still writing.
+    readonly property string liveText: (typeof buddyProvider !== "undefined" && buddyProvider && buddyProvider.streaming)
+                                       ? String(buddyProvider.streamText).replace(/\*\*|`/g, "") : ""
+    readonly property bool hasLive: liveText.length > 0 && phase === "thinking"
+    readonly property real liveH: hasLive ? Math.min(liveBody.implicitHeight, 168) + 22 : 0
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
     readonly property bool hasAdvisor: !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
@@ -272,7 +277,7 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: awaitingApproval ? 460
+    readonly property real thinkW: (awaitingApproval || hasLive) ? 460
                                  : (hasTools || activeToolSummary.length > 0)
                                  ? 420
                                  : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
@@ -280,6 +285,7 @@ Item {
                                  ? (rowH + Math.min(toolSteps.length, 4) * 31 + 10)
                                  : rowH)
                                  + (awaitingApproval ? approvalCard.implicitHeight + 10 : 0)
+                                 + (hasLive ? liveH + 6 : 0)
     readonly property real noteW: 46 + noteLabel.implicitWidth + 18
     readonly property real errorH: 16 + errText.implicitHeight + 12 + 28 + 14
     readonly property real histW: 420
@@ -1424,6 +1430,47 @@ Item {
                             required property var modelData
                             width: parent.width
                             step: modelData
+                        }
+                    }
+                }
+
+                // Live answer: streamed text in a transparent well that keeps
+                // the newest line in view, with a soft caret.
+                Rectangle {
+                    id: liveWell
+                    visible: tb.hasLive
+                    x: 10
+                    y: tb.thinkH - tb.liveH - 8
+                    width: parent.width - 20
+                    height: tb.liveH
+                    radius: Theme.radiusMd
+                    color: Theme.glassFill
+                    border.width: 1
+                    border.color: Theme.glassBorder
+                    clip: true
+
+                    Text {
+                        id: liveBody
+                        x: 12
+                        width: parent.width - 24
+                        // Pin to the bottom once the text outgrows the well.
+                        y: Math.min(11, parent.height - 11 - implicitHeight)
+                        text: tb.liveText + " \u258F"
+                        textFormat: Text.PlainText
+                        color: Theme.text
+                        font.family: Theme.font
+                        font.pixelSize: Theme.fontBase + 1
+                        lineHeight: 1.18
+                        wrapMode: Text.Wrap
+                    }
+                    // Fade the clipped top edge into the glass.
+                    Rectangle {
+                        visible: liveBody.y < 0
+                        width: parent.width
+                        height: 22
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: Theme.surface }
+                            GradientStop { position: 1; color: "transparent" }
                         }
                     }
                 }

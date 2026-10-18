@@ -41,6 +41,11 @@ Item {
     property real bodyH: 356
     readonly property var pendingApproval: buddyProvider ? buddyProvider.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    readonly property string liveText: (buddyProvider && buddyProvider.streaming)
+                                       ? String(buddyProvider.streamText).replace(/\*\*|`/g, "") : ""
+    readonly property bool hasLive: liveText.length > 0 && phase === "loading"
+    // Room the loading view gives up for approval cards or live text.
+    readonly property bool compactLoading: awaitingApproval || hasLive
     property bool userResized: false
     readonly property bool interacting: dragHit.pressed || resizeHit.pressed
 
@@ -48,6 +53,7 @@ Item {
     property string fullResponse: payload && payload.response ? String(payload.response) : ""
     property int revealedChars: 0
     property bool isStreaming: false
+    property bool instantReveal: false   // set by Buddy when the reply was streamed live
     property bool responseLoved: false
     property bool copiedFeedback: false
     property int thinkStep: 0
@@ -90,7 +96,13 @@ Item {
         responseLoved = false
         copiedFeedback = false
         toolsExpanded = false
-        if (kind === "chat" && fullResponse.length > 0) {
+        if (kind === "chat" && fullResponse.length > 0 && instantReveal) {
+            // Already read live while it streamed: show it whole.
+            instantReveal = false
+            revealedChars = fullResponse.length
+            isStreaming = false
+            streamTimer.stop()
+        } else if (kind === "chat" && fullResponse.length > 0) {
             revealedChars = 0
             isStreaming = true
             streamTimer.restart()
@@ -373,7 +385,7 @@ Item {
                     id: chipLabel
                     anchors.centerIn: parent
                     text: panel.phase === "error" ? qsTr("Failed")
-                        : (panel.phase === "loading" ? (panel.awaitingApproval ? qsTr("Needs you") : qsTr("Thinking…"))
+                        : (panel.phase === "loading" ? (panel.awaitingApproval ? qsTr("Needs you") : panel.hasLive ? qsTr("Writing…") : qsTr("Thinking…"))
                         : (panel.isStreaming ? qsTr("Live") : qsTr("Ready")))
                     color: panel.phase === "error" ? Theme.danger
                         : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.success)
@@ -465,13 +477,13 @@ Item {
 
                 Column {
                     anchors.centerIn: parent
-                    anchors.verticalCenterOffset: panel.userPrompt.length > 0 ? (panel.awaitingApproval ? 24 : 18) : 0
-                    spacing: panel.awaitingApproval ? 8 : 14
+                    anchors.verticalCenterOffset: panel.userPrompt.length > 0 ? (panel.hasLive ? 20 : panel.compactLoading ? 24 : 18) : 0
+                    spacing: panel.compactLoading ? 8 : 14
 
                     // Animated expressive thinking orb (folded away while an
                     // approval card needs the room)
                     Item {
-                        visible: !panel.awaitingApproval
+                        visible: !panel.compactLoading
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: 56
                         height: 56
@@ -521,6 +533,7 @@ Item {
                     }
 
                     Text {
+                        visible: !panel.hasLive   // the header chip already says "Writing…"
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: panel.width_ - 48
                         horizontalAlignment: Text.AlignHCenter
@@ -538,7 +551,7 @@ Item {
 
                     // Rhythmic wave bars
                     Row {
-                        visible: !panel.awaitingApproval
+                        visible: !panel.compactLoading
                         anchors.horizontalCenter: parent.horizontalCenter
                         spacing: 5
                         height: 16
@@ -571,11 +584,46 @@ Item {
                         visible: panel.hasTools
 
                         Repeater {
-                            model: panel.hasTools ? panel.toolSteps.slice(panel.awaitingApproval ? -3 : -4) : []
+                            model: panel.hasTools ? panel.toolSteps.slice(panel.hasLive ? -2 : panel.awaitingApproval ? -3 : -4) : []
                             ToolStepRow {
                                 required property var modelData
                                 width: parent.width
                                 step: modelData
+                            }
+                        }
+                    }
+
+                    // Live streamed answer.
+                    Rectangle {
+                        visible: panel.hasLive
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: panel.width_ - 48
+                        height: Math.min(panelLive.implicitHeight + 24, 196)
+                        radius: Theme.radiusMd
+                        color: Theme.glassFill
+                        border.width: 1
+                        border.color: Theme.glassBorder
+                        clip: true
+                        Text {
+                            id: panelLive
+                            x: 14
+                            width: parent.width - 28
+                            y: Math.min(12, parent.height - 12 - implicitHeight)
+                            text: panel.liveText + " \u258F"
+                            textFormat: Text.PlainText
+                            color: Theme.text
+                            font.family: Theme.font
+                            font.pixelSize: 13
+                            lineHeight: 1.2
+                            wrapMode: Text.Wrap
+                        }
+                        Rectangle {
+                            visible: panelLive.y < 0
+                            width: parent.width
+                            height: 24
+                            gradient: Gradient {
+                                GradientStop { position: 0; color: Theme.surface }
+                                GradientStop { position: 1; color: "transparent" }
                             }
                         }
                     }

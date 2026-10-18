@@ -1822,8 +1822,13 @@ Item {
                 if (steps[i].status === "error") { clean = false; break }
             if (clean)
                 buddy.nodHappy()
+            const streamed = String(buddyProvider.streamText || "").length > 0
+            if (streamed && buddy.replyToPanel && buddy.resultPanel)
+                buddy.resultPanel.instantReveal = true
             buddy.present("chat", buddy.lastRequest.length > 0 ? buddy.lastRequest : "Buddy",
                           { response: text }, false)
+            if (streamed && thought.phase === "answer" && thought.kind === "chat")
+                thought.revealAll()
         }
         function onErrorOccurred(message) {
             if (!buddy.awaitingReply)
