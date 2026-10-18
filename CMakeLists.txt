@@ -36,6 +36,8 @@ qt_add_executable(noch
     src/Appearance.cpp
     src/Appearance.h
     src/AgentPolicy.cpp
+    src/StreamAccumulator.cpp
+    src/StreamAccumulator.h
     src/AgentPolicy.h
     src/IconSet.cpp
     src/IconSet.h
@@ -159,9 +161,13 @@ if(NOCH_BUILD_TESTS)
     target_link_libraries(tst_iconset PRIVATE Qt6::Core Qt6::Test)
     target_compile_definitions(tst_iconset PRIVATE NOCH_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml/icons")
     add_test(NAME tst_iconset COMMAND tst_iconset)
+    qt_add_executable(tst_stream tests/tst_stream.cpp src/StreamAccumulator.cpp src/StreamAccumulator.h)
+    target_link_libraries(tst_stream PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME tst_stream COMMAND tst_stream)
     find_package(Qt6 REQUIRED COMPONENTS Network)
     qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
-        src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h)
+        src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
+        src/StreamAccumulator.cpp src/StreamAccumulator.h)
     target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
     if(WIN32)
         target_link_libraries(tst_buddyagent PRIVATE user32)

@@ -17,6 +17,7 @@
 #include <QVariantMap>
 
 #include "AgentPolicy.h"
+#include "StreamAccumulator.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
 // Anthropic Agent SDK / Computer Use multi-turn tool loop across all providers:
@@ -76,6 +77,11 @@ class BuddyProvider : public QObject
     Q_PROPERTY(QString workspaceRoot READ workspaceRoot WRITE setWorkspaceRoot NOTIFY agentConfigChanged)
     Q_PROPERTY(bool redactSecrets READ redactSecrets WRITE setRedactSecrets NOTIFY agentConfigChanged)
     Q_PROPERTY(bool keepTraces READ keepTraces WRITE setKeepTraces NOTIFY agentConfigChanged)
+    // Streaming (SSE) replies: streamText is the answer text of the model
+    // turn in flight, updated live (coalesced to ~25 fps, secrets redacted).
+    Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
+    Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
+    Q_PROPERTY(bool streaming READ streaming NOTIFY streamTextChanged)
     // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
     // badge, icon, title, detail, reason, rule, secondsLeft }.
     Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
@@ -134,6 +140,10 @@ public:
     void setRedactSecrets(bool on);
     bool keepTraces() const { return m_keepTraces; }
     void setKeepTraces(bool on);
+    bool streamReplies() const { return m_streamReplies; }
+    void setStreamReplies(bool on);
+    QString streamText() const { return m_streamText; }
+    bool streaming() const { return m_streamingNow; }
     QVariantMap pendingApproval() const { return m_pendingApproval; }
 
     QVariantList toolSteps() const { return m_toolSteps; }
@@ -178,6 +188,7 @@ signals:
     void responseMetaChanged();
     void agentTodosChanged();
     void pendingApprovalChanged();
+    void streamTextChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
 
     void responseReady(const QString &text);
@@ -269,6 +280,16 @@ private:
     QJsonArray m_agentMessages;
     QList<PendingToolCall> m_pendingTools;
     PendingToolCall m_approvalCall;
+    // streaming
+    bool wantsStreaming() const;
+    void onStreamReadyRead();
+    void setStreamText(const QString &text, bool live);
+    bool m_streamReplies = true;
+    StreamAccumulator m_stream;
+    bool m_streamConsumed = false;    // this reply's body is being parsed as SSE
+    bool m_streamingNow = false;
+    QString m_streamText;
+    QTimer m_streamEmitTimer;
     quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
     QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
     QList<ToolOutcome> m_completedTools;

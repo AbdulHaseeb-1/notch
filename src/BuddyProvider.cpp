@@ -397,6 +397,9 @@ BuddyProvider::BuddyProvider(QObject *parent)
 
     m_approvalTimer.setInterval(1000);
     connect(&m_approvalTimer, &QTimer::timeout, this, &BuddyProvider::onApprovalTick);
+    m_streamEmitTimer.setSingleShot(true);
+    m_streamEmitTimer.setInterval(40);
+    connect(&m_streamEmitTimer, &QTimer::timeout, this, [this] { emit streamTextChanged(); });
     m_retryTimer.setSingleShot(true);
     connect(&m_retryTimer, &QTimer::timeout, this, &BuddyProvider::dispatchAgentTurn);
     m_policy.setWorkspaceRoots({ effectiveWorkspace() });
@@ -431,6 +434,57 @@ void BuddyProvider::setRedactSecrets(bool on)
         return;
     m_redactSecrets = on;
     emit agentConfigChanged();
+}
+
+void BuddyProvider::setStreamReplies(bool on)
+{
+    if (on == m_streamReplies)
+        return;
+    m_streamReplies = on;
+    emit agentConfigChanged();
+}
+
+bool BuddyProvider::wantsStreaming() const
+{
+    // Ollama's native /api/chat streams NDJSON, not SSE; keep it buffered.
+    return m_streamReplies && m_provider != QLatin1String("ollama")
+        && m_provider != QLatin1String("none");
+}
+
+void BuddyProvider::setStreamText(const QString &text, bool live)
+{
+    const QString safe = text.isEmpty() ? QString() : redact(text);
+    const bool changed = safe != m_streamText || live != m_streamingNow;
+    m_streamText = safe;
+    m_streamingNow = live;
+    if (!changed)
+        return;
+    if (live && !safe.isEmpty()) {
+        if (!m_streamEmitTimer.isActive())
+            m_streamEmitTimer.start();   // coalesce token bursts
+    } else {
+        m_streamEmitTimer.stop();
+        emit streamTextChanged();
+    }
+}
+
+void BuddyProvider::onStreamReadyRead()
+{
+    QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender());
+    if (!reply || reply != m_chatReply)
+        return;
+    if (!m_streamConsumed) {
+        // Only parse as SSE when the server actually streamed; error bodies
+        // and servers that ignore `stream` stay buffered for onReplyFinished.
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QString ct = reply->header(QNetworkRequest::ContentTypeHeader).toString();
+        if (status < 200 || status >= 300 || !ct.contains(QLatin1String("text/event-stream"), Qt::CaseInsensitive))
+            return;
+        m_streamConsumed = true;
+        setActiveToolState(QString(), tr("Writing…"));
+    }
+    if (m_stream.feed(reply->readAll()))
+        setStreamText(m_stream.text(), true);
 }
 
 void BuddyProvider::setKeepTraces(bool on)
@@ -1378,6 +1432,13 @@ QJsonObject BuddyProvider::buildAgentPayload() const
     } else {
         payload[QStringLiteral("temperature")] = m_temperature;
     }
+    if (wantsStreaming()) {
+        payload[QStringLiteral("stream")] = true;
+        // Final usage chunk (token counts, cached tokens) on OpenAI itself;
+        // other OpenAI-compatible servers may reject unknown options.
+        if (m_provider == QLatin1String("openai"))
+            payload[QStringLiteral("stream_options")] = QJsonObject{ { QStringLiteral("include_usage"), true } };
+    }
     return payload;
 }
 
@@ -1572,7 +1633,13 @@ void BuddyProvider::dispatchAgentTurn()
     const QString url = buildUrl();
     QNetworkRequest request = buildRequest(url);
     QJsonDocument doc(buildAgentPayload());
+    m_streamConsumed = false;
+    m_stream.reset(m_provider == QLatin1String("anthropic") ? StreamAccumulator::Format::Anthropic
+                                                           : StreamAccumulator::Format::OpenAI);
+    setStreamText(QString(), false);
     m_chatReply = m_nam.post(request, doc.toJson(QJsonDocument::Compact));
+    if (wantsStreaming())
+        connect(m_chatReply, &QNetworkReply::readyRead, this, &BuddyProvider::onStreamReadyRead);
 }
 
 void BuddyProvider::runDirectCommand(const QString &command)
@@ -1763,6 +1830,8 @@ void BuddyProvider::cancel()
     m_completedTools.clear();
     m_retryTimer.stop();
     clearPendingApproval();
+    m_streamConsumed = false;
+    setStreamText(QString(), false);
     finishTrace(QStringLiteral("cancelled"));
     if (m_activeProcess) {
         QProcess *proc = m_activeProcess;
@@ -2061,7 +2130,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QString errString = reply->errorString();
     const bool transportOk = (reply->error() == QNetworkReply::NoError);
-    const QByteArray data = reply->readAll();
+    QByteArray data = reply->readAll();
     reply->deleteLater();
 
     if (reply == m_probeReply) {
@@ -2072,6 +2141,29 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     if (reply != m_chatReply)
         return;
     m_chatReply = nullptr;
+
+    // Streamed reply: finish parsing the tail and rebuild the response JSON
+    // the buffered path expects, so everything below is shared.
+    const bool streamed = m_streamConsumed;
+    if (streamed) {
+        m_streamConsumed = false;
+        m_stream.feed(data);
+        if (transportOk && m_stream.hasError()) {
+            const QString se = m_stream.errorMessage();
+            const bool overloaded = se.contains(QLatin1String("overload"), Qt::CaseInsensitive);
+            setStreamText(QString(), false);
+            if (scheduleRetry(overloaded ? 529 : 500, QNetworkReply::NoError, QByteArray()))
+                return;
+            setActiveToolState(QString(), QString());
+            finishTrace(QStringLiteral("error"), se);
+            emit errorOccurred(redact(se));
+            emit statusChanged(QStringLiteral("idle"));
+            return;
+        }
+        if (transportOk)
+            data = QJsonDocument(m_stream.message()).toJson(QJsonDocument::Compact);
+        setStreamText(m_stream.text(), false);
+    }
 
     if (!transportOk || status < 200 || status >= 300) {
         // Transient failures (rate limit, overload, 5xx, dropped connection)

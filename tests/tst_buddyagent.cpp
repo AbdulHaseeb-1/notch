@@ -9,12 +9,19 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QPointer>
+#include <QTimer>
 
 #include "../src/BuddyProvider.h"
 
 namespace {
 
-struct Reply { int status; QByteArray body; };
+struct Reply {
+    int status;
+    QByteArray body;
+    QList<QByteArray> sse = {};   // when set: text/event-stream, written chunk by chunk
+    int gapMs = 0;
+};
 
 class FakeAnthropic : public QObject
 {
@@ -55,6 +62,23 @@ private:
         buffers.remove(s);
         const Reply r = queue.isEmpty() ? Reply{ 500, "{\"error\":{\"message\":\"no reply queued\"}}" }
                                         : queue.takeFirst();
+        if (!r.sse.isEmpty()) {
+            s->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n");
+            QPointer<QTcpSocket> sp(s);
+            for (int i = 0; i < r.sse.size(); ++i) {
+                const QByteArray chunk = r.sse.at(i);
+                const bool last = i == r.sse.size() - 1;
+                QTimer::singleShot(r.gapMs * (i + 1), this, [sp, chunk, last] {
+                    if (!sp)
+                        return;
+                    sp->write(chunk);
+                    sp->flush();
+                    if (last)
+                        sp->disconnectFromHost();
+                });
+            }
+            return;
+        }
         QByteArray out = "HTTP/1.1 " + QByteArray::number(r.status) + (r.status == 200 ? " OK" : " ERR")
             + "\r\nContent-Type: application/json\r\nContent-Length: " + QByteArray::number(r.body.size())
             + (r.status == 529 ? "\r\nretry-after: 1" : "")
@@ -119,6 +143,52 @@ QByteArray openAiText(const QString &t)
                         { "message", QJsonObject{ { "role", "assistant" }, { "content", t } } }, { "finish_reason", "stop" } } } },
                    { "usage", QJsonObject{ { "prompt_tokens", 50 }, { "completion_tokens", 5 } } } };
     return QJsonDocument(r).toJson(QJsonDocument::Compact);
+}
+
+QByteArray sseEvent(const char *event, const QJsonObject &data)
+{
+    return QByteArray("event: ") + event + "\ndata: " + QJsonDocument(data).toJson(QJsonDocument::Compact) + "\n\n";
+}
+
+// Anthropic SSE for a text answer, split into one chunk per word.
+QList<QByteArray> sseText(const QStringList &words)
+{
+    QList<QByteArray> out;
+    out << sseEvent("message_start", { { "type", "message_start" }, { "message", QJsonObject{
+              { "id", "msg_s" }, { "type", "message" }, { "role", "assistant" }, { "model", "claude-stream" },
+              { "content", QJsonArray() }, { "usage", QJsonObject{ { "input_tokens", 20 }, { "cache_read_input_tokens", 11 } } } } } })
+          + sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 0 },
+                                              { "content_block", QJsonObject{ { "type", "text" }, { "text", "" } } } });
+    for (const QString &w : words)
+        out << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+                                                 { "delta", QJsonObject{ { "type", "text_delta" }, { "text", w } } } });
+    out << sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 0 } })
+           + sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", "end_turn" } } },
+                                         { "usage", QJsonObject{ { "output_tokens", 6 } } } })
+           + sseEvent("message_stop", { { "type", "message_stop" } });
+    return out;
+}
+
+// Anthropic SSE for a bash tool_use with the input JSON split in two.
+QList<QByteArray> sseToolUse(const QString &id, const QString &command)
+{
+    const QByteArray json = QJsonDocument(QJsonObject{ { "command", command } }).toJson(QJsonDocument::Compact);
+    const int half = json.size() / 2;
+    QList<QByteArray> out;
+    out << sseEvent("message_start", { { "type", "message_start" }, { "message", QJsonObject{
+              { "id", "msg_t" }, { "type", "message" }, { "role", "assistant" }, { "content", QJsonArray() },
+              { "usage", QJsonObject{ { "input_tokens", 20 } } } } } })
+        << sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 0 },
+              { "content_block", QJsonObject{ { "type", "tool_use" }, { "id", id }, { "name", "bash" }, { "input", QJsonObject() } } } })
+        << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+              { "delta", QJsonObject{ { "type", "input_json_delta" }, { "partial_json", QString::fromUtf8(json.left(half)) } } } })
+        << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+              { "delta", QJsonObject{ { "type", "input_json_delta" }, { "partial_json", QString::fromUtf8(json.mid(half)) } } } })
+           + sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 0 } })
+           + sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", "tool_use" } } },
+                                         { "usage", QJsonObject{ { "output_tokens", 9 } } } })
+           + sseEvent("message_stop", { { "type", "message_stop" } });
+    return out;
 }
 
 } // namespace
@@ -295,6 +365,102 @@ private slots:
         QVERIFY(toolMsg.value("content").toString().contains("Permission denied"));
         QCOMPARE(bp->responseMeta().value("cachedTokens").toInt(), 64);
         QVERIFY(!fake->requests.first().value("system").isArray());   // cache markers are Anthropic-only
+    }
+
+    void streamsTextLive() {
+        Reply r{ 200, {}, sseText({ "Streaming ", "answers ", "arrive ", "word ", "by ", "word." }), 70 };
+        fake->queue = { r };
+        QStringList seen;
+        connect(bp, &BuddyProvider::streamTextChanged, this, [&seen, this] {
+            if (bp->streaming())
+                seen << bp->streamText();
+        });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("stream please");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("Streaming answers arrive word by word."));
+        QVERIFY2(seen.size() >= 3, qPrintable(seen.join(" | ")));                 // live, incremental updates
+        QVERIFY(seen.first().size() < seen.last().size());
+        QVERIFY(!bp->streaming());
+        QCOMPARE(bp->streamText(), QStringLiteral("Streaming answers arrive word by word."));
+        QVERIFY(fake->requests.first().value("stream").toBool());
+        QCOMPARE(bp->responseMeta().value("cachedTokens").toInt(), 11);
+    }
+
+    void streamedToolUseRunsAndLoops() {
+        fake->queue = { Reply{ 200, {}, sseToolUse("tu_s", "echo streamed-tool"), 30 },
+                        Reply{ 200, {}, sseText({ "tool ", "done" }), 20 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("use a tool");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(fake->requests.size(), 2);
+        const QJsonObject tr = lastToolResults(fake->requests).first().toObject();
+        QCOMPARE(tr.value("tool_use_id").toString(), QStringLiteral("tu_s"));
+        QVERIFY(tr.value("content").toString().contains("streamed-tool"));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("tool done"));
+    }
+
+    void cancelMidStream() {
+        fake->queue = { Reply{ 200, {}, sseText({ "one ", "two ", "three ", "four ", "five" }), 120 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("long answer");
+        QTRY_VERIFY_WITH_TIMEOUT(bp->streaming() && bp->streamText().contains("one"), 5000);
+        bp->cancel();
+        QVERIFY(!bp->streaming());
+        QVERIFY(bp->streamText().isEmpty());
+        QTest::qWait(900);
+        QCOMPARE(ready.size(), 0);
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 1);
+    }
+
+    void streamErrorEventRetries() {
+        QList<QByteArray> bad{ sseEvent("error", { { "type", "error" },
+                                   { "error", QJsonObject{ { "type", "overloaded_error" }, { "message", "Overloaded" } } } }) };
+        fake->queue = { Reply{ 200, {}, bad, 10 }, Reply{ 200, {}, sseText({ "recovered" }), 10 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 2);
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("recovered"));
+    }
+
+    void openAiStreamToolThenText() {
+        bp->setProvider("openai");
+        bp->setApiBase(fake->base() + "/v1");
+        auto d = [](const QByteArray &json) { return QByteArray("data: ") + json + "\n\n"; };
+        QList<QByteArray> tool{
+            d("{\"id\":\"c1\",\"model\":\"gpt-s\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_s\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"comm\"}}]}}]}"),
+            d("{\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"and\\\":\\\"echo oa-stream\\\"}\"}}]}}]}"),
+            d("{\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}") + d("[DONE]") };
+        QList<QByteArray> answer{
+            d("{\"id\":\"c2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Open\"}}]}"),
+            d("{\"id\":\"c2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"AI ok\"}}]}"),
+            d("{\"id\":\"c2\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}")
+              + d("{\"id\":\"c2\",\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":5}}}")
+              + d("[DONE]") };
+        fake->queue = { Reply{ 200, {}, tool, 25 }, Reply{ 200, {}, answer, 25 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("openai stream");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("OpenAI ok"));
+        const QJsonObject toolMsg = fake->requests.constLast().value("messages").toArray().last().toObject();
+        QCOMPARE(toolMsg.value("tool_call_id").toString(), QStringLiteral("call_s"));
+        QVERIFY(toolMsg.value("content").toString().contains("oa-stream"));
+        QVERIFY(fake->requests.first().value("stream_options").toObject().value("include_usage").toBool());
+        QCOMPARE(bp->responseMeta().value("cachedTokens").toInt(), 5);
+    }
+
+    void streamingOffSendsBufferedRequest() {
+        bp->setStreamReplies(false);
+        fake->queue = { { 200, text("buffered") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        QVERIFY(!fake->requests.first().contains("stream"));
     }
 
     void cancelDuringApprovalStopsRun() {
