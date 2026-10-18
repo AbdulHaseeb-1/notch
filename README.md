@@ -159,3 +159,6 @@ cmake --build build-tests && ctest --test-dir build-tests
 
 `tst_agentpolicy` covers the permission policy, redaction and injection checks.
 `tst_iconset` checks that every SVG icon parses into usable path data.
+`tst_buddyagent` drives the real agent loop against a fake Anthropic server
+(deny, approve, reject, plan/bypass modes, 529 retry, redaction, compaction,
+loop guard, cancel during an approval).
