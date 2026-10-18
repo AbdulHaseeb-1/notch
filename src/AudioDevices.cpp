@@ -1,5 +1,6 @@
 #include "AudioDevices.h"
 
+#include <QPointer>
 #include <QTimer>
 
 #ifdef Q_OS_WIN
@@ -16,7 +17,7 @@ using nochwin::ComPtr;
 
 namespace {
 
-constexpr int kPollMs = 2000;
+constexpr int kPollMs = 10000;   // device-list fallback; volume and mute are pushed
 
 // {BCDE0395-E52F-467C-8E3D-C4579291692E}
 constexpr GUID kClsidMmDeviceEnumerator{
@@ -27,6 +28,9 @@ constexpr GUID kIidMmDeviceEnumerator{
 // {5CDF2C82-841E-4546-9722-0CF74078229A}
 constexpr GUID kIidAudioEndpointVolume{
     0x5CDF2C82, 0x841E, 0x4546, {0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A}};
+// IAudioEndpointVolumeCallback: pushed volume / mute changes.
+constexpr GUID kIidEndpointVolumeCallback{
+    0x657804FA, 0xD6AD, 0x4496, {0x8A, 0x60, 0x35, 0x27, 0x52, 0xAF, 0x4F, 0x89}};
 
 // PolicyConfig: the undocumented (but universally used) way to switch the
 // default output device. Stable since Windows 7.
@@ -118,6 +122,53 @@ QString deviceName(IMMDevice *device)
 
 } // namespace
 
+// Volume and mute come to us instead of being re-read every two seconds: the
+// endpoint registry owns the change events. OnNotify marshals back on to the
+// GUI thread, since the audio system calls this from its own worker.
+class EndpointVolumeCallback final : public IAudioEndpointVolumeCallback
+{
+public:
+    explicit EndpointVolumeCallback(QPointer<AudioDevices> owner)
+        : m_owner(owner)
+    {
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++m_ref; }
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const ULONG left = --m_ref;
+        if (left == 0)
+            delete this;
+        return left;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **out) override
+    {
+        if (!out)
+            return E_POINTER;
+        *out = nullptr;
+        if (riid == IID_IUnknown)
+            *out = static_cast<IUnknown *>(this);
+        else if (riid == kIidEndpointVolumeCallback)
+            *out = static_cast<IAudioEndpointVolumeCallback *>(this);
+        else
+            return E_NOINTERFACE;
+        ++m_ref;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA) override
+    {
+        if (auto *owner = m_owner.data())
+            QMetaObject::invokeMethod(owner, "poll", Qt::QueuedConnection);
+        return S_OK;
+    }
+
+private:
+    QPointer<AudioDevices> m_owner;
+    ULONG m_ref = 1;
+};
+
 AudioDevices::AudioDevices(QObject *parent)
     : QObject(parent)
 {
@@ -126,7 +177,55 @@ AudioDevices::AudioDevices(QObject *parent)
     QTimer::singleShot(0, this, &AudioDevices::poll);
 }
 
-AudioDevices::~AudioDevices() = default;
+AudioDevices::~AudioDevices()
+{
+#ifdef Q_OS_WIN
+    detachHook(m_renderHook);
+    detachHook(m_captureHook);
+#endif
+}
+
+void AudioDevices::attachHookFor(IMMDevice *device, VolumeHook &hook)
+{
+    const QString id = deviceId(device);
+    if (id.isEmpty())
+        return;
+    // Still on the same endpoint: nothing to do.
+    if (hook.endpoint && hook.endpointId == id)
+        return;
+    detachHook(hook);
+
+    ComPtr<IAudioEndpointVolume> volume;
+    if (FAILED(device->Activate(kIidAudioEndpointVolume, CLSCTX_ALL, nullptr,
+                                reinterpret_cast<void **>(&volume.p))))
+        return;
+    auto *callback = new EndpointVolumeCallback(this);
+    if (FAILED(volume->RegisterControlChangeNotify(callback))) {
+        callback->Release();
+        return;
+    }
+    // The registration stays live as long as the volume interface lives, and
+    // the callback carries our ref; both are handed over to the hook.
+    hook.endpointId = id;
+    hook.endpoint = volume.detach();
+    hook.callback = callback;
+}
+
+void AudioDevices::detachHook(VolumeHook &hook)
+{
+    auto *volume = reinterpret_cast<IAudioEndpointVolume *>(hook.endpoint);
+    auto *callback = reinterpret_cast<IAudioEndpointVolumeCallback *>(hook.callback);
+    if (volume) {
+        if (callback)
+            volume->UnregisterControlChangeNotify(callback);
+        volume->Release();
+    }
+    if (callback)
+        callback->Release();
+    hook.endpointId.clear();
+    hook.endpoint = nullptr;
+    hook.callback = nullptr;
+}
 
 void AudioDevices::poll()
 {
@@ -229,6 +328,17 @@ void AudioDevices::refresh()
         m_masterMuted = masterMute;
         emit masterVolumeChanged();
     }
+
+    // Keep the volume/mute notifications wired to whichever endpoints the
+    // system is defaulting to right now.
+    {
+        ComPtr<IMMDevice> speaker;
+        if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &speaker.p)))
+            attachHookFor(speaker.get(), m_renderHook);
+        ComPtr<IMMDevice> mic;
+        if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eCapture, eCommunications, &mic.p)))
+            attachHookFor(mic.get(), m_captureHook);
+    }
 }
 
 bool AudioDevices::setDefault(const QString &id)
@@ -322,6 +432,10 @@ AudioDevices::AudioDevices(QObject *parent)
 }
 
 AudioDevices::~AudioDevices() = default;
+
+void AudioDevices::attachHookFor(IMMDevice *, VolumeHook &) {}
+
+void AudioDevices::detachHook(VolumeHook &) {}
 
 void AudioDevices::poll() {}
 

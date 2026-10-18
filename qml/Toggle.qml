@@ -17,7 +17,7 @@ Item {
         id: track
         anchors.fill: parent
         radius: height / 2
-        color: toggle.checked ? t.ink : (hit.containsMouse ? t.press : t.border)
+        color: toggle.checked ? t.accent : (hit.containsMouse ? t.press : t.border)
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 

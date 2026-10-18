@@ -242,17 +242,17 @@ Item {
                         GradientStop {
                             position: 0.0
                             color: chip.dynAccent
-                            Behavior on color { ColorAnimation { duration: 280 } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
                         GradientStop {
                             position: 1.0
                             color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.32)
-                            Behavior on color { ColorAnimation { duration: 280 } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
                     }
 
                     SequentialAnimation on level {
-                        running: chip.playing && !chip.barOpen
+                        running: chip.playing && !chip.barOpen && chip.visible
                         loops: Animation.Infinite
                         // `on <property>` replaces the binding while it runs,
                         // so bars used to freeze mid-value when paused. Resting

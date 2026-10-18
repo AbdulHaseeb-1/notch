@@ -1,65 +1,76 @@
 import QtQuick
 
-// Colour and motion tokens for the whole app. Dark is the notch's black glass;
-// light is the same layout on pale glass. Components read these tokens instead
-// of hard-coding colours, so Settings > Light theme switches everything at once.
-//
-// Controls sit *on* the glass, so their fills are translucent white (dark) or
-// translucent black (light) rather than fixed greys: they pick up whatever the
-// surface is and stay consistent in both themes, the way Apple's materials do.
+// Colour and motion tokens for the whole app.
+// Clean, opaque surfaces with zero glass/frosted translucency. The surface
+// family (carbon, midnight, graphite, mocha) and the accent are chosen in
+// Settings; Appearance resolves them for light/dark into one shared map that
+// every Theme instance reads, so they all change together.
 QtObject {
     readonly property bool light: appearance.light
+    readonly property var c: appearance.colors
 
-    // Foreground. "ink" is the high-contrast colour: primary text and accent
-    // fills. "inverse" is what sits on top of an ink fill.
-    readonly property color ink: light ? "#1d1d1f" : "#ffffff"
-    readonly property color inverse: light ? "#ffffff" : "#000000"
-    readonly property color inkSoft: light ? "#3a3a3d" : "#e3e3e6"
-    readonly property color text: light ? "#1d1d1f" : "#f2f2f4"
-    readonly property color textDim: light ? "#6e6e73" : "#98989f"
-    readonly property color textFaint: light ? "#a1a1a6" : "#636368"
+    // Foreground. "ink" is the high-contrast colour: primary text, icons and
+    // anything that has to read at a glance. "inverse" is what sits on top of
+    // an accent fill (a selected segment, a primary button).
+    readonly property color ink: light ? "#18181b" : "#f0f0f2"
+    readonly property color inverse: light ? "#ffffff" : "#121214"
+    readonly property color inkSoft: light ? "#3f3f46" : "#bdbdc4"
+    readonly property color text: light ? "#202024" : "#dcdce0"
+    readonly property color textDim: light ? "#65656f" : "#90909a"
+    readonly property color textFaint: light ? "#9494a0" : "#63636e"
 
-    // Glass body. Opaque enough to read on any wallpaper without the blur.
-    readonly property color surface: light ? "#f6f6f8" : "#0c0c0e"
+    // Opaque surface tones (no glass transparency).
+    readonly property color surface: c.surface
+    readonly property color content: c.content
 
-    // Control fills (translucent, drawn over the glass)
-    readonly property color raised: light ? "#0d000000" : "#0fffffff"
-    readonly property color hover: "transparent"
-    readonly property color press: light ? "#1f000000" : "#26ffffff"
-    readonly property color tile: light ? "#0d000000" : "#14ffffff"
-    readonly property color tileEdge: light ? "#14000000" : "#1fffffff"
-    readonly property color tileActive: light ? "#1a000000" : "#24ffffff"
-    readonly property color track: light ? "#1a000000" : "#29ffffff"
-    readonly property color frame: light ? "#e6e6ea" : "#0a0a0c"
+    // Solid elevated surfaces and interactive states.
+    readonly property color raised: c.raised
+    readonly property color hover: c.hover
+    readonly property color press: c.press
+    readonly property color tile: c.tile
+    readonly property color tileEdge: c.tileEdge
+    readonly property color tileActive: c.tileActive
+    readonly property color track: c.track
+    readonly property color frame: c.frame
 
-    // Lines
-    readonly property color border: light ? "#1f000000" : "#1fffffff"
-    readonly property color borderSoft: light ? "#0f000000" : "#12ffffff"
-    readonly property color borderStrong: light ? "#38000000" : "#40ffffff"
-    readonly property color hairline: light ? "#cdffffff" : "#2effffff"
+    // Text inputs sit slightly deeper than a card, with a crisp border.
+    readonly property color field: c.field
+    readonly property color fieldBorder: c.fieldBorder
 
-    // Glass rim: a 1px ring that is lit from above. Brightest at the top edge,
-    // faint down the sides, a touch of light returning along the bottom.
-    readonly property color rimTop: light ? "#f2ffffff" : "#52ffffff"
-    readonly property color rimMid: light ? "#26000000" : "#14ffffff"
-    readonly property color rimBottom: light ? "#1a000000" : "#24ffffff"
-    // Light falling across the upper part of the surface.
-    readonly property color sheen: light ? "#80ffffff" : "#0dffffff"
+    // Lines & borders
+    readonly property color border: c.border
+    readonly property color borderSoft: c.borderSoft
+    readonly property color borderStrong: c.borderStrong
+    readonly property color hairline: light ? "#cc000000" : "#cce4e4e4"
+
+    // The desktop buddy's body (always dark; tinted to match the family).
+    readonly property color orb: c.orb
+
+    // Surface rim tokens kept for compatibility, flat and non-glossy.
+    readonly property color rimTop: border
+    readonly property color rimMid: border
+    readonly property color rimBottom: border
+    readonly property color sheen: "transparent"
     readonly property color shadow: "transparent"
 
-    // Glass opacity: thinner when the real blur is behind it, denser when it
-    // is not (so text stays readable on any wallpaper).
-    readonly property real glassFrosted: light ? 0.62 : 0.58
-    readonly property real glassSolid: light ? 0.94 : 0.92
+    // Fully opaque surfaces (glass effect removed).
+    readonly property real glassFrosted: 1.0
+    readonly property real glassSolid: 1.0
 
     // Which monochrome icon variant suits the background.
     readonly property string iconMono: light ? "monoLight" : "mono"
 
-    // Status
-    readonly property color danger: light ? "#e11d2a" : "#ff453a"
-    readonly property color dangerSoft: light ? "#1fe11d2a" : "#26ff453a"
-    readonly property color success: light ? "#1f9d55" : "#32d74b"
-    readonly property color accent: light ? "#0a84ff" : "#0a84ff"
+    // Status colours.
+    readonly property color danger: light ? "#cf2f52" : "#e34671"
+    readonly property color dangerSoft: light ? "#26cf2f52" : "#26e34671"
+    readonly property color warning: light ? "#a86b21" : "#f1b467"
+    readonly property color success: light ? "#2f7d4f" : "#3fa266"
+
+    // Accents: links, primary buttons, focus rings, badges.
+    readonly property color accent: c.accent
+    readonly property color accentHover: c.accentHover
+    readonly property color badge: light ? "#4c8492" : "#88c0d0"
 
     readonly property string font: "Segoe UI"
 }
+

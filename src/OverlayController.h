@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointF>
 #include <QPointer>
 #include <QRegion>
 #include <QVariantList>
@@ -16,6 +17,9 @@ public:
     void setWindow(QWindow *window);
 
     Q_INVOKABLE void setInteractiveRegions(const QVariantList &regions);
+    // Global cursor in this window's coordinates. The window mask swallows
+    // moves outside the orb, so the buddy cannot track from a MouseArea.
+    Q_INVOKABLE QPointF cursorPos() const;
 
 private:
     QPointer<QWindow> m_window;

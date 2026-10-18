@@ -8,6 +8,8 @@
 // Sound output chips for the System page: every active playback device, which
 // one is the default, and switching between them. Also the default microphone's
 // mute, which Windows hides two menus deep.
+struct IMMDevice;
+
 class AudioDevices final : public QObject
 {
     Q_OBJECT
@@ -29,6 +31,9 @@ public:
     bool masterMuted() const { return m_masterMuted; }
 
     Q_INVOKABLE void refresh();
+    // The volume/point callbacks land on this slot (queued back on to the GUI
+    // thread); refresh() re-reads the system state when it fires.
+    Q_INVOKABLE void poll();
     Q_INVOKABLE bool setDefault(const QString &id);
     Q_INVOKABLE void toggleMicMute();
     Q_INVOKABLE void setMasterVolume(qreal volume);
@@ -40,7 +45,16 @@ signals:
     void masterVolumeChanged();
 
 private:
-    void poll();
+    // A registered endpoint-volume callback. The endpoint interface must stay
+    // alive until unregistered, and the callback object holds our extra ref.
+    struct VolumeHook {
+        QString endpointId;
+        void *endpoint = nullptr;   // IAudioEndpointVolume*
+        void *callback = nullptr;   // IAudioEndpointVolumeCallback*
+    };
+
+    void attachHookFor(IMMDevice *device, VolumeHook &hook);
+    void detachHook(VolumeHook &hook);
 
     QVariantList m_outputs;
     bool m_hasMic = false;
@@ -48,4 +62,8 @@ private:
     qreal m_masterVolume = 0.8;
     bool m_masterMuted = false;
     QTimer m_poll;
+#ifdef Q_OS_WIN
+    VolumeHook m_renderHook;
+    VolumeHook m_captureHook;
+#endif
 };

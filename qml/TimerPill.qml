@@ -82,7 +82,7 @@ Item {
                 }
                 ShapePath {
                     strokeWidth: Math.max(2.2, 2.6 * pill.s)
-                    strokeColor: pill.timer && pill.timer.finished ? t.success : t.ink
+                    strokeColor: pill.timer && pill.timer.finished ? t.success : t.accent
                     fillColor: "transparent"
                     capStyle: ShapePath.RoundCap
                     PathAngleArc {

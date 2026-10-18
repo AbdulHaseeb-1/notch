@@ -1,4 +1,12 @@
 [2/3] Building...
-ninja: no work to do.
+[1/9] Copying noch qml sources into build dir
+[2/9] Running qmlimportscanner for noch
+[3/9] Generating qt.conf part for noch
+[4/9] Generating qt.conf file
+[5/9] Running rcc for resource noch_raw_qml_0
+[6/9] Generating .rcc/qmlcache/noch_qml_Buddy_qml.cpp, .rcc/qmlcache/noch_qml_Buddy_qml.cpp.aotstats
+[7/9] Building CXX object CMakeFiles/noch.dir/build/.qt/rcc/qrc_noch_raw_qml_0.cpp.obj
+[8/9] Building CXX object CMakeFiles/noch.dir/build/.rcc/qmlcache/noch_qml_Buddy_qml.cpp.obj
+[9/9] Linking CXX executable noch.exe
 
 Launching noch...

@@ -193,6 +193,7 @@ void SmtcWorker::run()
     bool hasCoverForTrack = false;
     QString preferredSessionId;
     quint64 tick = 0;
+    int lastKnownState = 0;
 
     for (;;) {
         QList<Entry> pending;
@@ -417,6 +418,7 @@ void SmtcWorker::run()
                     ? 1
                     : (playbackStatus == PlaybackPaused || playbackStatus == PlaybackOpened ? 2
                                                                                             : 0);
+            lastKnownState = state;
             emit stateArrived(state);
 
             // Timeline: length and where the track is right now.
@@ -534,10 +536,13 @@ void SmtcWorker::run()
 
         ++tick;
 
-        // Sleep until the next poll (450ms for responsive UI), or earlier when a command arrives.
+        // Sleep until the next poll, or earlier when a command arrives. Pace:
+        // 450ms while something is playing (the progress line needs the freshest
+        // position), slower once paused or empty — nothing there reads fast.
+        const int waitMs = lastKnownState == 1 ? 450 : 1500;
         QMutexLocker lock(&m_mutex);
         if (!m_stop && m_commands.isEmpty())
-            m_wake.wait(&m_mutex, 450);
+            m_wake.wait(&m_mutex, waitMs);
     }
 
     winRtApi().roUninitialize();

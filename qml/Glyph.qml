@@ -1,7 +1,10 @@
 import QtQuick
 import QtQuick.Shapes
 
-// Vector glyph icons on a 24-unit grid with support for stroked and filled icons.
+// Vector glyph icons on a 24-unit grid with support for stroked and filled
+// icons, drawn with the curve renderer so they stay razor sharp at any size
+// and display scale. The stroke width is in device-independent pixels, so a
+// 13 px icon and a 24 px icon read with the same line weight.
 Item {
     id: glyph
     property string name: "close"
@@ -17,84 +20,9 @@ Item {
     width: size
     height: size
 
-    // Glyphs drawn as solid shapes; everything else is a line icon.
-    readonly property var fillIcons: ({
-        "play": true,
-        "pause": true,
-        "prev": true,
-        "next": true,
-        "more": true,
-        "note": true,
-        "notes": true,
-        "spark": true
-    })
-
-    readonly property bool isFill: filled || !!fillIcons[glyph.name]
-
-    readonly property var paths: ({
-        "close": "M6 6 L18 18 M18 6 L6 18",
-        "plus": "M12 5 L12 19 M5 12 L19 12",
-        "open": "M7.5 16.5 L16.5 7.5 M9 7.5 L16.5 7.5 L16.5 15",
-        "folder": "M3.5 7.5 Q3.5 5.5 5.5 5.5 L9.5 5.5 L11.5 7.5 L18.5 7.5 Q20.5 7.5 20.5 9.5 L20.5 16.5 Q20.5 18.5 18.5 18.5 L5.5 18.5 Q3.5 18.5 3.5 16.5 Z",
-        "unpin": "M4.5 7 L19.5 7 M9.5 7 L9.5 4.5 L14.5 4.5 L14.5 7 M6.5 7 L7.5 19.5 L16.5 19.5 L17.5 7",
-        "left": "M14.5 6 L8.5 12 L14.5 18",
-        "right": "M9.5 6 L15.5 12 L9.5 18",
-        "up": "M6 14.5 L12 8.5 L18 14.5",
-        "down": "M6 9.5 L12 15.5 L18 9.5",
-        "power": "M12 3.5 L12 11 M7.2 6.4 A7.5 7.5 0 1 0 16.8 6.4",
-        "reset": "M4.5 12 A7.5 7.5 0 1 0 7 6.4 M4.5 3.5 L4.5 8 L9 8",
-        "check": "M5 12.5 L10 17.5 L19 7",
-        "settings": "M4 7 H13 M17 7 H20 M4 17 H7 M11 17 H20 M15 4.5 V9.5 M9 14.5 V19.5",
-        "list": "M4 6.5 H20 M4 12 H20 M4 17.5 H13",
-
-        // ---- transport (solid, softly rounded corners)
-        "play": "M8 5.6 C8 4.8 8.9 4.3 9.6 4.8 L19 11.2 C19.6 11.6 19.6 12.4 19 12.8 L9.6 19.2 C8.9 19.7 8 19.2 8 18.4 Z",
-        "pause": "M7.5 5 H9.5 A1 1 0 0 1 10.5 6 V18 A1 1 0 0 1 9.5 19 H7.5 A1 1 0 0 1 6.5 18 V6 A1 1 0 0 1 7.5 5 Z M14.5 5 H16.5 A1 1 0 0 1 17.5 6 V18 A1 1 0 0 1 16.5 19 H14.5 A1 1 0 0 1 13.5 18 V6 A1 1 0 0 1 14.5 5 Z",
-        "prev": "M6 5 H7 A1 1 0 0 1 8 6 V18 A1 1 0 0 1 7 19 H6 A1 1 0 0 1 5 18 V6 A1 1 0 0 1 6 5 Z M19 6.1 V17.9 C19 18.7 18.1 19.2 17.4 18.7 L10.6 13 C10 12.5 10 11.5 10.6 11 L17.4 5.3 C18.1 4.8 19 5.3 19 6.1 Z",
-        "next": "M17 5 H18 A1 1 0 0 1 19 6 V18 A1 1 0 0 1 18 19 H17 A1 1 0 0 1 16 18 V6 A1 1 0 0 1 17 5 Z M5 6.1 C5 5.3 5.9 4.8 6.6 5.3 L13.4 11 C14 11.5 14 12.5 13.4 13 L6.6 18.7 C5.9 19.2 5 18.7 5 17.9 Z",
-
-        // ---- music notes (solid)
-        "note": "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z",
-        "notes": "M9 5 L20 2.5 L20 5.5 L9 8 Z M9 5 H11 V17 H9 Z M18 3 H20 V14.5 H18 Z M5 17 A3 3 0 1 1 11 17 A3 3 0 1 1 5 17 Z M14 14.5 A3 3 0 1 1 20 14.5 A3 3 0 1 1 14 14.5 Z",
-
-        // ---- player line icons
-        "heart": "M12 19.5 C12 19.5 3.5 14.6 3.5 8.9 C3.5 6.4 5.4 4.5 7.8 4.5 C9.6 4.5 11.1 5.6 12 7 C12.9 5.6 14.4 4.5 16.2 4.5 C18.6 4.5 20.5 6.4 20.5 8.9 C20.5 14.6 12 19.5 12 19.5 Z",
-        "volume": "M4 9.5 H7 L11.5 5.5 V18.5 L7 14.5 H4 Z M15 9.2 C16.4 10.6 16.4 13.4 15 14.8 M17.8 6.5 C20.8 9.5 20.8 14.5 17.8 17.5",
-        "mute": "M4 9.5 H7 L11.5 5.5 V18.5 L7 14.5 H4 Z M15.5 9.5 L20.5 14.5 M20.5 9.5 L15.5 14.5",
-        "shuffle": "M3.5 7 H6.8 C10.5 7 13.5 17 17.2 17 H20.5 M17.5 14 L20.5 17 L17.5 20 M3.5 17 H6.8 C8.3 17 9.6 15.4 10.7 13.5 M13.3 10.5 C14.4 8.6 15.7 7 17.2 7 H20.5 M17.5 4 L20.5 7 L17.5 10",
-        "repeat": "M17 3 L20 6 L17 9 M4 11 V10 C4 7.8 5.8 6 8 6 H20 M7 21 L4 18 L7 15 M20 13 V14 C20 16.2 18.2 18 16 18 H4",
-        "chevron-down": "M6.5 9.5 L12 15 L17.5 9.5",
-        "more": "M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z",
-
-        "edit": "M15.5 5.5 L18.5 8.5 M5 19 L8.5 18.2 L18.5 8.2 Q19.2 7.5 18.5 6.8 L17.2 5.5 Q16.5 4.8 15.8 5.5 L5.8 15.5 Z",
-        "activity": "M3.5 12 L7.5 12 L10 5.5 L14 18.5 L16.5 12 L20.5 12",
-
-        // ---- tools
-        "timer": "M4 13.5 A8 8 0 1 0 20 13.5 A8 8 0 1 0 4 13.5 Z M12 13.5 L12 9 M9.5 3.5 H14.5",
-        "clipboard": "M9 4.5 H15 A1 1 0 0 1 16 5.5 V6.5 H8 V5.5 A1 1 0 0 1 9 4.5 Z M8 6 H6.5 A1.5 1.5 0 0 0 5 7.5 V19 A1.5 1.5 0 0 0 6.5 20.5 H17.5 A1.5 1.5 0 0 0 19 19 V7.5 A1.5 1.5 0 0 0 17.5 6 H16 M8.5 12 H15.5 M8.5 16 H13",
-        "pin": "M9 4.5 H15 M10 4.5 V10 L7.5 13.5 H16.5 L14 10 V4.5 M12 13.5 V20",
-        "minus": "M5 12 H19",
-
-        // ---- quick toggles, palette and power
-        "wifi": "M3.5 9.5 C7.4 5.8 16.6 5.8 20.5 9.5 M6.5 12.9 C9.1 10.5 14.9 10.5 17.5 12.9 M9.6 16.2 C10.9 15 13.1 15 14.4 16.2 M12 18.9 A0.9 0.9 0 1 0 12 20.7 A0.9 0.9 0 1 0 12 18.9 Z",
-        "bluetooth": "M7 6.8 L17 16.8 L12 21.6 L12 2.4 L17 7.2 L7 17.2",
-        "moon": "M20.4 13.6 A8.6 8.6 0 1 1 10.4 3.6 A6.9 6.9 0 0 0 20.4 13.6 Z",
-        "mic": "M12 14.8 A3.6 3.6 0 0 0 15.6 11.2 V6.6 A3.6 3.6 0 0 0 8.4 6.6 V11.2 A3.6 3.6 0 0 0 12 14.8 Z M5.8 11.4 A6.2 6.2 0 0 0 18.2 11.4 M12 17.6 V20.6",
-        "mic-off": "M12 14.8 A3.6 3.6 0 0 0 15.6 11.2 V6.6 A3.6 3.6 0 0 0 8.4 6.6 V11.2 A3.6 3.6 0 0 0 12 14.8 Z M5.8 11.4 A6.2 6.2 0 0 0 18.2 11.4 M12 17.6 V20.6 M4.5 4.5 L19.5 19.5",
-        "lock": "M7.5 10.5 V7.7 A4.5 4.5 0 0 1 16.5 7.7 V10.5 M6.8 10.5 H17.2 A1.8 1.8 0 0 1 19 12.3 V18.7 A1.8 1.8 0 0 1 17.2 20.5 H6.8 A1.8 1.8 0 0 1 5 18.7 V12.3 A1.8 1.8 0 0 1 6.8 10.5 Z M12 14.5 V16.5",
-        "zzz": "M4.5 6.5 H10 L4.5 12 H10 M13.5 11.5 H19.5 L13.5 17.5 H19.5",
-        "search": "M10.8 16.6 A5.8 5.8 0 1 0 10.8 5 A5.8 5.8 0 1 0 10.8 16.6 Z M15.2 15.2 L20 20",
-        "globe": "M12 3.6 A8.4 8.4 0 1 0 12 20.4 A8.4 8.4 0 1 0 12 3.6 Z M3.6 12 H20.4 M12 3.6 C9 6.8 9 17.2 12 20.4 M12 3.6 C15 6.8 15 17.2 12 20.4",
-        "sliders": "M4 7.5 H20 M4 12 H20 M4 16.5 H20 M9.5 5.5 V9.5 M15.5 10 V14 M12 14.5 V18.5",
-        "equals": "M5.5 9.5 H18.5 M5.5 14.5 H18.5",
-
-        // ---- desktop buddy / task panels
-        "send": "M20.3 3.7 L4 10 L10.5 13.1 Z M20.3 3.7 L10.5 13.1 L14.2 20.3",
-        "spark": "M12 2.8 L14.3 9 L20.4 11.2 L14.3 13.4 L12 19.6 L9.7 13.4 L3.6 11.2 L9.7 9 Z M18.9 16.2 L19.7 18.3 L21.8 19.1 L19.7 19.9 L18.9 22 L18.1 19.9 L16 19.1 L18.1 18.3 Z",
-        "chart": "M3.8 20.2 H20.2 M6.8 20.2 V13.6 M11.6 20.2 V8.2 M16.4 20.2 V11.2 M20.4 20.2 V5 M20.4 5 L17.2 7.4",
-        "doc": "M7 3.5 H17 A2 2 0 0 1 19 5.5 V18.5 A2 2 0 0 1 17 20.5 H7 A2 2 0 0 1 5 18.5 V5.5 A2 2 0 0 1 7 3.5 Z M8.5 8.5 H15.5 M8.5 12 H15.5 M8.5 15.5 H13",
-        "tasks": "M4 6.6 L5.4 8.2 L8.2 4.6 M4 13.1 L5.4 14.7 L8.2 11.1 M4 19.6 L5.4 21.2 L8.2 17.6 M11 6.4 H20 M11 11.9 H20 M11 17.4 H16.5"
-    })
+    // Icon geometry lives once in the GlyphPaths singleton instead of in
+    // every Glyph instance.
+    readonly property bool isFill: filled || !!GlyphPaths.fillIcons[glyph.name]
 
     Shape {
         anchors.fill: parent
@@ -108,7 +36,7 @@ Item {
             fillRule: ShapePath.WindingFill
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathSvg { path: glyph.paths[glyph.name] || "" }
+            PathSvg { path: GlyphPaths.paths[glyph.name] || "" }
         }
     }
 }

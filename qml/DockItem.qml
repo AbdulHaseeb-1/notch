@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 
 // One app in the notch: real app icon (mono or colour), hover magnification,
 // launch bounce, running indicator.
@@ -86,7 +87,12 @@ Item {
             id: icon
             anchors.fill: parent
             source: item.iconSource
-            sourceSize: Qt.size(128, 128)
+            // Decode at the real on-screen pixel size: the icon's size, the
+            // hover magnification (up to 1.22x) and the display scale, rounded
+            // up to 16 px steps so resizing doesn't churn the image cache.
+            readonly property int px: Math.max(48, Math.ceil(item.iconSize * 1.25
+                                                         * Math.max(1, Screen.devicePixelRatio) / 16) * 16)
+            sourceSize: Qt.size(px, px)
             asynchronous: false
             cache: true
             smooth: true

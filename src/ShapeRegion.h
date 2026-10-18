@@ -22,9 +22,13 @@ inline QRegion regionFromShapes(const QVariantList &shapes, qreal grow = 0, qrea
         if (bounds.isEmpty())
             continue;
         const qreal radius = (shape.value(QStringLiteral("radius")).toDouble() + grow) * scale;
-        QPainterPath path;
-        path.addRoundedRect(bounds, radius, radius);
-        region += QRegion(path.toFillPolygon().toPolygon(), Qt::WindingFill);
+        if (radius <= 1.0) {
+            region += bounds;
+        } else {
+            QPainterPath path;
+            path.addRoundedRect(bounds, radius, radius);
+            region += QRegion(path.toFillPolygon().toPolygon(), Qt::WindingFill);
+        }
     }
     return region;
 }

@@ -20,6 +20,8 @@ class DockController final : public QObject
                    NOTIFY launchAtStartupChanged)
     Q_PROPERTY(bool startupSupported READ startupSupported CONSTANT)
     Q_PROPERTY(QString version READ version CONSTANT)
+    Q_PROPERTY(QString dataDir READ dataDir CONSTANT)
+    Q_PROPERTY(QUrl settingsFileUrl READ settingsFileUrl CONSTANT)
 
 public:
     explicit DockController(QObject *parent = nullptr);
@@ -30,6 +32,8 @@ public:
     void setLaunchAtStartup(bool enabled);
     bool startupSupported() const;
     QString version() const;
+    QString dataDir() const;
+    QUrl settingsFileUrl() const;
 
     // Thread-safe lookup used by the icon provider.
     QString iconPathForId(const QString &iconId) const;
@@ -44,6 +48,8 @@ public:
     Q_INVOKABLE void revealInFolder(int index);
     Q_INVOKABLE void rename(int index, const QString &name);
     Q_INVOKABLE void resetToDefaults();
+    Q_INVOKABLE void openDataFolder() const;
+    Q_INVOKABLE void syncStateSnapshot() const;
     Q_INVOKABLE void quit();
 
 signals:

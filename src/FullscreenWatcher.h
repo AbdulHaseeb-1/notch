@@ -13,15 +13,17 @@ class FullscreenWatcher final : public QObject
 
 public:
     explicit FullscreenWatcher(QObject *parent = nullptr);
+    ~FullscreenWatcher() override;
 
     bool active() const { return m_active; }
+
+public slots:
+    void check();
 
 signals:
     void activeChanged();
 
 private:
-    void check();
-
     bool m_active = false;
     QTimer m_timer;
 };

@@ -1,11 +1,11 @@
 import QtQuick
 
-// The hub under the clock: System, Timer and Clipboard in one card. A tab
+// The hub under the clock: Timer and Clipboard in one card. A tab
 // strip on top; the body slides between pages and springs to the new height.
 Item {
     id: hub
 
-    property int tab: 0                 // 0 System, 1 Timer, 2 Clipboard
+    property int tab: 0                 // 0 Timer, 1 Clipboard
     property var focusTimer             // FocusTimer
     property real maxBodyHeight: 100000
     readonly property real headerH: 58
@@ -24,7 +24,7 @@ Item {
     implicitHeight: headerH + 1 + content.height
 
     function pageHeight(i) {
-        return i === 0 ? system.implicitHeight : (i === 1 ? timerPage.implicitHeight : clip.implicitHeight)
+        return i === 0 ? timerPage.implicitHeight : clip.implicitHeight
     }
 
     Item {
@@ -40,9 +40,8 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             height: 34
             options: [
-                { label: qsTr("System"), value: 0 },
-                { label: qsTr("Timer"), value: 1 },
-                { label: qsTr("Clipboard"), value: 2 }
+                { label: qsTr("Timer"), value: 0 },
+                { label: qsTr("Clipboard"), value: 1 }
             ]
             value: hub.tab
             onPicked: (v) => hub.tabPicked(v)
@@ -89,37 +88,15 @@ Item {
             NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
         }
 
-        Flickable {
-            anchors.fill: parent
-            contentWidth: width
-            contentHeight: system.implicitHeight
-            interactive: contentHeight > height + 1
-            boundsBehavior: Flickable.StopAtBounds
-            clip: true
-            visible: system.opacity > 0.01
-            z: hub.tab === 0 ? 1 : 0
-
-            SystemPanel {
-                id: system
-                width: parent.width
-                x: hub.tab === 0 ? 0 : -20
-                opacity: hub.tab === 0 ? 1 : 0
-                enabled: hub.tab === 0
-                Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                onCloseRequested: hub.closeRequested()
-            }
-        }
-
         TimerView {
             id: timerPage
             width: parent.width
             timer: hub.focusTimer
-            x: hub.tab === 1 ? 0 : (hub.tab < 1 ? 20 : -20)
-            opacity: hub.tab === 1 ? 1 : 0
+            x: hub.tab === 0 ? 0 : -20
+            opacity: hub.tab === 0 ? 1 : 0
             visible: opacity > 0.01
-            enabled: hub.tab === 1
-            z: hub.tab === 1 ? 1 : 0
+            enabled: hub.tab === 0
+            z: hub.tab === 0 ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
             Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
             onToastRequested: (text) => hub.toastRequested(text)
@@ -128,11 +105,11 @@ Item {
         ClipboardView {
             id: clip
             width: parent.width
-            x: hub.tab === 2 ? 0 : 20
-            opacity: hub.tab === 2 ? 1 : 0
+            x: hub.tab === 1 ? 0 : 20
+            opacity: hub.tab === 1 ? 1 : 0
             visible: opacity > 0.01
-            enabled: hub.tab === 2
-            z: hub.tab === 2 ? 1 : 0
+            enabled: hub.tab === 1
+            z: hub.tab === 1 ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
             Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
             onToastRequested: (text) => hub.toastRequested(text)

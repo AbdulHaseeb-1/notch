@@ -6,13 +6,13 @@ import QtQuick
 Item {
     id: card
 
-    property var host: null   // the BuddyPanel instance (payload, helpers, signals)
+    property var host: null   // BuddyBubble or BuddyPanel (provides payload)
 
     readonly property var cd: host ? host.payload : null
 
     // The chart payload is the only one with candles; the help panel shares
     // this card file with an empty payload, so every read is guarded by this.
-    readonly property bool ready: !!cd && cd.candles !== undefined
+    readonly property bool ready: !!cd && !!cd.candles && Array.isArray(cd.candles)
 
     Theme { id: t }
 
@@ -23,6 +23,33 @@ Item {
     }
 
     function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
+
+    function profit(v) {
+        const n = Number(v)
+        if (n >= 1000)
+            return n.toLocaleString(Qt.locale("en-US"), 'f', 0)
+        if (n >= 100)
+            return n.toFixed(0)
+        return n.toFixed(2)
+    }
+
+    function chartSummaryText() {
+        if (!cd || !cd.bias)
+            return ""
+        const bias = cd.bias === "uptrend" ? "trending up"
+                   : (cd.bias === "downtrend" ? "trending down" : "moving sideways")
+        const strong = cd.strength >= 0.6 ? "with conviction"
+                     : (cd.strength >= 0.4 ? "moderately" : "weakly")
+        const r = cd.resistance && cd.resistance.length
+                  ? profit(cd.resistance[0]) : "no nearby resistance"
+        const s = cd.support && cd.support.length
+                  ? profit(cd.support[0]) : "no nearby support"
+        const dir = cd.changePct >= 0 ? "up" : "down"
+        return ("The sample series closes %1 %2 over the window. Bias says %3, %4. "
+                + "Would-be watch: %5 above for sellers, %6 below for buyers. "
+                + "Both levels and trend are read from the local fixture — no feed is wired up.")
+            .arg(cd.symbol || "").arg(dir).arg(bias).arg(strong).arg(r).arg(s)
+    }
 
     Connections {
         target: host
@@ -43,7 +70,7 @@ Item {
             Text {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
-                text: card.ready ? card.cd.symbol : ""
+                text: (card.ready && card.cd && card.cd.symbol) ? String(card.cd.symbol) : ""
                 color: t.ink
                 font.family: t.font
                 font.pixelSize: 13
@@ -52,12 +79,12 @@ Item {
             Text {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                text: card.ready && card.host
-                      ? (card.host.profit(card.cd.last)
+                text: (card.ready && card.cd && card.cd.changePct !== undefined)
+                      ? (card.profit(card.cd.last)
                          + (card.cd.changePct >= 0 ? "  +" : "  ")
-                         + card.cd.changePct.toFixed(2) + "%")
+                         + Number(card.cd.changePct).toFixed(2) + "%")
                       : ""
-                color: card.ready && card.cd.changePct >= 0 ? t.success : t.danger
+                color: (card.ready && card.cd && card.cd.changePct >= 0) ? t.success : t.danger
                 font.family: t.font
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
@@ -156,7 +183,7 @@ Item {
                 ctx.fillStyle = card.alpha(color, 0.95)
                 // Quoted family: a bare "Segoe UI" parses as "SegoeUI".
                 ctx.font = "600 10px 'Segoe UI'"
-                const label = tag + " " + card.host.profit(price)
+                const label = tag + " " + card.profit(price)
                 ctx.fillText(label, w + 6, Math.min(canvas1.height - 6, Math.max(10, y + 4)))
             }
         }
@@ -228,7 +255,7 @@ Item {
         // Honest labels + summary from the fixture numbers.
         Text {
             width: parent.width
-            text: card.host ? card.host.chartSummaryText() : ""
+            text: card.chartSummaryText()
             color: t.textDim
             font.family: t.font
             font.pixelSize: 11

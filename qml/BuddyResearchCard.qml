@@ -13,7 +13,9 @@ Item {
 
     // Only research payloads carry a sentiment block; other kinds (the help
     // card) share this file with an empty payload, so reads are guarded.
-    readonly property bool ready: !!digest && digest.sentiment !== undefined
+    readonly property bool ready: !!digest && !!digest.sentiment && digest.sentiment.score !== undefined
+    readonly property real sentimentScore: ready ? Number(digest.sentiment.score || 0) : 0
+    readonly property string sentimentLabel: ready ? String(digest.sentiment.label || "") : ""
 
     Theme { id: t }
 
@@ -57,7 +59,7 @@ Item {
                     x: 10
                     y: 9
                     width: parent.width - 20
-                    text: card.ready ? card.digest.summary : ""
+                    text: (card.ready && card.digest && card.digest.summary) ? card.digest.summary : ""
                     color: t.text
                     font.family: t.font
                     font.pixelSize: 12
@@ -126,17 +128,17 @@ Item {
                         height: 20
                         radius: 10
                         // Soft tint of the verdict colour:
-                        color: card.ready ? card.tintSoft(card.sentimentColor(card.digest.sentiment.score))
+                        color: card.ready ? card.tintSoft(card.sentimentColor(card.sentimentScore))
                                           : "transparent"
                         border.width: 1
-                        border.color: card.ready ? card.tintEdge(card.sentimentColor(card.digest.sentiment.score))
+                        border.color: card.ready ? card.tintEdge(card.sentimentColor(card.sentimentScore))
                                                  : t.border
 
                         Text {
                             id: sentLabel
                             anchors.centerIn: parent
-                            text: card.ready ? card.digest.sentiment.label : ""
-                            color: card.ready ? card.sentimentColor(card.digest.sentiment.score) : t.textDim
+                            text: card.sentimentLabel
+                            color: card.ready ? card.sentimentColor(card.sentimentScore) : t.textDim
                             font.family: t.font
                             font.pixelSize: 10
                             font.weight: Font.DemiBold
@@ -144,7 +146,7 @@ Item {
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        text: card.ready ? (Math.round(card.digest.sentiment.score * 100) + "%")
+                        text: card.ready ? (Math.round(card.sentimentScore * 100) + "%")
                                         : ""
                         color: t.textFaint
                         font.family: t.font
@@ -157,10 +159,10 @@ Item {
                     radius: 2.5
                     color: t.track
                     Rectangle {
-                        width: card.ready ? Math.max(6, parent.width * card.digest.sentiment.score) : 6
+                        width: card.ready ? Math.max(6, parent.width * card.sentimentScore) : 6
                         height: parent.height
                         radius: 2.5
-                        color: card.ready ? card.sentimentColor(card.digest.sentiment.score) : t.track
+                        color: card.ready ? card.sentimentColor(card.sentimentScore) : t.track
                         Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
                     }
                 }

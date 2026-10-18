@@ -1,474 +1,989 @@
+// Noch's desktop buddy: an expressive companion orb with wide-angle 3D
+// sphere-projected eyes, squash-and-stretch physics, mood expressions (happy
+// arcs with a neon gradient halo, curious tilt, listening, pondering, reading
+// along, speaking pulse), petting detection, procedural sound effects, and a
+// thought bubble that carries every request from question to answer.
 import QtQuick
 import QtQuick.Shapes
 
-// Noch's desktop buddy: a small creature hanging from a rope at the top edge
-// of the screen. It lives inside the existing transparent, always-on-top
-// overlay window — no new window, no new platform code — and its hit regions
-// are added to the same click-through mask as the notch, its glass to the same
-// blur shape list. Drawn with the same Shape/vector pipeline as everything
-// else in the notch.
-//
-// States (one state machine, no overlaps):
-//   idle     — swinging, blinking, watching the cursor nearby.
-//   input    — clicked: the request bar opens beside it (BuddyInputBar).
-//   thinking — a task handler is running; it climbs and hops on the rope.
-//   result   — the BuddyPanel (in Main) shows the outcome.
-//
-// Everything the router calls a demo is labelled as sample data in the
-// panels; the timer / open-app / clipboard / mic / palette routes are real
-// Noch features, not simulations.
-//
-// Motion honours Windows' "Animation effects" switch through
-// appearance.systemMotionReduced(): with it off, swings get slower and smaller.
 Item {
     id: buddy
     objectName: "buddy"
 
     // ---- wiring from Main ---------------------------------------------------
-    property real s: 1                 // follows the notch size scale
-    property var desktop: null         // root.contentItem: clamp + mapping space
-    property var focusTimer: null      // the real FocusTimer instance
-    property var resultPanel: null     // the BuddyPanel instance (a sibling)
-    property string savedPlan: ""      // JSON from cfg.buddyPlan (persisted plan)
-    property real anchor: 200          // screen x of the rope's top, persisted
+    property real s: 1
+    property var desktop: null
+    property var focusTimer: null
+    property var resultPanel: null
+    property string savedPlan: ""
+    property real anchor: 200
+    property real anchorY: 8
+    property bool motionPaused: false
+    property real lastTrackMs: 0
+    property int farSide: 0
+    property bool solidRing: true
 
-    // ---- state ---------------------------------------------------------------
-    property string session: "idle"    // idle | input | thinking | result
+    // ---- state & mood -------------------------------------------------------
+    property string session: "idle"      // idle | input | thinking | result
+    property string mood: "neutral"      // neutral | happy | love | curious | listening | thinking | speaking | surprised | error
     property string lastRequest: ""
-    readonly property bool inputShown: session === "input" && inputBar.visible
-    readonly property Item inputItem: inputBar
+    property bool awaitingReply: false   // a chat request is in flight for the bubble
+    readonly property bool inputActive: session === "input" || session === "thinking"
+    readonly property bool bubbleShown: thought.visible
+    readonly property bool dragging: buddyHit.pressed && buddyHit.dragged
+    // Eyes stop following the cursor while the buddy ponders or reads its answer.
+    readonly property bool gazeLock: session === "thinking" || thought.revealing
 
-    signal buddyMoved(real x)
+    // Everything the click-through mask depends on, as one comparable string.
+    readonly property bool glowing: neon > 0.02 || sparkAnim.running || burstAnim.running
+    readonly property string maskSig: [glowing, emoteChip.visible, Math.round(emoteChip.width),
+                                       thought.maskSig].join("|")
+
+    signal buddyMoved(real x, real y)
     signal toastRequested(string text)
     signal paletteRequested()
     signal clipboardRequested()
     signal settingsRequested()
     signal activationRequested()
+    signal planEdited(var plan)
+    signal historySaved(string json)
+
+    // ---- history & conversation -------------------------------------------------
+    // Every answer is kept (newest first) so it can be reopened later; the
+    // conversation is the current bubble's thread, sent along with follow-ups.
+    property string historyJson: "[]"
+    readonly property var history: {
+        try {
+            const h = JSON.parse(historyJson)
+            return Array.isArray(h) ? h : []
+        } catch (e) {
+            return []
+        }
+    }
+    readonly property int historyLimit: 60
+    property var conversation: []
+
+    function recordHistory(kind, title, payload) {
+        if (kind === "note" || lastRequest.length === 0)
+            return
+        const entry = {
+            q: lastRequest,
+            kind: kind,
+            title: String(title || ""),
+            a: kind === "chat" && payload && payload.response ? String(payload.response).slice(0, 6000) : "",
+            t: Date.now()
+        }
+        // Asking the same thing again moves it to the top instead of piling up.
+        const list = history.filter(function (e) { return !(e.q === entry.q && e.kind === entry.kind) })
+        list.unshift(entry)
+        historySaved(JSON.stringify(list.slice(0, historyLimit)))
+    }
+    function clearHistory() {
+        historySaved("[]")
+    }
+    function rememberTurn(question, answer) {
+        const c = conversation.concat([{ role: "user", content: question },
+                                       { role: "assistant", content: String(answer).slice(0, 4000) }])
+        conversation = c.slice(-8)
+    }
+    // Reopen a past answer. Chat answers come straight from the record;
+    // local cards (chart, research, plan, help) are rebuilt by the router.
+    function replayHistory(entry) {
+        if (!entry || !entry.q)
+            return
+        cancelPending()
+        lastRequest = entry.q
+        replyToPanel = false
+        conversation = []
+        if (entry.kind === "chat") {
+            rememberTurn(entry.q, entry.a)
+            thought.showAnswer("chat", entry.title || entry.q, { response: entry.a }, false)
+            session = "result"
+            eureka()
+            if (typeof buddySfx !== "undefined" && buddySfx)
+                buddySfx.play("pop")
+        } else {
+            session = "thinking"
+            runTask()
+        }
+    }
 
     Theme { id: t }
 
     readonly property real mo: appearance.systemMotionReduced() ? 0.35 : 1.0
-    readonly property real ropeLen: Math.round(62 * s)
-    readonly property real bodyTop: ropeLen - Math.round(14 * s)
-    readonly property real bodyH: Math.round(48 * s)
-    readonly property real bodyBottom: bodyTop + bodyH
 
-    width: Math.round(92 * s)
-    height: bodyBottom + Math.round(16 * s)
-    x: Math.round(anchor - width / 2)
-    y: 0
+    // Orb geometry: sized to match the notch height (52px at 1.0x scale).
+    readonly property real orbSize: Math.round(52 * s)
+    readonly property real orbRadius: orbSize / 2
+    width: orbSize
+    height: orbSize
+
+    // Drag offsets are applied on top of anchor/anchorY while dragging, then
+    // committed via buddyMoved() on release so the bindings from Main.qml
+    // are never overwritten.
+    property real dragOffsetX: 0
+    property real dragOffsetY: 0
+    readonly property real baseX: Math.round(anchor - width / 2)
+    readonly property real baseY: Math.round(anchorY)
+    x: baseX + Math.round(dragOffsetX)
+    y: baseY + Math.round(dragOffsetY)
 
     BuddyRouter { id: router }
 
-    // ---- geometry for the click-through mask --------------------------------
+    // ---- wide-area 3D sphere model constants --------------------------------
+    // Expanded angular range + face-center lead allow the eyes to travel across
+    // ~90% of the orb interior with natural 3D foreshortening near the rim.
+    readonly property real eyeSplit: 17.5
+    readonly property real eyeW: 0.205
+    readonly property real eyeH: 0.44
+    readonly property real restYaw: 0
+    readonly property real restPitch: -4
+    readonly property real restRoll: 0
+    readonly property real scale_: orbRadius * 0.94
+    readonly property real cx_: orbRadius
+    readonly property real cy_: orbRadius
+    readonly property real yawMax: 58
+    readonly property real pitchMax: 50
+    readonly property real rollMax: 14
 
-    // Interactive rects (buddy + open input bar) in `item` coordinates —
-    // Main unions these into the window mask. Swing is covered by margins and
-    // never keyed into the mask, so the mask stays static while it swings.
-    function regionsIn(item) {
-        const out = []
-        if (!visible || !desktop)
-            return out
-        const top = mapToItem(item, width / 2, 0)
-        out.push({ x: Math.round(top.x - 14 * s), y: Math.round(top.y),
-                   width: Math.round(28 * s), height: Math.round(ropeLen + 10 * s), radius: 10 })
-        const hull = mapToItem(item, width / 2 - 26 * s - 8, bodyTop - 8)
-        out.push({ x: Math.round(hull.x), y: Math.round(hull.y),
-                   width: Math.round(52 * s + 16), height: Math.round(48 * s + 22), radius: 18 })
-        if (inputShown) {
-            const r = inputBar.mapToItem(item, 0, 0)
-            out.push({ x: Math.round(r.x - 6), y: Math.round(r.y - 6),
-                       width: Math.round(inputBar.width + 12), height: Math.round(inputBar.height + 12), radius: 22 })
-        }
-        return out
-    }
+    // ---- gaze & expression physics state ------------------------------------
+    property real gazeYaw: restYaw
+    property real gazePitch: restPitch
+    property real gazeRoll: restRoll
+    property real gazeVelYaw: 0
+    property real gazeVelPitch: 0
+    property real gazeVelRoll: 0
 
-    // ---- cursor watching ------------------------------------------------------
+    property real targetYaw: restYaw
+    property real targetPitch: restPitch
+    property real targetRoll: restRoll
 
-    // Desktop coordinates of the pointer, smoothed; drives the lean and pupils.
-    property real lx: anchor
-    property real ly: 0
-    Behavior on lx { NumberAnimation { duration: 340; easing.type: Easing.OutCubic } }
-    Behavior on ly { NumberAnimation { duration: 340; easing.type: Easing.OutCubic } }
+    // Extra face translation lead so eyes sweep across a much larger area
+    property real faceLeadX: 0
+    property real faceLeadY: 0
 
-    readonly property real lean: {
-        const dx = lx - anchor
-        if (Math.abs(dx) < 6)
-            return 0
-        return Math.max(-2.6, Math.min(2.6, dx / 44)) * mo
-    }
+    // Dynamic expression modifiers (animated smoothly in gazeSpring)
+    property real happyArc: 0          // 0..1: raises lower eyelid into a happy '^' crescent
+    property real eyeWide: 0           // -0.3..+0.35: squint vs wide-eyed surprise
+    property real asymLeft: 0          // curious asymmetric left eye scale
+    property real asymRight: 0         // curious asymmetric right eye scale
+    property real speakBounce: 0       // 0..1 rhythmic modulation while speaking/streaming
+    property real breathPhase: 0       // continuous organic idle breathing phase
+    property real hopOffsetY: 0        // vertical jump/bounce offset
+    property real hopVelY: 0
+    property real squashX: 1.0         // squash-and-stretch horizontal scale
+    property real squashY: 1.0         // squash-and-stretch vertical scale
+    property real dragVelX: 0
+    property real dragVelY: 0
+    property real neon: 0              // 0..1: neon gradient halo, the buddy's "happy glow"
+    // The halo's gradient stops, chosen in Settings > Buddy > Ring colour.
+    readonly property var ringColors: appearance.ringColors
 
-    // Pupil shift inside the fixed 52x48 body space.
-    readonly property real eyeShiftX: Math.max(-1.6, Math.min(1.6, (lx - anchor) / 60)) * mo
-    readonly property real eyeShiftY: Math.max(-1.4, Math.min(1.6, (ly - (ropeLen + 10 * s)) / 140)) * mo
-
-    // Hover-only probe across the buddy area: acceptedButtons NoButton means it
-    // never steals a click; only masked areas deliver events anyway.
-    MouseArea {
-        id: probe
-        acceptedButtons: Qt.NoButton
-        hoverEnabled: true
-        cursorShape: Qt.ArrowCursor
-        x: -buddy.x
-        y: -buddy.y
-        width: buddy.desktop ? buddy.desktop.width : 0
-        height: buddy.desktop ? buddy.desktop.height : 0
-        onPositionChanged: (mouse) => {
-            buddy.lx = mouse.x
-            buddy.ly = mouse.y
-            // Welcome only when the pointer comes close to the creature
-            // itself, not anywhere else the window's mask can see.
-            const near = Math.abs(mouse.x - buddy.anchor) < 96 * buddy.s && mouse.y < buddy.bodyBottom + 80 * buddy.s
-            if (!near)
-                buddy.nearWelcomed = false
-            else if (!buddy.nearWelcomed && buddy.session === "idle"
-                     && buddy.bubbleText.length === 0) {
-                buddy.nearWelcomed = true
-                buddy.emote(qsTr("Hi!"))
-            }
-        }
-        onExited: {
-            buddy.nearWelcomed = false
-            buddy.lx = buddy.anchor
-            buddy.ly = buddy.ropeLen
+    Timer {
+        id: moodResetTimer
+        interval: 2600
+        onTriggered: {
+            if (buddy.session === "thinking")
+                buddy.mood = "thinking"
+            else if (buddy.session === "input")
+                buddy.mood = "listening"
+            else
+                buddy.mood = "neutral"
+            buddy.springing = true
         }
     }
 
-    // ---- blinking ------------------------------------------------------------
+    function setMood(m, durationMs) {
+        mood = m
+        springing = true
+        if (durationMs && durationMs > 0) {
+            moodResetTimer.interval = durationMs
+            moodResetTimer.restart()
+        } else {
+            moodResetTimer.stop()
+        }
+    }
 
+    function hop(strength) {
+        hopVelY = -(strength || 110) * mo
+        squashX = 0.88
+        squashY = 1.14
+        springing = true
+    }
+
+    function celebrate() {
+        setMood("love", 3000)
+        hop(145)
+        targetRoll = 12 * mo
+        neonBurst(true)
+        if (!thought.visible)
+            emote("", "heart")
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("happy")
+    }
+
+    // A ripple of the neon ring, optionally with a little ring of sparkles.
+    function neonBurst(sparkles) {
+        burstAnim.restart()
+        if (sparkles)
+            sparkAnim.restart()
+        springing = true
+    }
+
+    // "Got it": a squash-and-blink gulp when a request is handed over.
+    function gulp() {
+        squashX = 1.14
+        squashY = 0.86
+        hopVelY = -60 * mo
+        blinkShut = true
+        blinkOpen.restart()
+        springing = true
+    }
+
+    // "Aha!": wide eyes for a beat, then a happy hop with the neon ripple.
+    function eureka() {
+        setMood("surprised", 0)
+        targetPitch = 8 * mo
+        springing = true
+        eurekaTimer.restart()
+    }
+    Timer {
+        id: eurekaTimer
+        interval: 230
+        onTriggered: {
+            buddy.setMood("happy", 2400)
+            buddy.hop(118)
+            buddy.neonBurst(true)
+            buddy.lookAtBubble(26, -4)
+        }
+    }
+
+    // Turn the eyes toward the thought bubble (yaw in degrees away from the
+    // orb on the bubble's side, pitch > 0 looks up).
+    readonly property real bubbleSide: bubbleFlipped ? -1 : 1
+    function lookAtBubble(yaw, pitch) {
+        if (bubbleCentered) {
+            const vSign = bubbleAbove ? 1 : -1
+            targetYaw = ((Math.random() - 0.5) * 8) * mo
+            targetPitch = Math.max(-pitchMax, Math.min(pitchMax, vSign * 28 + pitch * 0.4)) * mo
+            targetRoll = 0
+        } else {
+            const diagPitch = (bubbleAbove ? 18 : -18) + pitch * 0.5
+            targetYaw = bubbleSide * Math.min(yawMax, yaw) * mo
+            targetPitch = Math.max(-pitchMax, Math.min(pitchMax, diagPitch)) * mo
+            targetRoll = -bubbleSide * 5 * mo
+        }
+        glanceAt = wanderT + 1.6
+        springing = true
+    }
+
+    // Reading its own answer as it appears: eyes on the bubble, drifting down
+    // the lines with a soft speaking bounce.
+    function readAlong(progress) {
+        pulseSpeaking()
+        const sway = Math.sin(wanderT * 9) * 4
+        lookAtBubble(24 + sway, 6 - 24 * Math.min(1, progress))
+    }
+
+    // The answer has finished revealing: glance back at the user, pleased.
+    function answerSettled() {
+        setMood("happy", 1800)
+        hop(60)
+        const c = overlay.cursorPos()
+        lx = c.x
+        ly = c.y
+        cursorStill = 0
+        updateGaze()
+        springing = true
+    }
+
+    function pulseSpeaking() {
+        if (mood !== "speaking" && mood !== "love")
+            setMood("speaking", 900)
+        else if (mood === "speaking")
+            moodResetTimer.restart()
+        speakBounce = 0.55 + Math.random() * 0.45
+        springing = true
+    }
+
+    // ---- natural blink (with occasional human double-blink) -----------------
     property bool blinkShut: false
-
+    property bool pendingDoubleBlink: false
     Timer {
         id: blinkLoop
         repeat: true
-        running: buddy.visible
-        interval: 3400
+        running: buddy.visible && !buddy.motionPaused
+        interval: 3200
         onTriggered: {
-            interval = 2600 + Math.random() * 3000
+            interval = 2200 + Math.random() * 3200
+            buddy.pendingDoubleBlink = Math.random() < 0.28
             buddy.blinkShut = true
             blinkOpen.restart()
         }
     }
     Timer {
         id: blinkOpen
-        interval: 115
-        onTriggered: buddy.blinkShut = false
-    }
-
-    // ---- idle grip adjustments -------------------------------------------------
-
-    property int gripShift: 0
-
-    Timer {
-        id: gripTimer
-        repeat: true
-        running: buddy.visible && buddy.session === "idle"
-        interval: 9000
+        interval: 105
         onTriggered: {
-            interval = 8000 + Math.random() * 6000
-            buddy.gripShift = buddy.gripShift === 0 ? 1 : 0
+            buddy.blinkShut = false
+            if (buddy.pendingDoubleBlink) {
+                buddy.pendingDoubleBlink = false
+                doubleBlinkGap.restart()
+            }
+        }
+    }
+    Timer {
+        id: doubleBlinkGap
+        interval: 95
+        onTriggered: {
+            buddy.blinkShut = true
+            blinkOpen.restart()
         }
     }
 
-    // ---- rope + rig ------------------------------------------------------------
+    // ---- cursor tracking -----------------------------------------------------
+    property real lx: anchor
+    property real ly: anchorY + orbRadius
+
+    // ---- geometry for the click-through mask --------------------------------
+    function regionsIn(item) {
+        const out = []
+        if (!visible || !desktop)
+            return out
+        const origin = mapToItem(item, 0, 0)
+        // Room for the neon glow and sparkles only while they are showing,
+        // so the orb doesn't swallow clicks around it the rest of the time.
+        const pad = glowing ? Math.round(24 * s) : 6
+        out.push({ x: Math.round(origin.x - pad), y: Math.round(origin.y - pad),
+                   width: Math.round(width + 2 * pad), height: Math.round(height + 2 * pad),
+                   radius: Math.round(Math.min(width, height) / 2 + pad) })
+        if (emoteChip.visible) {
+            const e = emoteChip.mapToItem(item, 0, 0)
+            out.push({ x: Math.round(e.x - 4), y: Math.round(e.y - 4),
+                       width: Math.round(emoteChip.width + 8), height: Math.round(emoteChip.height + 8),
+                       radius: 16 })
+        }
+        if (thought.visible) {
+            const b = thought.maskBody
+            const tl = thought.maskTail
+            out.push({ x: Math.round(origin.x + b.x), y: Math.round(origin.y + b.y),
+                       width: b.width, height: b.height, radius: 28 })
+            out.push({ x: Math.round(origin.x + tl.x), y: Math.round(origin.y + tl.y),
+                       width: tl.width, height: tl.height, radius: 10 })
+        }
+        return out
+    }
+
+    // ---- gaze update (wide-area 3D sphere model) ----------------------------
+    function deg(d) { return d * Math.PI / 180 }
+
+    function spin(u, v, angle) {
+        const c = Math.cos(angle)
+        const s = Math.sin(angle)
+        return [
+            [u[0]*c + v[0]*s, u[1]*c + v[1]*s, u[2]*c + v[2]*s],
+            [v[0]*c - u[0]*s, v[1]*c - u[1]*s, v[2]*c - u[2]*s]
+        ]
+    }
+
+    function computeEyePoses() {
+        let f = [0, 0, 1], right = [1, 0, 0], down = [0, 1, 0]
+        const yaw = buddy.gazeYaw
+        const pitch = buddy.gazePitch
+        const roll = buddy.gazeRoll
+        ;[f, right] = spin(f, right, deg(yaw))
+        ;[down, f]  = spin(down, f, deg(pitch))
+        ;[right, down] = spin(right, down, deg(roll))
+
+        const leadX = (yaw / buddy.yawMax) * (buddy.orbRadius * 0.18)
+        const leadY = -(pitch / buddy.pitchMax) * (buddy.orbRadius * 0.16)
+        buddy.faceLeadX = leadX
+        buddy.faceLeadY = leadY
+
+        const build = (side) => {
+            const [ef, er] = spin(f, right, deg(buddy.eyeSplit * side))
+            const tilt = (yaw - buddy.restYaw) * 0.30
+            const sideTilt = (side < 0)
+                ? (yaw < buddy.restYaw ? tilt : tilt * 0.28)
+                : (yaw > buddy.restYaw ? tilt : tilt * 0.28)
+            const phi = deg(sideTilt)
+            const cp = Math.cos(phi), sp = Math.sin(phi)
+
+            const asym = side < 0 ? buddy.asymLeft : buddy.asymRight
+            const wScale = Math.max(0.65, 1.0 + buddy.eyeWide * 0.45 + buddy.happyArc * 0.12)
+            const hBase = Math.max(0.35, 1.0 + buddy.eyeWide + asym + buddy.speakBounce * 0.28 - buddy.happyArc * 0.18)
+            const k = buddy.blinkShut ? 0.08 : hBase
+
+            const ax = (er[0] * cp + down[0] * sp) * wScale
+            const ay = (er[1] * cp + down[1] * sp) * wScale
+            const cx_2 = (-er[0] * sp + down[0] * cp) * k
+            const cy_2 = (-er[1] * sp + down[1] * cp) * k
+
+            return {
+                x: ef[0] * buddy.scale_ + leadX,
+                y: ef[1] * buddy.scale_ + leadY,
+                a: ax, b: ay,
+                c: cx_2, d: cy_2,
+                depth: ef[2]
+            }
+        }
+        const L = build(-1)
+        const R = build(1)
+
+        eyeLMat.matrix = Qt.matrix4x4(L.a, L.c, 0, buddy.cx_ + L.x,
+                                      L.b, L.d, 0, buddy.cy_ + L.y,
+                                      0, 0, 1, 0,
+                                      0, 0, 0, 1)
+        eyeL.visible = L.depth > -0.25
+        eyeL.opacity = Math.max(0, Math.min(1, (L.depth + 0.22) / 0.28))
+
+        eyeRMat.matrix = Qt.matrix4x4(R.a, R.c, 0, buddy.cx_ + R.x,
+                                      R.b, R.d, 0, buddy.cy_ + R.y,
+                                      0, 0, 1, 0,
+                                      0, 0, 0, 1)
+        eyeR.visible = R.depth > -0.25
+        eyeR.opacity = Math.max(0, Math.min(1, (R.depth + 0.22) / 0.28))
+
+    }
+
+    // Soft non-linear response curve: high sensitivity near the buddy so small
+    // cursor movements feel immediately alive, while reaching smoothly all the
+    // way to the edges of the monitor.
+    function softCurve(delta, nearRef, farRef) {
+        const sign = delta < 0 ? -1 : 1
+        const ad = Math.abs(delta)
+        const nearPart = 1.0 - Math.exp(-ad / nearRef)
+        const farPart = Math.min(1.0, ad / farRef)
+        return sign * Math.min(1.0, nearPart * 0.72 + farPart * 0.28)
+    }
+
+    function updateGaze() {
+        if (!desktop)
+            return
+        const bx = buddy.x + buddy.width / 2
+        const by = buddy.y + buddy.height / 2
+        const dx = lx - bx
+        const dy = ly - by
+
+        const farX = Math.max(360, desktop.width * 0.55)
+        const farY = Math.max(280, desktop.height * 0.55)
+        let nx = softCurve(dx, 140, farX)
+        let ny = softCurve(dy, 120, farY)
+
+        // Radial clamp so diagonal corner gaze stays naturally on the sphere
+        const m = Math.hypot(nx, ny)
+        if (m > 1.08) {
+            nx = (nx / m) * 1.08
+            ny = (ny / m) * 1.08
+        }
+
+        buddy.targetYaw = nx * buddy.yawMax * mo
+        // Negative pitch in spin(down, f, pitch) points downward (+y on screen).
+        buddy.targetPitch = -ny * buddy.pitchMax * mo
+        buddy.targetRoll = -nx * buddy.rollMax * 0.65 * mo
+    }
+
+    // ---- VSync spring animation + high-rate cursor poll ---------------------
+    property real wanderT: 0
+    property int cursorStill: 0
+    property bool springing: true
+    property real glanceAt: 1.4
+
+    // Petting detector (rapid horizontal/vertical strokes across the orb)
+    property real petAccum: 0
+    property real lastHoverX: 0
+    property real lastHoverY: 0
+
+    function scheduleGlance() {
+        const t = buddy.wanderT + 1.2 + Math.random() * 1.8
+        buddy.wanderT = t
+        if (buddy.session === "thinking") {
+            // Pondering: slow upward glances that drift toward the thought
+            // bubble, now and then a little sideways "hmm" tilt.
+            const toBubble = Math.random() < 0.7
+            buddy.targetYaw   = (toBubble ? buddy.bubbleSide * (8 + Math.random() * 28)
+                                          : (Math.random() - 0.5) * 30) * mo
+            buddy.targetPitch = (14 + Math.random() * 22) * mo
+            buddy.targetRoll  = (Math.random() - 0.5) * 16 * mo
+            buddy.glanceAt = t + 1.0 + Math.random() * 1.1
+            return
+        }
+        if (buddy.session === "input") {
+            // Attentive: mostly watching the bubble, sometimes back at you.
+            if (Math.random() < 0.7) {
+                buddy.lookAtBubble(20 + Math.random() * 12, -2 + Math.random() * 8)
+            } else {
+                buddy.targetYaw = buddy.bubbleSide * 4 * mo
+                buddy.targetPitch = -6 * mo
+                buddy.targetRoll = 0
+            }
+            buddy.glanceAt = t + 1.4 + Math.random() * 1.6
+            return
+        }
+        // Natural idle curiosity: mix wide glances with tiny micro-saccades
+        const wideGlance = Math.random() < 0.45
+        const amp = wideGlance ? 1.0 : 0.35
+        buddy.targetYaw   = buddy.restYaw + (24 * Math.sin(t * 0.55) + 14 * Math.cos(t * 0.9)) * amp * mo
+        buddy.targetPitch = buddy.restPitch + (16 * Math.sin(t * 0.42) - 10 * Math.cos(t * 0.8)) * amp * mo
+        buddy.targetRoll  = buddy.restRoll + 6.0 * Math.sin(t * 0.35) * amp * mo
+        if (wideGlance && buddy.mood === "neutral" && Math.random() < 0.35)
+            buddy.setMood("curious", 1400)
+        buddy.glanceAt = t + (wideGlance ? (1.6 + Math.random() * 2.0) : (0.6 + Math.random() * 0.9))
+    }
+
+    // Fast 20ms poll checks cursor movement so tracking wakes up with zero lag.
+    Timer {
+        id: cursorPollTimer
+        repeat: true
+        running: buddy.visible && !buddy.motionPaused
+        interval: 20
+        onTriggered: {
+            buddy.wanderT += 0.020
+            buddy.petAccum = Math.max(0, buddy.petAccum - 3.5)
+
+            const c = overlay.cursorPos()
+            const moved = Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 1.2
+            if (moved && !buddy.gazeLock) {
+                buddy.lx = c.x
+                buddy.ly = c.y
+                buddy.cursorStill = 0
+                buddy.updateGaze()
+                buddy.springing = true
+            } else {
+                buddy.cursorStill = Math.min(1000, buddy.cursorStill + 1)
+                if ((buddy.cursorStill >= 35 || buddy.session === "thinking")
+                        && !thought.revealing && buddy.wanderT >= buddy.glanceAt) {
+                    buddy.scheduleGlance()
+                    buddy.springing = true
+                }
+            }
+        }
+    }
+
+    // VSync-locked FrameAnimation runs while eyes or expressions are active.
+    FrameAnimation {
+        id: gazeSpring
+        running: buddy.visible && !buddy.motionPaused
+                 && (buddy.springing || buddy.session !== "idle" || buddy.mood !== "neutral" || buddyHit.containsMouse)
+        onTriggered: {
+            const dt = Math.min(0.033, Math.max(0.004, frameTime))
+            buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
+
+            // Live per-frame cursor tracking while cursor is moving
+            if (buddy.cursorStill < 20 && !buddy.gazeLock && !buddy.dragging) {
+                const c = overlay.cursorPos()
+                if (Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 0.4) {
+                    buddy.lx = c.x
+                    buddy.ly = c.y
+                    buddy.cursorStill = 0
+                    buddy.updateGaze()
+                }
+            }
+
+            // Target expression morphs based on current mood & interaction
+            const wantHappy = (buddy.mood === "happy" || buddy.mood === "love"
+                               || (buddyHit.containsMouse && !buddy.dragging && buddy.session === "idle")) ? 1.0 : 0.0
+            const wantWide = buddy.dragging ? 0.30
+                           : (buddy.mood === "surprised" ? 0.34
+                           : (buddy.mood === "listening" ? 0.14
+                           : (buddy.mood === "thinking" ? -0.06
+                           : (buddy.mood === "error" ? -0.22 : 0.0))))
+            // Curious: one eye a touch bigger. Pondering: a slight one-eyed squint.
+            const wantAsymL = buddy.mood === "curious" ? 0.18 : (buddy.mood === "thinking" ? 0.05 : 0.0)
+            const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
+            const wantNeon = (buddy.mood === "happy" || buddy.mood === "love") ? 1.0
+                           : (buddyHit.containsMouse && !buddy.dragging && buddy.session === "idle" ? 0.55 : 0.0)
+
+            const expRate = Math.min(1.0, dt * 14.0)
+            buddy.happyArc  += (wantHappy - buddy.happyArc) * expRate
+            buddy.eyeWide   += (wantWide  - buddy.eyeWide)  * expRate
+            buddy.asymLeft  += (wantAsymL - buddy.asymLeft) * expRate
+            buddy.asymRight += (wantAsymR - buddy.asymRight)* expRate
+            buddy.speakBounce = Math.max(0, buddy.speakBounce - dt * 4.2)
+            buddy.neon += (wantNeon - buddy.neon) * Math.min(1.0, dt * (wantNeon > buddy.neon ? 9.0 : 4.5))
+            if (Math.abs(wantNeon - buddy.neon) < 0.004)
+                buddy.neon = wantNeon
+
+            // Hop & squash-and-stretch spring physics
+            const hopK = 280, hopD = 20
+            buddy.hopVelY += (-buddy.hopOffsetY * hopK - buddy.hopVelY * hopD) * dt
+            buddy.hopOffsetY += buddy.hopVelY * dt
+            buddy.squashX += (1.0 - buddy.squashX) * Math.min(1.0, dt * 16.0)
+            buddy.squashY += (1.0 - buddy.squashY) * Math.min(1.0, dt * 16.0)
+            buddy.dragVelX *= Math.pow(0.08, dt)
+            buddy.dragVelY *= Math.pow(0.08, dt)
+
+            // Eye gaze spring physics (snappy, responsive, critically damped)
+            const K = 260, D = 28
+            buddy.gazeVelYaw   += ((buddy.targetYaw   - buddy.gazeYaw)   * K - buddy.gazeVelYaw   * D) * dt
+            buddy.gazeVelPitch += ((buddy.targetPitch - buddy.gazePitch) * K - buddy.gazeVelPitch * D) * dt
+            buddy.gazeVelRoll  += ((buddy.targetRoll  - buddy.gazeRoll)  * K - buddy.gazeVelRoll  * D) * dt
+            buddy.gazeYaw   += buddy.gazeVelYaw   * dt
+            buddy.gazePitch += buddy.gazeVelPitch * dt
+            buddy.gazeRoll  += buddy.gazeVelRoll  * dt
+
+            const settled = Math.abs(buddy.gazeVelYaw) + Math.abs(buddy.gazeVelPitch) + Math.abs(buddy.gazeVelRoll) < 0.04
+                && Math.abs(buddy.targetYaw - buddy.gazeYaw) < 0.04
+                && Math.abs(buddy.targetPitch - buddy.gazePitch) < 0.04
+                && Math.abs(buddy.hopOffsetY) < 0.08
+                && Math.abs(buddy.hopVelY) < 0.5
+                && Math.abs(wantHappy - buddy.happyArc) < 0.01
+                && Math.abs(wantWide - buddy.eyeWide) < 0.01
+                && buddy.neon === wantNeon
+                && buddy.speakBounce <= 0.01
+            if (settled) {
+                buddy.gazeVelYaw = 0
+                buddy.gazeVelPitch = 0
+                buddy.gazeVelRoll = 0
+                buddy.gazeYaw = buddy.targetYaw
+                buddy.gazePitch = buddy.targetPitch
+                buddy.gazeRoll = buddy.targetRoll
+                buddy.hopOffsetY = 0
+                buddy.hopVelY = 0
+            }
+            buddy.computeEyePoses()
+            if (settled)
+                buddy.springing = false
+        }
+    }
+
+    onBlinkShutChanged: computeEyePoses()
+    onSChanged: computeEyePoses()
+
+    // ---- ambient aura / thinking & speaking halo ----------------------------
+    Rectangle {
+        id: auraRing
+        anchors.centerIn: orb
+        width: orb.width + Math.round(10 * buddy.s) + Math.round(buddy.speakBounce * 8 * buddy.s)
+        height: width
+        radius: width / 2
+        color: "transparent"
+        border.width: buddy.solidRing && (buddy.session === "thinking" || buddy.mood === "speaking") ? 2 : 0
+        border.color: t.accent
+        opacity: buddy.session === "thinking"
+                 ? (0.45 + 0.35 * Math.sin(buddy.breathPhase * 2.0))
+                 : (buddy.mood === "speaking" ? 0.55 * (1 - buddy.neon) : 0)
+        visible: buddy.solidRing && opacity > 0.01
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+    }
+
+    // ---- visual: expressive companion orb -----------------------------------
+    Rectangle {
+        id: orb
+        width: parent.width
+        height: parent.height
+        // Subtle body lean toward gaze + organic breathing bob + hop bounce
+        x: Math.round(buddy.faceLeadX * 0.28)
+        y: Math.round(buddy.faceLeadY * 0.25 + buddy.hopOffsetY
+                      + (buddy.mo > 0.5 ? Math.sin(buddy.breathPhase) * 1.4 * buddy.s : 0))
+        radius: buddy.orbRadius
+        color: t.orb
+        border.width: !buddy.solidRing ? 0
+                    : (buddyHit.containsMouse || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
+        border.color: !buddy.solidRing ? "transparent"
+                    : (buddy.mood === "error" ? t.danger
+                    : (buddy.session === "thinking" || buddy.mood === "speaking" ? t.accent
+                    : (buddyHit.containsMouse || buddy.session === "input" ? t.accent : "#2c2c35")))
+        Behavior on border.color { ColorAnimation { duration: 140 } }
+
+        rotation: Math.max(-14, Math.min(14, buddy.gazeRoll * 0.55 + buddy.dragVelX * 0.18))
+
+        transform: Scale {
+            origin.x: orb.width / 2
+            origin.y: orb.height / 2
+            xScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashX
+            yScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashY
+        }
+
+        // Subtle inner top-rim highlight so the sphere feels tactile and 3D
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: Math.round(3 * buddy.s)
+            width: Math.round(parent.width * 0.54)
+            height: Math.round(parent.height * 0.22)
+            radius: height / 2
+            color: "#ffffff"
+            opacity: 0.055
+        }
+
+        // left eye
+        Item {
+            id: eyeL
+            x: -(buddy.eyeW * buddy.scale_) / 2
+            y: -(buddy.eyeH * buddy.scale_) / 2
+            width: buddy.eyeW * buddy.scale_
+            height: buddy.eyeH * buddy.scale_
+            transform: Matrix4x4 { id: eyeLMat }
+
+            Rectangle {
+                id: eyeLPill
+                anchors.fill: parent
+                radius: width / 2
+                color: buddy.mood === "love" ? "#ffd1e3"
+                     : (buddy.mood === "error" ? t.danger
+                     : (buddy.session === "thinking" ? t.accent : "#ffffff"))
+                Behavior on color { ColorAnimation { duration: 140 } }
+                antialiasing: true
+            }
+
+            // Lower-eyelid mask that rises up when happy to carve a cute '^' arc
+            Rectangle {
+                width: parent.width * 1.45
+                height: parent.height * 0.95
+                radius: width / 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: parent.height * (1.05 - buddy.happyArc * 0.62)
+                color: orb.color
+                visible: buddy.happyArc > 0.03 && !buddy.blinkShut
+                antialiasing: true
+            }
+
+            // Inner specular glint dot (gives soul & lifelike depth)
+            Rectangle {
+                width: Math.max(2, Math.round(parent.width * 0.34))
+                height: width
+                radius: width / 2
+                x: Math.round(parent.width * 0.22)
+                y: Math.round(parent.height * 0.16)
+                color: "#ffffff"
+                opacity: buddy.blinkShut ? 0 : 0.92
+            }
+        }
+
+        // right eye
+        Item {
+            id: eyeR
+            x: -(buddy.eyeW * buddy.scale_) / 2
+            y: -(buddy.eyeH * buddy.scale_) / 2
+            width: buddy.eyeW * buddy.scale_
+            height: buddy.eyeH * buddy.scale_
+            transform: Matrix4x4 { id: eyeRMat }
+
+            Rectangle {
+                id: eyeRPill
+                anchors.fill: parent
+                radius: width / 2
+                color: buddy.mood === "love" ? "#ffd1e3"
+                     : (buddy.mood === "error" ? t.danger
+                     : (buddy.session === "thinking" ? t.accent : "#ffffff"))
+                Behavior on color { ColorAnimation { duration: 140 } }
+                antialiasing: true
+            }
+
+            // Lower-eyelid mask that rises up when happy to carve a cute '^' arc
+            Rectangle {
+                width: parent.width * 1.45
+                height: parent.height * 0.95
+                radius: width / 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: parent.height * (1.05 - buddy.happyArc * 0.62)
+                color: orb.color
+                visible: buddy.happyArc > 0.03 && !buddy.blinkShut
+                antialiasing: true
+            }
+
+            // Inner specular glint dot
+            Rectangle {
+                width: Math.max(2, Math.round(parent.width * 0.34))
+                height: width
+                radius: width / 2
+                x: Math.round(parent.width * 0.22)
+                y: Math.round(parent.height * 0.16)
+                color: "#ffffff"
+                opacity: buddy.blinkShut ? 0 : 0.92
+            }
+        }
+    }
+
+    // ---- neon happiness halo -------------------------------------------------
+    // When the buddy is happy a ring of light blooms around the orb: a crisp
+    // conical-gradient stroke wrapped in wider, fainter copies of itself that
+    // read as a soft neon glow, slowly turning so the colours flow around the
+    // rim. (Replaces the old pink cheek blush.)
+    component NeonRing: Shape {
+        id: ring
+        property real midR: 30          // centre line of the stroke
+        property real thickness: 2
+        property var stops: ["#3ee8ff", "#8b6cff", "#ff4fd8", "#ffb36b"]
+        readonly property real outerR: midR + thickness / 2
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+            strokeColor: "transparent"
+            strokeWidth: -1
+            fillRule: ShapePath.OddEvenFill
+            fillGradient: ConicalGradient {
+                centerX: ring.width / 2
+                centerY: ring.height / 2
+                angle: 90
+                GradientStop { position: 0.00; color: ring.stops[0] }
+                GradientStop { position: 0.27; color: ring.stops[1] }
+                GradientStop { position: 0.52; color: ring.stops[2] }
+                GradientStop { position: 0.76; color: ring.stops[3] }
+                GradientStop { position: 1.00; color: ring.stops[0] }
+            }
+            PathAngleArc {
+                centerX: ring.width / 2
+                centerY: ring.height / 2
+                radiusX: ring.outerR
+                radiusY: ring.outerR
+                startAngle: 0
+                sweepAngle: 360
+            }
+            PathAngleArc {
+                moveToStart: true
+                centerX: ring.width / 2
+                centerY: ring.height / 2
+                radiusX: ring.outerR - ring.thickness
+                radiusY: ring.outerR - ring.thickness
+                startAngle: 0
+                sweepAngle: 360
+            }
+        }
+    }
 
     Item {
-        id: rig
-        x: buddy.width / 2
-        y: 0
-        rotation: 0
-
-        SequentialAnimation on rotation {
-            running: buddy.visible
-            loops: Animation.Infinite
-            NumberAnimation { to: 3.4 * buddy.mo; duration: 2400 / Math.max(0.35, buddy.mo) }
-            NumberAnimation { to: -3.4 * buddy.mo; duration: 4800 / Math.max(0.35, buddy.mo) }
-            NumberAnimation { to: 0; duration: 2400 / Math.max(0.35, buddy.mo) }
+        id: neonHalo
+        readonly property real pad: Math.round(8 * buddy.s)
+        x: orb.x - pad
+        y: orb.y - pad
+        width: orb.width + 2 * pad
+        height: width
+        opacity: buddy.neon
+        visible: opacity > 0.01
+        // Squash and press with the orb so the ring always hugs its rim.
+        transform: Scale {
+            origin.x: neonHalo.width / 2
+            origin.y: neonHalo.height / 2
+            xScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashX
+            yScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashY
         }
 
-        // Extra body motion: climb hops (thinking) and celebration hops.
-        property real bounce: 0
-        Behavior on bounce { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-
-        SequentialAnimation on bounce {
-            running: buddy.session === "thinking"
-            loops: Animation.Infinite
-            onRunningChanged: if (!running) rig.bounce = 0
-            NumberAnimation { to: -9 * buddy.mo; duration: 300; easing.type: Easing.OutCubic }
-            NumberAnimation { to: 0; duration: 260; easing.type: Easing.InOutSine }
-            NumberAnimation { to: -5 * buddy.mo; duration: 220; easing.type: Easing.OutCubic }
-            NumberAnimation { to: 0; duration: 200; easing.type: Easing.InOutSine }
-        }
-
-        // ---- rope ----------------------------------------------------------
         Item {
-            id: ropeHull
-            x: -10
-            y: -2
-            width: 20
-            height: buddy.ropeLen + 10
-
-            readonly property string cord: "M10 0 C8 16 12 34 10 " + Math.round(buddy.ropeLen + 8)
-
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-
-                ShapePath {
-                    strokeColor: t.textDim
-                    strokeWidth: 2.2
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    PathSvg { path: ropeHull.cord }
-                }
+            anchors.fill: parent
+            // Turning the finished rings is only a transform; their geometry
+            // is never rebuilt while they spin.
+            NumberAnimation on rotation {
+                from: 0
+                to: 360
+                duration: buddy.mo < 1 ? 9000 : 3600
+                loops: Animation.Infinite
+                running: neonHalo.visible && !buddy.motionPaused
             }
 
-            // Clicking the rope is like clicking the creature.
-            MouseArea {
+            // Glow: progressively wider, fainter strokes on the same centre line.
+            Repeater {
+                model: [{ w: 15, o: 0.06 }, { w: 9.5, o: 0.12 }, { w: 5.5, o: 0.26 }]
+                NeonRing {
+                    required property var modelData
+                    anchors.fill: parent
+                    midR: buddy.orbRadius + 0.6 * buddy.s
+                    thickness: modelData.w * buddy.s
+                    stops: buddy.ringColors
+                    opacity: modelData.o
+                }
+            }
+            NeonRing {
                 anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (buddy.session === "input")
-                               inputBar.focusInput()
-                           else
-                               buddy.openInput()
+                midR: buddy.orbRadius + 0.6 * buddy.s
+                thickness: Math.max(1.6, 2.4 * buddy.s)
+                stops: buddy.ringColors
             }
         }
+    }
 
-        // ---- body ------------------------------------------------------------
-        Item {
-            id: bodyHull
-            x: -26            // 52-unit space centred on the rope
-            y: buddy.bodyTop + rig.bounce
-            width: 52
-            height: 48
-            transformOrigin: Item.Top
-            scale: buddy.s * (buddy.session === "input" ? 1.04
-                              : (buddy.session === "thinking" ? 1.02 : 1))
-            rotation: buddy.session === "thinking" ? 0 : buddy.lean
+    // One ripple of the ring travelling outward (answer arrived, petted, set down).
+    property real burstT: 0
+    NumberAnimation {
+        id: burstAnim
+        target: buddy
+        property: "burstT"
+        from: 0
+        to: 1
+        duration: 640
+        easing.type: Easing.OutCubic
+    }
+    NeonRing {
+        width: orb.width + Math.round(16 * buddy.s)
+        height: width
+        x: orb.x + orb.width / 2 - width / 2
+        y: orb.y + orb.height / 2 - height / 2
+        midR: buddy.orbRadius + 0.6 * buddy.s
+        thickness: Math.max(1.2, 1.8 * buddy.s)
+        stops: buddy.ringColors
+        visible: burstAnim.running
+        opacity: (1 - buddy.burstT) * 0.85
+        scale: 1 + 0.38 * buddy.burstT * buddy.mo
+        rotation: buddy.burstT * 120
+    }
 
-            Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-            Behavior on rotation { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+    // A little ring of sparkles that pops and drifts outward.
+    property real sparkT: 0
+    NumberAnimation {
+        id: sparkAnim
+        target: buddy
+        property: "sparkT"
+        from: 0
+        to: 1
+        duration: 950
+        easing.type: Easing.OutCubic
+    }
+    Repeater {
+        model: buddy.ringColors.concat([buddy.ringColors[1]])
 
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-
-                ShapePath {
-                    strokeWidth: -1
-                    fillColor: t.ink
-                    PathSvg {
-                        path: "M26 0.5 C40.5 0.5 51.5 9.5 51.5 21 C51.5 35 41 47.5 26 47.5 "
-                              + "C11 47.5 0.5 35 0.5 21 C0.5 9.5 11.5 0.5 26 0.5 Z"
-                    }
-                }
-            }
-
-            // face: eyes with glints, tiny mouth
-            Rectangle {
-                id: eyeL
-                x: 13.1 + buddy.eyeShiftX
-                y: 16.3 + buddy.eyeShiftY
-                width: 5
-                height: buddy.blinkShut ? 1.2 : (buddy.session === "thinking" ? 10.5 : 9)
-                radius: width / 2
-                color: t.inverse
-
-                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on height { NumberAnimation { duration: 90 } }
-
-                Rectangle {
-                    x: 2.1
-                    y: 1.5
-                    width: 1.7
-                    height: 1.7
-                    radius: 0.85
-                    color: t.light ? Qt.rgba(0, 0, 0, 0.22) : "#ffffff"
-                    visible: eyeL.height > 6
-                }
-            }
-            Rectangle {
-                id: eyeR
-                x: 33.9 + buddy.eyeShiftX
-                y: 16.3 + buddy.eyeShiftY
-                width: 5
-                height: eyeL.height
-                radius: width / 2
-                color: t.inverse
-
-                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-                Rectangle {
-                    x: 1.2
-                    y: 1.5
-                    width: 1.7
-                    height: 1.7
-                    radius: 0.85
-                    color: t.light ? Qt.rgba(0, 0, 0, 0.22) : "#ffffff"
-                    visible: eyeR.height > 6
-                }
-            }
-
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-
-                ShapePath {
-                    strokeColor: t.inverse
-                    strokeWidth: 1.7
-                    fillColor: "transparent"
-                    capStyle: ShapePath.RoundCap
-                    PathSvg {
-                        path: buddy.session === "thinking"
-                              ? "M23.9 30 a2.3 2.3 0 1 0 4.6 0 a2.3 2.3 0 1 0 -4.6 0"
-                              : (buddy.celebrated ? "M21.5 28.5 Q26 34 30.5 28.5"
-                                                  : "M22.5 29.5 Q26 32.8 29.5 29.5")
-                    }
-                }
-            }
-
-            // click / drag — desktop-coordinate deltas so the maths survives
-            // the item moving under the cursor
-            MouseArea {
-                id: bodyHit
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                hoverEnabled: true
-
-                Accessible.role: Accessible.Button
-                Accessible.name: qsTr("Noch's desktop buddy")
-                Accessible.description: qsTr("Click to ask for a chart demo, a research note or a plan.")
-
-                property bool moved: false
-                property real grabX: 0
-                property real baseAnchor: 0
-
-                onPressed: (mouse) => {
-                    moved = false
-                    baseAnchor = buddy.anchor
-                    grabX = buddy.desktop ? bodyHit.mapToItem(buddy.desktop, mouse.x, mouse.y).x
-                                          : 0
-                }
-                onPositionChanged: (mouse) => {
-                    if (!pressed || !buddy.desktop)
-                        return
-                    const cur = bodyHit.mapToItem(buddy.desktop, mouse.x, mouse.y).x
-                    if (Math.abs(cur - grabX) > 4)
-                        moved = true
-                    if (moved) {
-                        const half = buddy.width / 2
-                        buddy.anchor = Math.max(half + 10,
-                                                Math.min(buddy.desktop.width - half - 10,
-                                                         baseAnchor + (cur - grabX)))
-                    }
-                }
-                onReleased: {
-                    if (moved) {
-                        buddy.buddyMoved(buddy.anchor)
-                    } else if (buddy.session === "input") {
-                        inputBar.focusInput()
-                    } else {
-                        buddy.openInput()
-                    }
-                }
-            }
+        Glyph {
+            required property var modelData
+            required property int index
+            readonly property real ang: (-90 + index * 72 + 14) * Math.PI / 180
+            readonly property real rr: buddy.orbRadius + (5 + 11 * buddy.sparkT * buddy.mo) * buddy.s
+            name: "spark"
+            size: Math.round((index % 2 ? 7 : 9) * buddy.s)
+            color: modelData
+            x: orb.x + buddy.orbRadius + Math.cos(ang) * rr - width / 2
+            y: orb.y + buddy.orbRadius + Math.sin(ang) * rr - height / 2
+            visible: sparkAnim.running
+            opacity: Math.sin(Math.min(1, buddy.sparkT) * Math.PI)
+            scale: 0.3 + 0.9 * Math.sin(Math.min(1, buddy.sparkT * 1.4) * Math.PI / 2)
+            rotation: buddy.sparkT * 70 * (index % 2 ? -1 : 1)
         }
+    }
 
-        // ---- hands: gripping the rope just above the head ----------------------
-        property real handSwap: 0
-
-        SequentialAnimation on handSwap {
-            running: buddy.session === "thinking"
-            loops: Animation.Infinite
-            NumberAnimation { to: 1; duration: 320 }
-            NumberAnimation { to: 0; duration: 320 }
-        }
+    // ---- emote chip (a heart when petted) -------------------------------------
+    Item {
+        id: emoteChip
+        visible: opacity > 0.01
+        opacity: (buddy.bubbleText.length > 0 || buddy.emoteIcon.length > 0) && !thought.visible ? 1 : 0
+        x: Math.round((buddy.width - width) / 2)
+        y: buddy.y > height + 12 ? -height - 6 : buddy.height + 6
+        width: (buddy.emoteIcon.length > 0 ? 14 : 0)
+               + (buddy.bubbleText.length > 0 ? emoteLabel.implicitWidth : 0)
+               + (buddy.emoteIcon.length > 0 && buddy.bubbleText.length > 0 ? 5 : 0) + 18
+        height: 24
+        Behavior on opacity { NumberAnimation { duration: 140 } }
 
         Rectangle {
-            id: handL
-            x: -14 * buddy.s
-            y: buddy.bodyTop - 10 * buddy.s + buddy.gripShift * 1.8 * buddy.s + rig.bounce * 0.5
-            width: 9 * buddy.s
-            height: width
-            radius: width / 2
-            color: t.ink
-            Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+            anchors.fill: parent
+            radius: height / 2
+            color: t.surface
+            border.width: 1
+            border.color: t.borderStrong
         }
-
-        Rectangle {
-            id: handR
-            x: 5 * buddy.s
-            y: buddy.bodyTop - 10 * buddy.s - buddy.gripShift * 1.8 * buddy.s
-              + rig.handSwap * -5 * buddy.s + rig.bounce * 0.5
-            width: 9 * buddy.s
-            height: width
-            radius: width / 2
-            color: t.ink
-            transformOrigin: Item.Top
-
-            Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-            SequentialAnimation on rotation {
-                id: waveAnim
-                running: false
-                loops: 1
-                RotationAnimation { to: 24; duration: 170; easing.type: Easing.OutCubic }
-                RotationAnimation { to: -12; duration: 230; easing.type: Easing.InOutSine }
-                RotationAnimation { to: 16; duration: 230; easing.type: Easing.InOutSine }
-                RotationAnimation { to: -8; duration: 230; easing.type: Easing.InOutSine }
-                RotationAnimation { to: 0; duration: 160; easing.type: Easing.OutCubic }
-            }
-        }
-
-        // ---- feet: dangling nubs with lagged counter-swing ---------------------
-        property real swayLag: 0
-
-        SequentialAnimation on swayLag {
-            running: buddy.visible
-            loops: Animation.Infinite
-            NumberAnimation { to: 2.4 * buddy.mo; duration: 2600 }
-            NumberAnimation { to: -2.4 * buddy.mo; duration: 5200 }
-            NumberAnimation { to: 0; duration: 2600 }
-        }
-
-        Rectangle {
-            x: -12 * buddy.s
-            y: buddy.bodyBottom - 4 * buddy.s + rig.swayLag + rig.bounce
-            width: 7 * buddy.s
-            height: width
-            radius: width / 2
-            color: t.ink
-        }
-        Rectangle {
-            x: 5 * buddy.s
-            y: buddy.bodyBottom - 4 * buddy.s - rig.swayLag + rig.bounce
-            width: 7 * buddy.s
-            height: width
-            radius: width / 2
-            color: t.ink
-        }
-
-        // ---- emote bubble -------------------------------------------------------
-        Item {
-            id: bubble
-            visible: opacity > 0.01
-            opacity: buddy.bubbleText.length > 0 ? 1 : 0
-            x: buddy.inputFlipped ? (-18 * buddy.s - width) : (18 * buddy.s)
-            y: buddy.bodyTop - 16 * buddy.s
-            width: bubbleLabel.implicitWidth + 20
-            height: 26
-            Behavior on opacity { NumberAnimation { duration: 140 } }
-
-            Glass {
-                anchors.fill: parent
-                radius: height / 2
+        Row {
+            anchors.centerIn: parent
+            spacing: 5
+            Glyph {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: buddy.emoteIcon.length > 0
+                name: buddy.emoteIcon
+                filled: true
+                size: 13
+                color: buddy.ringColors[2]
             }
             Text {
-                id: bubbleLabel
-                anchors.centerIn: parent
+                id: emoteLabel
+                anchors.verticalCenter: parent.verticalCenter
+                visible: buddy.bubbleText.length > 0
                 text: buddy.bubbleText
-                color: t.text
+                color: t.ink
                 font.family: t.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
@@ -476,53 +991,103 @@ Item {
         }
     }
 
-    // ---- emotes ---------------------------------------------------------------
-
     property string bubbleText: ""
-    property bool nearWelcomed: false
-    Timer { id: bubbleTimer; interval: 1700; onTriggered: buddy.bubbleText = "" }
+    property string emoteIcon: ""
+    Timer {
+        id: bubbleTimer
+        interval: 1800
+        onTriggered: {
+            buddy.bubbleText = ""
+            buddy.emoteIcon = ""
+        }
+    }
 
-    function emote(text) {
-        bubbleText = text
+    function emote(text, icon) {
+        bubbleText = text || ""
+        emoteIcon = icon || ""
         bubbleTimer.restart()
     }
 
-    function wave() {
-        waveAnim.restart()
+    // ---- request flow -------------------------------------------------------
+    // Where the reply to the request in flight goes: the thought bubble, or
+    // the popped-out result panel when the request was asked from there.
+    property bool replyToPanel: false
+
+    function cancelPending() {
+        thinkTimer.stop()
+        if (awaitingReply) {
+            awaitingReply = false
+            if (buddyProvider)
+                buddyProvider.cancel()
+        }
     }
-
-    property bool celebrated: false
-    Timer { id: celebrateCooldown; interval: 1400; onTriggered: buddy.celebrated = false }
-
-    function celebrate() {
-        celebrated = true
-        celebrateCooldown.restart()
-    }
-
-    // ---- request flow ------------------------------------------------------------
 
     function openInput() {
         activationRequested()
+        cancelPending()
         if (resultPanel)
             resultPanel.open = false
+        const wasShown = thought.visible && !thought.closing
+        if (!wasShown)
+            conversation = []
         session = "input"
-        inputBar.status = "idle"
-        inputBar.statusText = ""
-        Qt.callLater(function() { inputBar.focusInput() })
-        wave()
+        setMood("listening", 0)
+        hop(wasShown ? 50 : 85)
+        thought.openInput()
+        lookAtBubble(26, 4)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play(wasShown ? "pop" : "wake")
     }
 
+    // The bubble was closed: by its own x / Esc, a quick note timing out,
+    // or a click on the orb.
+    function bubbleClosed() {
+        const quiet = thought.kind === "note" && thought.phase === "answer"
+        cancelPending()
+        session = resultPanel && resultPanel.open ? "result" : "idle"
+        setMood("neutral", 0)
+        blinkShut = true
+        blinkOpen.restart()
+        if (!quiet && typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("dismiss")
+    }
     function dismissInput() {
-        if (resultPanel && resultPanel.open)
-            session = "result"
-        else
-            session = "idle"
+        thought.close()
+        bubbleClosed()
     }
-
+    // Close everything silently (the notch's closeAll, capability actions).
     function dismiss() {
+        cancelPending()
+        thought.close()
         if (resultPanel)
             resultPanel.open = false
         session = "idle"
+        setMood("neutral", 0)
+    }
+    // The popped-out panel was closed with its own x.
+    function panelClosed() {
+        if (replyToPanel)
+            cancelPending()
+        session = thought.visible ? session : "idle"
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("dismiss")
+    }
+
+    function watchTyping(frac) {
+        if (bubbleCentered) {
+            const vSign = bubbleAbove ? 1 : -1
+            targetYaw = ((frac - 0.5) * 34) * mo
+            targetPitch = (vSign * 30 + (Math.random() - 0.5) * 4) * mo
+            targetRoll = -((frac - 0.5) * 6) * mo
+            glanceAt = wanderT + 1.6
+            springing = true
+        } else {
+            // The caret's distance from the orb sets how far the eyes turn.
+            const far = bubbleFlipped ? 1 - frac : frac
+            lookAtBubble(14 + 34 * far, -5 + (Math.random() - 0.5) * 5)
+        }
+        if (mood !== "listening" && mood !== "surprised")
+            setMood("listening", 0)
     }
 
     function submit(text) {
@@ -530,44 +1095,136 @@ Item {
         if (trimmed.length === 0 || session === "thinking")
             return
         lastRequest = trimmed
-        if (resultPanel)
-            resultPanel.open = false
-        inputBar.status = "thinking"
-        inputBar.statusText = ""
+        replyToPanel = !!resultPanel && resultPanel.open
         session = "thinking"
-        emote(qsTr("On it!"))
+        gulp()
+        setMood("thinking", 0)
+        if (!replyToPanel)
+            thought.think()
+        lookAtBubble(18, 22)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("think")
+
+        // Direct shell command shortcut ($ <cmd>, bash: <cmd>, powershell: <cmd>, cmd: <cmd>)
+        const directMatch = trimmed.match(/^(?:\$|!|bash:|powershell:|ps:|cmd:)\s*(.+)$/i)
+        if (directMatch && buddyProvider && buddyProvider.allowBash) {
+            if (replyToPanel) {
+                resultPanel.kind = "chat"
+                resultPanel.title = trimmed
+                resultPanel.userPrompt = trimmed
+                resultPanel.payload = { response: "" }
+                resultPanel.simulated = false
+                resultPanel.phase = "loading"
+            }
+            awaitingReply = true
+            buddyProvider.runDirectCommand(directMatch[1])
+            return
+        }
+
+        // Direct web search shortcut (search: <query>, web: <query>)
+        const webMatch = trimmed.match(/^(?:search:|web:)\s*(.+)$/i)
+        if (webMatch && buddyProvider && buddyProvider.allowWebSearch) {
+            if (replyToPanel) {
+                resultPanel.kind = "chat"
+                resultPanel.title = trimmed
+                resultPanel.userPrompt = trimmed
+                resultPanel.payload = { response: "" }
+                resultPanel.simulated = false
+                resultPanel.phase = "loading"
+            }
+            awaitingReply = true
+            buddyProvider.runDirectWebSearch(webMatch[1])
+            return
+        }
+
+        // Direct tool search shortcut (tools: <query>, tool_search: <query>, regex_tools: <pattern>)
+        const toolSearchMatch = trimmed.match(/^(?:tools:|tool_search:|tool-search:|regex_tools:)\s*(.+)$/i)
+        if (toolSearchMatch && buddyProvider && buddyProvider.allowToolSearch) {
+            if (replyToPanel) {
+                resultPanel.kind = "chat"
+                resultPanel.title = trimmed
+                resultPanel.userPrompt = trimmed
+                resultPanel.payload = { response: "" }
+                resultPanel.simulated = false
+                resultPanel.phase = "loading"
+            }
+            awaitingReply = true
+            const useRegex = /^regex_tools:/i.test(trimmed)
+            buddyProvider.runDirectToolSearch(toolSearchMatch[1], useRegex ? "regex" : "bm25")
+            return
+        }
+
+        // Direct Advisor consultation shortcut (advisor: <question>, advise: <question>)
+        const advisorMatch = trimmed.match(/^(?:advisor:|advise:|consult:)\s*(.+)$/i)
+        if (advisorMatch && buddyProvider && buddyProvider.allowAdvisor) {
+            if (replyToPanel) {
+                resultPanel.kind = "chat"
+                resultPanel.title = trimmed
+                resultPanel.userPrompt = trimmed
+                resultPanel.payload = { response: "" }
+                resultPanel.simulated = false
+                resultPanel.phase = "loading"
+            }
+            awaitingReply = true
+            buddyProvider.runDirectAdvisor(advisorMatch[1], "general")
+            return
+        }
+
+        // Direct desktop actions (timers, simple app launch, day plan) run locally,
+        // unless Agent SDK mode is enabled and the prompt asks for multi-step/tool work.
+        const localTask = router.resolve(trimmed)
+        const compoundAgentIntent = /\b(and|then|command|powershell|bash|terminal|shell|click|screenshot|screen|cursor|mouse|type|press|key|file|folder|directory|read|write|create|edit|script|memory|memories|remember|search|web|url|http|https|grep|glob|advisor|advise|consult|tool|clipboard|cpu|ram|system|todo|checklist)\b/i.test(trimmed)
+        const local = !!localTask
+                      && (localTask.kind === "timer" || localTask.kind === "apps" || localTask.kind === "tasks")
+                      && !(buddyProvider && buddyProvider.enabled && buddyProvider.agentMode
+                           && (localTask.kind === "apps" || localTask.kind === "tasks")
+                           && compoundAgentIntent)
+        if (!local && buddyProvider && buddyProvider.enabled) {
+            if (replyToPanel) {
+                resultPanel.kind = "chat"
+                resultPanel.title = trimmed
+                resultPanel.userPrompt = trimmed
+                resultPanel.payload = { response: "" }
+                resultPanel.simulated = false
+                resultPanel.phase = "loading"
+            }
+            awaitingReply = true
+            buddyProvider.sendMessage(trimmed, conversation)
+            return
+        }
+        if (buddyProvider)
+            buddyProvider.clearToolSteps()
         thinkTimer.restart()
     }
-
     function retryTask() {
-        session = "thinking"
-        emote(qsTr("On it!"))
-        thinkTimer.restart()
-    }
-
-    function showError(message) {
-        session = "input"
-        inputBar.status = "error"
-        inputBar.statusText = message
-        emote(qsTr("Hmm…"))
-    }
-
-    Timer {
-        id: thinkTimer
-        interval: 620
-        onTriggered: buddy.runTask()
-    }
-
-    function parsePlan(json) {
-        try {
-            return JSON.parse(json)
-        } catch (e) {
-            return null
+        if (lastRequest.length > 0) {
+            cancelPending()
+            session = "idle"
+            submit(lastRequest)
         }
     }
-
-    // Routes the request. Demo routes (chart / research) say so on the panel;
-    // timer / apps / palette / clipboard / mic are real Noch features.
+    function showError(message) {
+        awaitingReply = false
+        if (replyToPanel && resultPanel && resultPanel.open) {
+            resultPanel.errorMessage = message
+            resultPanel.phase = "error"
+        } else {
+            thought.showError(message)
+        }
+        session = "result"
+        // A sympathetic droop: squinted eyes, head tilted, looking down.
+        setMood("error", 2600)
+        targetRoll = -10 * mo
+        targetPitch = -12 * mo
+        springing = true
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("error")
+    }
+    // Local tasks still think for a beat so the bubble's morph can be seen.
+    Timer { id: thinkTimer; interval: 820; onTriggered: buddy.runTask() }
+    function parsePlan(json) {
+        try { return JSON.parse(json) } catch (e) { return null }
+    }
     function runTask() {
         const text = lastRequest
         const task = router.resolve(text)
@@ -578,11 +1235,11 @@ Item {
         switch (task.kind) {
         case "chart": {
             const chart = router.chartData(task.payload.symbol, text)
-            setPanel("chart", task.title, chart, true)
+            present("chart", task.title, chart, true)
             break
         }
         case "research":
-            setPanel("research", task.title, task.payload, true)
+            present("research", task.title, task.payload, true)
             break
         case "tasks": {
             const today = new Date().toISOString().slice(0, 10)
@@ -594,7 +1251,7 @@ Item {
             }
             const day = rolled ? rolled.day : today
             const list = rolled ? rolled.items : router.buildPlan(task.payload.templateKey)
-            setPanel("tasks", task.title, { items: list, day: day }, true)
+            present("tasks", task.title, { items: list, day: day }, true)
             break
         }
         case "timer": {
@@ -602,58 +1259,104 @@ Item {
                 focusTimer.setMinutes(task.payload.minutes)
                 focusTimer.start()
             }
-            dismiss()
-            emote(qsTr("%1 min").arg(task.payload.minutes))
-            toastRequested(qsTr("Focus timer set for %1 minutes").arg(task.payload.minutes))
+            note(qsTr("Focus timer set · %1 min").arg(task.payload.minutes), "timer")
             break
         }
         case "apps": {
             const rows = search.search(task.payload.query)
                             .filter(function (r) { return r.kind === "app" })
-            dismiss()
             if (rows.length > 0) {
                 search.activate(rows[0])
-                emote(qsTr("Opening…"))
-                toastRequested(qsTr("Opened %1").arg(String(rows[0].name || task.payload.query)))
+                note(qsTr("Opening %1").arg(String(rows[0].name || task.payload.query)), "open")
             } else {
-                emote(qsTr("No match"))
-                toastRequested(qsTr("No app matched “%1”").arg(task.payload.query))
+                showError(qsTr("No app matched “%1”.").arg(task.payload.query))
             }
             break
         }
         default:
-            setPanel("help", task.title, {}, false)
+            present("help", task.title, {}, false)
             break
         }
     }
 
+    // Show a finished result: in the bubble, or in the panel it came from.
+    function present(kind, title, payload, simulated) {
+        awaitingReply = false
+        recordHistory(kind, title, payload)
+        if (kind === "chat" && payload && payload.response)
+            rememberTurn(lastRequest, payload.response)
+        if (replyToPanel && resultPanel && resultPanel.open) {
+            setPanel(kind, title, payload, simulated)
+            return
+        }
+        thought.showAnswer(kind, title, payload, simulated)
+        session = "result"
+        eureka()
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("reply")
+    }
+    // A quick confirmation that tucks itself away.
+    function note(text, icon) {
+        awaitingReply = false
+        thought.showNote(text, icon)
+        session = "result"
+        setMood("happy", 2000)
+        hop(105)
+        neonBurst(false)
+        lookAtBubble(22, 0)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("reply")
+    }
     function setPanel(kind, title, payload, simulated) {
         if (!resultPanel)
             return
         resultPanel.kind = kind
         resultPanel.title = title
+        resultPanel.userPrompt = lastRequest
         resultPanel.payload = payload
         resultPanel.simulated = simulated
         resultPanel.phase = "ready"
-        if (!resultPanel.open) {
-            // First show: under the buddy. Later requests keep the position
-            // the user dragged it to.
-            resultPanel.dragX = Math.round(anchor - resultPanel.width_ / 2)
-            resultPanel.dragY = Math.round(bodyBottom + 16 * s)
-            resultPanel.resetBody()
-            resultPanel.clampIntoView()
-        } else {
-            resultPanel.resetBody()
-            resultPanel.clampIntoView()
-        }
+        resultPanel.resetBody()
+        resultPanel.clampIntoView()
         resultPanel.open = true
         session = "result"
-        emote(qsTr("Done!"))
-        celebrate()
+        setMood(kind === "chat" ? "speaking" : "happy", 2400)
+        hop(115)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("reply")
+    }
+    // Pop the bubble's answer out into the movable, resizable panel, right
+    // where the bubble was.
+    function expandToPanel() {
+        if (!resultPanel || thought.phase !== "answer" || thought.kind === "note")
+            return
+        const k = thought.kind
+        const ttl = thought.title
+        const data = thought.payload
+        const sim = thought.simulated
+        const at = thought.mapToItem(desktop, thought.bx, thought.by)
+        thought.close()
+        resultPanel.kind = k
+        resultPanel.title = ttl
+        resultPanel.userPrompt = lastRequest
+        resultPanel.payload = data
+        resultPanel.simulated = sim
+        resultPanel.phase = "ready"
+        // It was already read in the bubble; no second typewriter pass.
+        resultPanel.revealedChars = resultPanel.fullResponse.length
+        resultPanel.isStreaming = false
+        resultPanel.dragX = Math.round(at.x)
+        resultPanel.dragY = Math.round(at.y)
+        resultPanel.resetBody()
+        resultPanel.clampIntoView()
+        resultPanel.open = true
+        session = "result"
+        setMood("happy", 1400)
+        if (typeof buddySfx !== "undefined" && buddySfx)
+            buddySfx.play("pop")
     }
 
-    // ---- capability actions (the help card) ---------------------------------------
-
+    // ---- capability actions -------------------------------------------------
     function runCapability(id) {
         switch (id) {
         case "palette":
@@ -666,7 +1369,7 @@ Item {
                 focusTimer.start()
             }
             dismiss()
-            toastRequested(qsTr("25-minute focus started"))
+            toastRequested("25-minute focus started")
             break
         case "clipboard":
             dismiss()
@@ -674,7 +1377,8 @@ Item {
             break
         case "mic":
             audio.toggleMicMute()
-            toastRequested(audio.micMuted ? qsTr("Microphone muted") : qsTr("Microphone live"))
+            dismiss()
+            toastRequested(audio.micMuted ? "Microphone muted" : "Microphone live")
             break
         case "settings":
             dismiss()
@@ -683,32 +1387,192 @@ Item {
         }
     }
 
-    // ---- request bar ----------------------------------------------------------------
+    // ---- thought bubble -----------------------------------------------------
+    // Opens on the side with room for the widest answer card, so it never
+    // has to jump sides halfway through a request. When the buddy is in or
+    // around the horizontal center (top, middle, or bottom), the popup sits
+    // on the buddy's head; normally it sits at ~45° above or below the buddy.
+    readonly property real bubbleRoom: 440 + Math.round(34 * s) + 16
+    readonly property real buddyCenterX: x + width / 2
+    readonly property bool bubbleCentered: !!desktop
+        && Math.abs(buddyCenterX - desktop.width * 0.5) <= desktop.width * 0.18
+    readonly property bool bubbleFlipped: !bubbleCentered && !!desktop
+        && (desktop.width - (x + width)) < bubbleRoom
+        && x > (desktop.width - (x + width))
+    readonly property bool bubbleAbove: !!desktop
+        ? (baseY >= Math.max(Math.round(80 * s), desktop.height * 0.22)
+           && (!bubbleCentered || baseY >= thought.targetH + Math.round(22 * s) + 12
+               || baseY >= desktop.height - (baseY + height)))
+        : true
 
-    // Flip to the left when the buddy sits near the right edge.
-    readonly property bool inputFlipped: desktop
-        && (desktop.width - (buddy.x + buddy.width) - 12) < inputBar.width + 20
-
-    BuddyInputBar {
-        id: inputBar
-        objectName: "buddyInputBar"
-        visible: buddy.session === "input" || opacity > 0.01
-        opacity: buddy.session === "input" ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-
-        // Local coordinates relative to `buddy`, clamped inside desktop bounds.
-        x: buddy.inputFlipped
-           ? Math.max(8 - buddy.x, -width - 6)
-           : Math.min(buddy.desktop ? (buddy.desktop.width - buddy.x - width - 8) : (buddy.width + 6),
-                      buddy.width + 6)
-        y: Math.round(buddy.bodyTop + (buddy.bodyH - height) / 2)
+    BuddyBubble {
+        id: thought
+        objectName: "buddyBubble"
+        s: buddy.s
+        orbSize: buddy.orbSize
+        flipped: buddy.bubbleFlipped
+        centered: buddy.bubbleCentered
+        above: buddy.bubbleAbove
+        mo: buddy.mo
+        bounds: buddy.desktop
+                ? Qt.rect(8 - buddy.x, 8 - buddy.y, buddy.desktop.width - 16, buddy.desktop.height - 16)
+                : Qt.rect(-100000, -100000, 200000, 200000)
 
         onSubmitted: (text) => buddy.submit(text)
-        onDismissed: () => buddy.dismissInput()
-        onRetryRequested: () => {
-            status = "idle"
-            statusText = ""
-            buddy.submit(buddy.lastRequest)
+        onDismissed: buddy.bubbleClosed()
+        onRetryRequested: buddy.retryTask()
+        onTyped: (frac) => buddy.watchTyping(frac)
+        onLoved: buddy.celebrate()
+        onSpeakingTick: (p) => buddy.readAlong(p)
+        onRevealFinished: buddy.answerSettled()
+        onExpandRequested: buddy.expandToPanel()
+        onPlanEdited: (items) => buddy.planEdited(items)
+        onCapability: (id) => buddy.runCapability(id)
+        history: buddy.history
+        onHistoryPicked: (entry) => buddy.replayHistory(entry)
+        onHistoryCleared: buddy.clearHistory()
+        onHistoryOpened: {
+            buddy.setMood("curious", 1400)
+            buddy.lookAtBubble(26, -10)
         }
     }
+
+    // ---- click / drag / pet handling ----------------------------------------
+    MouseArea {
+        id: buddyHit
+        anchors.fill: parent
+        hoverEnabled: true
+        preventStealing: true
+        cursorShape: pressed && dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+
+        property real startDesktopX: 0
+        property real startDesktopY: 0
+        property real startOriginY: 0
+        property real prevDragX: 0
+        property real prevDragY: 0
+        property bool dragged: false
+
+        onEntered: {
+            buddy.lastHoverX = mouseX
+            buddy.lastHoverY = mouseY
+            buddy.springing = true
+        }
+        onPressed: (mouse) => {
+            const g = buddy.desktop
+                      ? buddyHit.mapToItem(buddy.desktop, mouse.x, mouse.y)
+                      : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
+            startDesktopX = g.x
+            startDesktopY = g.y
+            startOriginY = buddy.baseY
+            prevDragX = g.x
+            prevDragY = g.y
+            dragged = false
+            buddy.dragOffsetX = 0
+            buddy.dragOffsetY = 0
+            buddy.squashX = 1.08
+            buddy.squashY = 0.90
+            buddy.springing = true
+        }
+        onPositionChanged: (mouse) => {
+            if (!pressed) {
+                // Detect gentle petting / rubbing across the orb when hovering
+                const step = Math.hypot(mouse.x - buddy.lastHoverX, mouse.y - buddy.lastHoverY)
+                buddy.lastHoverX = mouse.x
+                buddy.lastHoverY = mouse.y
+                if (step > 2 && step < 40) {
+                    buddy.petAccum += step
+                    if (buddy.petAccum > 210) {
+                        buddy.petAccum = 0
+                        buddy.celebrate()
+                    }
+                }
+                return
+            }
+            const g = buddy.desktop
+                      ? buddyHit.mapToItem(buddy.desktop, mouse.x, mouse.y)
+                      : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
+            const dx = g.x - startDesktopX
+            const dy = g.y - startDesktopY
+            if (!dragged && Math.hypot(dx, dy) > 5) {
+                dragged = true
+                buddy.setMood("surprised", 0)
+            }
+            if (dragged) {
+                buddy.dragVelX = g.x - prevDragX
+                buddy.dragVelY = g.y - prevDragY
+                prevDragX = g.x
+                prevDragY = g.y
+
+                const maxW = buddy.desktop ? buddy.desktop.width : 1920
+                const maxH = buddy.desktop ? buddy.desktop.height : 1080
+                const targetX = Math.max(8, Math.min(maxW - buddy.width - 8, buddy.baseX + dx))
+                const targetY = Math.max(8, Math.min(maxH - buddy.height - 8, startOriginY + dy))
+                buddy.dragOffsetX = targetX - buddy.baseX
+                buddy.dragOffsetY = targetY - buddy.baseY
+
+                // Eyes look into the direction of motion while being carried
+                buddy.targetYaw = Math.max(-buddy.yawMax, Math.min(buddy.yawMax, buddy.dragVelX * 3.2))
+                buddy.targetPitch = Math.max(-buddy.pitchMax, Math.min(buddy.pitchMax, -buddy.dragVelY * 3.2))
+                buddy.springing = true
+            }
+        }
+        onReleased: () => {
+            if (dragged) {
+                const newAnchorX = Math.round(buddy.x + buddy.width / 2)
+                const newAnchorY = Math.round(buddy.y)
+                buddy.dragOffsetX = 0
+                buddy.dragOffsetY = 0
+                dragged = false
+                buddy.squashX = 1.15
+                buddy.squashY = 0.86
+                buddy.hop(75)
+                buddy.setMood("happy", 1400)
+                buddy.neonBurst(false)
+                if (typeof buddySfx !== "undefined" && buddySfx)
+                    buddySfx.play("drop")
+                buddy.buddyMoved(newAnchorX, newAnchorY)
+            } else {
+                // The orb toggles its thought bubble.
+                if (thought.visible && !thought.closing)
+                    buddy.dismissInput()
+                else
+                    buddy.openInput()
+            }
+        }
+        onCanceled: () => {
+            buddy.dragOffsetX = 0
+            buddy.dragOffsetY = 0
+            dragged = false
+            buddy.setMood("neutral", 0)
+        }
+    }
+
+    // ---- real chat provider -------------------------------------------------
+    // Only the request the buddy is still waiting for may answer; a reply to
+    // a question that was closed or superseded is dropped.
+    Connections {
+        target: buddyProvider
+        function onResponseReady(text) {
+            if (!buddy.awaitingReply)
+                return
+            buddy.present("chat", buddy.lastRequest.length > 0 ? buddy.lastRequest : "Buddy",
+                          { response: text }, false)
+        }
+        function onErrorOccurred(message) {
+            if (!buddy.awaitingReply)
+                return
+            buddy.showError(message)
+        }
+        function onToolExecuted(name, summary) {
+            if (!buddy.awaitingReply)
+                return
+            buddy.setMood("curious", 1600)
+            buddy.hop(42)
+            buddy.lookAtBubble(22, 6)
+            if (typeof buddySfx !== "undefined" && buddySfx)
+                buddySfx.play("pop")
+        }
+    }
+
+    Component.onCompleted: computeEyePoses()
 }

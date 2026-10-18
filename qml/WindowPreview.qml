@@ -98,7 +98,7 @@ Item {
                     color: t.frame
                     clip: true
                     border.width: 1
-                    border.color: thumb.hot ? t.ink : t.border
+                    border.color: thumb.hot ? t.accent : t.border
                     Behavior on border.color { ColorAnimation { duration: 140 } }
 
                     Image {

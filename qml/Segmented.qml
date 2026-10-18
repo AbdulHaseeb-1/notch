@@ -11,7 +11,11 @@ Item {
 
     readonly property int currentIndex: {
         for (let i = 0; i < options.length; ++i) {
-            if (Math.abs(Number(options[i].value) - Number(value)) < 0.001)
+            const ov = options[i].value
+            if (typeof ov === "string" || typeof value === "string") {
+                if (String(ov) === String(value))
+                    return i
+            } else if (Math.abs(Number(ov) - Number(value)) < 0.001)
                 return i
         }
         return -1
@@ -37,7 +41,7 @@ Item {
         width: seg.cellW
         x: 3 + Math.max(0, seg.currentIndex) * seg.cellW
         radius: height / 2
-        color: t.ink
+        color: t.accent
         Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
     }

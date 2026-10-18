@@ -28,6 +28,11 @@ private:
     static QImage toMonochrome(const QImage &source);
     static QImage toInkMonochrome(const QImage &source);
 
+    // Insert-order rings behind each QHash cache: icons cycle in and out of
+    // the dock / running set, so the caches would otherwise grow for the
+    // lifetime of the process.
+    void insertCached(const QString &file, const QImage &image, const char *which);
+
     const DockController *m_dock;
     const RunningApps *m_running;
     const AppSearch *m_search;
@@ -35,4 +40,8 @@ private:
     QHash<QString, QImage> m_cache;     // file -> colour icon
     QHash<QString, QImage> m_monoCache; // file -> light monochrome icon (dark notch)
     QHash<QString, QImage> m_inkCache;  // file -> dark monochrome icon (light theme)
+    QStringList m_cacheOrder;           // insertion order, for the colour cache ring
+    QStringList m_monoOrder;            // insertion order, for the light-mono ring
+    QStringList m_inkOrder;             // insertion order, for the dark-mono ring
+    QHash<QString, qint64> m_failedLookups; // file -> timestamp of failed lookup
 };

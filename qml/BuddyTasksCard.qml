@@ -230,15 +230,14 @@ Item {
             width: parent.width
             height: 30
 
-            Text {
+            Glyph {
                 anchors.left: parent.left
-                anchors.leftMargin: 4
+                anchors.leftMargin: 3
                 anchors.verticalCenter: parent.verticalCenter
-                text: "+"
+                name: "plus"
+                size: 13
+                stroke: 1.8
                 color: addField.text.length === 0 ? t.textFaint : t.accent
-                font.family: t.font
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
             }
 
             TextInput {

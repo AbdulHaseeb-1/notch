@@ -44,7 +44,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: width / 2
-            color: rb.primary ? t.ink : t.raised
+            color: rb.primary ? t.accent : t.raised
             border.width: rb.primary ? 0 : 1
             border.color: t.borderSoft
         }

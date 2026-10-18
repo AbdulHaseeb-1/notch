@@ -107,7 +107,8 @@ private:
     QString m_lastActive;   // "local" | "system" | ""
     QString m_forcedSource; // "local" | "system" | "" when explicitly chosen
     qint64 m_systemStamp = 0;
-    QTimer m_ticker;
+    qint64 m_lastLocalPositionEmit = 0;
+    qint64 m_lastSystemPositionEmit = 0;
 
     QString m_visualKey;
     qreal m_coverAspect = 1.0;

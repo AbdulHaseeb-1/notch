@@ -46,8 +46,10 @@ signals:
 private:
     struct Entry {
         QString name;
+        QString lowerName;
         QString path;
         QString exe;
+        QString lowerExe;
         QString iconId;
     };
 
@@ -60,4 +62,7 @@ private:
     mutable QMutex m_iconMutex;
     QHash<QString, QString> m_icons; // iconId -> file
     QThread *m_scanThread = nullptr;
+
+    mutable QVariantList m_cachedWindows;
+    mutable qint64 m_cachedWindowsTime = 0;
 };

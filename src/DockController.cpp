@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDirIterator>
@@ -11,8 +12,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QSaveFile>
 #include <QSet>
 #include <QSettings>
+#include <QThread>
 
 #ifdef Q_OS_WIN
 #  ifndef NOMINMAX
@@ -84,7 +87,7 @@ DockController::DockController(QObject *parent)
 {
     load();
 
-    m_pollTimer.setInterval(2000);
+    m_pollTimer.setInterval(3500);
     connect(&m_pollTimer, &QTimer::timeout, this, &DockController::pollRunning);
     m_pollTimer.start();
     pollRunning();
@@ -93,6 +96,22 @@ DockController::DockController(QObject *parent)
 QString DockController::version() const
 {
     return QCoreApplication::applicationVersion();
+}
+
+QString DockController::dataDir() const
+{
+    const QSettings settings;
+    const QString dir = QFileInfo(settings.fileName()).absolutePath();
+    QDir().mkpath(dir);
+    return QDir::toNativeSeparators(dir);
+}
+
+QUrl DockController::settingsFileUrl() const
+{
+    const QSettings settings;
+    const QString file = settings.fileName();
+    QDir().mkpath(QFileInfo(file).absolutePath());
+    return QUrl::fromLocalFile(file);
 }
 
 QVariantList DockController::apps() const
@@ -327,6 +346,8 @@ void DockController::save() const
     settings.setValue(QStringLiteral("dock/apps"),
                       QJsonDocument(array).toJson(QJsonDocument::Compact));
     settings.setValue(QStringLiteral("dock/initialized"), true);
+    settings.sync();
+    syncStateSnapshot();
 }
 
 bool DockController::launch(int index)
@@ -482,8 +503,67 @@ void DockController::resetToDefaults()
     pollRunning();
 }
 
+void DockController::openDataFolder() const
+{
+    syncStateSnapshot();
+    const QString dir = dataDir();
+    if (!dir.isEmpty())
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
+void DockController::syncStateSnapshot() const
+{
+    QSettings settings;
+    settings.sync();
+
+    const QString dir = QFileInfo(settings.fileName()).absolutePath();
+    QDir().mkpath(dir);
+
+    QJsonObject root;
+    root.insert(QStringLiteral("app"), QStringLiteral("Noch"));
+    root.insert(QStringLiteral("version"), version());
+    root.insert(QStringLiteral("updatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    root.insert(QStringLiteral("settingsFile"), QDir::toNativeSeparators(settings.fileName()));
+
+    QJsonArray pinned;
+    for (const App &app : m_apps) {
+        QJsonObject o;
+        o.insert(QStringLiteral("name"), app.name);
+        o.insert(QStringLiteral("path"), app.path);
+        if (!app.icon.isEmpty())
+            o.insert(QStringLiteral("icon"), app.icon);
+        if (!app.exe.isEmpty())
+            o.insert(QStringLiteral("exe"), app.exe);
+        if (!app.args.isEmpty())
+            o.insert(QStringLiteral("args"), QJsonArray::fromStringList(app.args));
+        pinned.append(o);
+    }
+    root.insert(QStringLiteral("pinnedApps"), pinned);
+
+    QJsonObject allSettings;
+    const QStringList keys = settings.allKeys();
+    for (const QString &key : keys) {
+        const QVariant val = settings.value(key);
+        if (val.typeId() == QMetaType::QByteArray) {
+            allSettings.insert(key, QString::fromUtf8(val.toByteArray()));
+        } else if (val.typeId() == QMetaType::QStringList) {
+            allSettings.insert(key, QJsonArray::fromStringList(val.toStringList()));
+        } else {
+            allSettings.insert(key, QJsonValue::fromVariant(val));
+        }
+    }
+    root.insert(QStringLiteral("settings"), allSettings);
+
+    QSaveFile out(QDir(dir).filePath(QStringLiteral("noch-state.json")));
+    if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        out.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        out.commit();
+    }
+}
+
 void DockController::quit()
 {
+    syncStateSnapshot();
     QCoreApplication::quit();
 }
 
@@ -527,28 +607,42 @@ void DockController::setLaunchAtStartup(bool enabled)
 
 void DockController::pollRunning()
 {
-    QStringList next;
-#ifdef Q_OS_WIN
-    QSet<QString> processes;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap != INVALID_HANDLE_VALUE) {
-        PROCESSENTRY32W entry;
-        entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snap, &entry)) {
-            do {
-                processes.insert(QString::fromWCharArray(entry.szExeFile).toLower());
-            } while (Process32NextW(snap, &entry));
-        }
-        CloseHandle(snap);
-    }
+    // The snapshot of every process on the machine lives on a background
+    // thread; the GUI thread only receives the finished list.
+    QStringList wanted;
     for (const App &app : std::as_const(m_apps)) {
-        if (!app.exe.isEmpty() && processes.contains(app.exe) && !next.contains(app.exe))
-            next.append(app.exe);
+        if (!app.exe.isEmpty())
+            wanted.append(app.exe);
     }
+
+    auto *thread = QThread::create([this, wanted] {
+        QStringList found;
+#ifdef Q_OS_WIN
+        QSet<QString> processes;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W entry;
+            entry.dwSize = sizeof(entry);
+            if (Process32FirstW(snap, &entry)) {
+                do {
+                    processes.insert(QString::fromWCharArray(entry.szExeFile).toLower());
+                } while (Process32NextW(snap, &entry));
+            }
+            CloseHandle(snap);
+        }
+        for (const QString &exe : wanted) {
+            if (!found.contains(exe) && processes.contains(exe))
+                found.append(exe);
+        }
 #endif
-    next.sort();
-    if (next != m_running) {
-        m_running = next;
-        emit runningChanged();
-    }
+        found.sort();
+        QMetaObject::invokeMethod(this, [this, found] {
+            if (found != m_running) {
+                m_running = found;
+                emit runningChanged();
+            }
+        }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
 }

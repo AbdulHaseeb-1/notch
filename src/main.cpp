@@ -1,16 +1,26 @@
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLockFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QWindow>
 
 #include "AppIconProvider.h"
 #include "AppSearch.h"
 #include "Appearance.h"
 #include "AudioDevices.h"
+#include "BuddyProvider.h"
+#include "BuddySfx.h"
 #include "ClipboardHistory.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
@@ -24,7 +34,60 @@
 #include "Radios.h"
 #include "RunningApps.h"
 #include "SmtcMedia.h"
-#include "SystemMonitor.h"
+
+namespace {
+
+void initializeSafeStorage()
+{
+    // Persist all settings and app data to %APPDATA%/noch/noch.ini (and a
+    // human-readable JSON backup noch-state.json) instead of only the Registry.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QString configRoot = QDir::fromNativeSeparators(qEnvironmentVariable("APPDATA"));
+    if (configRoot.isEmpty())
+        configRoot = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    if (!configRoot.isEmpty())
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, configRoot);
+
+    QSettings ini;
+    const QString dataDir = QFileInfo(ini.fileName()).absolutePath();
+    QDir().mkpath(dataDir);
+
+    // 1. One-time migration of any existing settings from the Windows Registry.
+    if (!ini.value(QStringLiteral("meta/migratedFromRegistry"), false).toBool()) {
+        QSettings reg(QSettings::NativeFormat, QSettings::UserScope,
+                      QStringLiteral("noch"), QStringLiteral("noch"));
+        const QStringList regKeys = reg.allKeys();
+        for (const QString &key : regKeys) {
+            if (!ini.contains(key))
+                ini.setValue(key, reg.value(key));
+        }
+        ini.setValue(QStringLiteral("meta/migratedFromRegistry"), true);
+        ini.sync();
+    }
+
+    // 2. If the INI file was ever deleted/reset, restore from noch-state.json if present.
+    const QString snapshotPath = QDir(dataDir).filePath(QStringLiteral("noch-state.json"));
+    if (!ini.value(QStringLiteral("dock/initialized"), false).toBool() && QFileInfo::exists(snapshotPath)) {
+        QFile f(snapshotPath);
+        if (f.open(QIODevice::ReadOnly)) {
+            const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
+            const QJsonObject savedSettings = root.value(QStringLiteral("settings")).toObject();
+            for (auto it = savedSettings.begin(); it != savedSettings.end(); ++it) {
+                if (it.value().isArray()) {
+                    QStringList list;
+                    for (const QJsonValue &v : it.value().toArray())
+                        list.append(v.toString());
+                    ini.setValue(it.key(), list);
+                } else {
+                    ini.setValue(it.key(), it.value().toVariant());
+                }
+            }
+            ini.sync();
+        }
+    }
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -41,6 +104,8 @@ int main(int argc, char *argv[])
     if (!instanceLock.tryLock(150))
         return 0;
 
+    initializeSafeStorage();
+
     // Enable per-pixel alpha so the Quick window can show only the notch.
     QQuickWindow::setDefaultAlphaBuffer(true);
 
@@ -55,9 +120,10 @@ int main(int argc, char *argv[])
 
     auto *overlay = new OverlayController(&app);
     auto *dock = new DockController(&app);
-    auto *monitor = new SystemMonitor(&app);
     auto *player = new MusicPlayer(&app);
     auto *appearance = new Appearance(&app);
+    auto *buddyProvider = new BuddyProvider(&app);
+    auto *buddySfx = new BuddySfx(&app);
     auto *glass = new GlassBackdrop(&app);
     auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
@@ -79,9 +145,10 @@ int main(int argc, char *argv[])
     engine.addImageProvider(QStringLiteral("preview"), new RunningPreviewProvider());
     engine.rootContext()->setContextProperty(QStringLiteral("overlay"), overlay);
     engine.rootContext()->setContextProperty(QStringLiteral("dock"), dock);
-    engine.rootContext()->setContextProperty(QStringLiteral("monitor"), monitor);
     engine.rootContext()->setContextProperty(QStringLiteral("player"), player);
     engine.rootContext()->setContextProperty(QStringLiteral("appearance"), appearance);
+    engine.rootContext()->setContextProperty(QStringLiteral("buddyProvider"), buddyProvider);
+    engine.rootContext()->setContextProperty(QStringLiteral("buddySfx"), buddySfx);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
     engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
@@ -103,6 +170,9 @@ int main(int argc, char *argv[])
     overlay->setWindow(window);
     glass->setWindow(window);
     hotkey->setWindow(window);
+
+    dock->syncStateSnapshot();
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, dock, &DockController::syncStateSnapshot);
 
     return app.exec();
 }

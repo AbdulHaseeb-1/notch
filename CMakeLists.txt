@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Multimedia Network)
 
 qt_standard_project_setup()
 
@@ -27,8 +27,6 @@ qt_add_executable(noch
     src/DockController.h
     src/AppIconProvider.cpp
     src/AppIconProvider.h
-    src/SystemMonitor.cpp
-    src/SystemMonitor.h
     src/MusicPlayer.cpp
     src/MusicPlayer.h
     src/GlassBackdrop.cpp
@@ -37,6 +35,10 @@ qt_add_executable(noch
     src/RunningApps.h
     src/Appearance.cpp
     src/Appearance.h
+    src/BuddyProvider.cpp
+    src/BuddyProvider.h
+    src/BuddySfx.cpp
+    src/BuddySfx.h
     src/ClipboardHistory.cpp
     src/ClipboardHistory.h
     src/WinRtAbi.h
@@ -67,12 +69,23 @@ target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
 
 # The QML files are compiled into the executable's resources, so the built
 # noch.exe is self-contained - no qml/ folder needed beside it at run time.
+# Shared icon geometry, one instance for every Glyph.
+set_source_files_properties(qml/GlyphPaths.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(noch
     URI noch
     VERSION 1.0
     QML_FILES
         qml/Main.qml
         qml/Theme.qml
+        qml/PeekDash.qml
+        qml/ResizeGrip.qml
+        qml/TooltipToast.qml
+        qml/AppContextMenu.qml
+        qml/SettingsFlyout.qml
+        qml/MusicFlyout.qml
+        qml/HubFlyout.qml
+        qml/PaletteFlyout.qml
         qml/DockItem.qml
         qml/MoreButton.qml
         qml/SettingsPanel.qml
@@ -81,12 +94,11 @@ qt_add_qml_module(noch
         qml/SizeSlider.qml
         qml/MenuRow.qml
         qml/Glyph.qml
+        qml/GlyphPaths.qml
         qml/StatusBlock.qml
         qml/NowPlaying.qml
-        qml/SystemPanel.qml
         qml/MusicPanel.qml
         qml/Glass.qml
-        qml/OpenApps.qml
         qml/WindowPreview.qml
         qml/Flyout.qml
         qml/HubPanel.qml
@@ -97,7 +109,7 @@ qt_add_qml_module(noch
         qml/PaletteCard.qml
         qml/Buddy.qml
         qml/BuddyRouter.qml
-        qml/BuddyInputBar.qml
+        qml/BuddyBubble.qml
         qml/BuddyPanel.qml
         qml/BuddyChartCard.qml
         qml/BuddyResearchCard.qml
@@ -110,6 +122,7 @@ target_link_libraries(noch PRIVATE
     Qt6::Gui
     Qt6::Quick
     Qt6::Multimedia
+    Qt6::Network
 )
 
 if(WIN32)

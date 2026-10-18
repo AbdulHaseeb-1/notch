@@ -1,8 +1,11 @@
 import QtQuick
+import QtQuick.Shapes
 
-// Settings flyout under the notch. Unified header with a segmented switcher
-// (General / Apps), grouped setting cards on the General tab, and a dedicated
-// "Pinned in Notch" + searchable "Add Apps" list on the Apps tab.
+// Wide, solid-surface Settings panel under the notch.
+// Organized into three spacious pages:
+//   0 — General (Scale bar, 2x2 Appearance grid, Behavior & System)
+//   1 — Apps    (Side-by-side Pinned in Notch + Searchable Installed Apps)
+//   2 — Buddy   (Desktop Buddy controls + AI Provider configuration)
 Item {
     id: panel
 
@@ -14,7 +17,7 @@ Item {
     property bool lightTheme: false
     property bool blurSupported: false
     property bool blurBehind: false
-    // Tallest the tab content may grow before it scrolls (so the card always fits the screen).
+    property real maxPanelWidth: 620
     property real maxBodyHeight: 100000
     property string version: ""
 
@@ -28,6 +31,8 @@ Item {
     signal startupToggled(bool enabled)
     signal themeToggled(bool light)
     signal blurToggled(bool on)
+    signal resetBuddyPosRequested()
+    signal ringPreviewRequested()
 
     Theme { id: t }
 
@@ -35,14 +40,131 @@ Item {
     property string appFilter: ""
     property var availableList: []
 
-    readonly property real headerH: 58
-    readonly property real footerH: 46
+    // ---- AI provider (Buddy tab) -----------------------------------------
+    readonly property var providerInfo: ({
+        openai: {
+            label: "OpenAI", base: "https://api.openai.com", needsKey: true,
+            models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini"]
+        },
+        ollama: {
+            label: "Ollama", base: "http://localhost:11434", needsKey: false,
+            models: ["llama3.2", "llama3.1", "qwen2.5", "gemma3"]
+        },
+        anthropic: {
+            label: "Anthropic", base: "https://api.anthropic.com", needsKey: true,
+            models: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-5",
+                     "claude-opus-4-1", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"]
+        },
+        custom: { label: "Custom", base: "", needsKey: false, models: [] }
+    })
+    property string lastProvider: ""
+    property var providerMemory: ({})
+    property var remoteModels: []
+    property string testState: "idle"     // idle | testing | ok | failed
+    property string testMessage: ""
 
-    implicitWidth: 388
+    readonly property bool realChat: prefs && prefs.buddyProvider !== "none"
+    readonly property bool buddyMovedCustom: prefs && (prefs.buddyX >= 0 || prefs.buddyY >= 0)
+
+    function infoFor(p) { return panel.providerInfo[p] || panel.providerInfo.custom }
+    function presetsFor(p) { return panel.infoFor(p).models }
+    function labelFor(p) { return panel.infoFor(p).label }
+    function showsKeyFor(p) { return p !== "ollama" }
+
+    function chatEndpoint() {
+        const p = panel.prefs ? panel.prefs.buddyProvider : "none"
+        const base = panel.prefs ? panel.prefs.buddyApiBase : ""
+        if (buddyProvider)
+            return buddyProvider.chatUrl()
+        const b = (String(base).trim() || panel.infoFor(p).base).replace(/\/+$/, "")
+        if (p === "ollama")
+            return b + "/api/chat"
+        if (p === "anthropic")
+            return b + "/v1/messages"
+        return b + "/v1/chat/completions"
+    }
+
+    readonly property var modelChips: {
+        const out = []
+        const add = (m) => {
+            if (m && out.indexOf(m) < 0 && out.length < 10)
+                out.push(m)
+        }
+        const presets = panel.presetsFor(panel.prefs ? panel.prefs.buddyProvider : "none")
+        for (let i = 0; i < presets.length; ++i)
+            add(presets[i])
+        for (let i = 0; i < panel.remoteModels.length; ++i)
+            add(panel.remoteModels[i])
+        return out
+    }
+
+    function markDirty() {
+        panel.testState = "idle"
+        panel.testMessage = ""
+        panel.remoteModels = []
+    }
+
+    function setModel(m) {
+        panel.prefs.buddyModel = m
+        panel.markDirty()
+    }
+
+    function pickProvider(v) {
+        const from = panel.prefs.buddyProvider
+        if (v === from || !v || v === "none")
+            return
+        panel.providerMemory[from] = {
+            base: panel.prefs.buddyApiBase,
+            model: panel.prefs.buddyModel
+        }
+        panel.prefs.buddyProvider = v
+        panel.lastProvider = v
+
+        const was = panel.providerMemory[v]
+        const presets = panel.presetsFor(v)
+        panel.prefs.buddyApiBase = (was && was.base !== undefined)
+            ? was.base : panel.infoFor(v).base
+        panel.prefs.buddyModel = (was && was.model && was.model.length > 0)
+            ? was.model : (presets.length > 0 ? presets[0] : "")
+        panel.markDirty()
+    }
+
+    function setRealChat(on) {
+        if (!on) {
+            if (panel.prefs.buddyProvider !== "none")
+                panel.lastProvider = panel.prefs.buddyProvider
+            panel.prefs.buddyProvider = "none"
+            return
+        }
+        panel.pickProvider(panel.lastProvider !== "" ? panel.lastProvider : "openai")
+    }
+
+    function runTest() {
+        panel.testState = "testing"
+        panel.testMessage = qsTr("Checking %1…").arg(buddyProvider.modelsUrl())
+        buddyProvider.probe()
+    }
+
+    Connections {
+        target: buddyProvider
+        function onTestFinished(ok, message) {
+            panel.testState = ok ? "ok" : "failed"
+            panel.testMessage = message
+        }
+        function onModelsFetched(models) {
+            panel.remoteModels = models || []
+        }
+    }
+
+    readonly property real headerH: 62
+    readonly property real footerH: 48
+
+    implicitWidth: Math.min(620, maxPanelWidth)
     implicitHeight: headerH + 1 + content.height + 1 + footerH
-    // Where the card is heading, for the click-through mask (the animated
-    // height would rebuild the window mask on every frame).
-    readonly property real naturalBodyHeight: tab === 0 ? general.implicitHeight : appsCol.implicitHeight
+
+    readonly property real naturalBodyHeight: tab === 0
+        ? general.implicitHeight
+        : (tab === 1 ? appsView.implicitHeight : buddyCol.implicitHeight)
     readonly property real targetBodyHeight: Math.min(naturalBodyHeight, maxBodyHeight)
     readonly property real targetHeight: headerH + 1 + targetBodyHeight + 1 + footerH
 
@@ -63,7 +185,6 @@ Item {
     onTabChanged: if (tab === 1) refreshAvailableApps()
     Component.onCompleted: refreshAvailableApps()
 
-    // The Start Menu index lands asynchronously now; refresh when it does.
     Connections {
         target: search
         function onIndexReady() {
@@ -72,7 +193,215 @@ Item {
         }
     }
 
-    // ---------- reusable components
+    // ---------- reusable components -------------------------------------------
+    // ---- colour pickers ------------------------------------------------------
+    // Options come from Appearance, already resolved for light/dark; reading
+    // appearance.colors makes the lists refresh when the mode or accent flips.
+    readonly property var paletteOpts: { appearance.colors; return appearance.paletteOptions() }
+    readonly property var accentOpts: { appearance.colors; return appearance.accentOptions() }
+    readonly property var ringOpts: { appearance.colors; return appearance.ringOptions() }
+    function optionLabel(list, id) {
+        for (let i = 0; i < list.length; ++i)
+            if (list[i].id === id)
+                return list[i].label
+        return ""
+    }
+
+    // A miniature of a surface family: a card with a raised bar and an
+    // accent chip, so the choice is visible before it is made.
+    component PaletteSwatch: Item {
+        id: ps
+        property var option: ({})
+        property bool selected: false
+        signal picked()
+        width: 84
+        height: 64
+
+        Rectangle {
+            id: psCard
+            width: parent.width
+            height: 44
+            radius: 12
+            color: ps.option.surface || "transparent"
+            border.width: ps.selected ? 2 : 1
+            border.color: ps.selected ? t.accent : (ps.option.border || t.border)
+            scale: psHit.pressed ? 0.95 : (psHit.containsMouse ? 1.03 : 1)
+            Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+            Behavior on border.color { ColorAnimation { duration: 160 } }
+
+            Rectangle { x: 9; y: 9; width: parent.width - 18; height: 9; radius: 4.5; color: ps.option.raised || "transparent" }
+            Rectangle { x: 9; y: 25; width: 24; height: 9; radius: 4.5; color: t.accent }
+            Rectangle { x: 37; y: 25; width: 18; height: 9; radius: 4.5; color: ps.option.raised || "transparent" }
+
+            Rectangle {
+                anchors.right: parent.right
+                anchors.rightMargin: -5
+                anchors.top: parent.top
+                anchors.topMargin: -5
+                width: 18
+                height: 18
+                radius: 9
+                color: t.accent
+                border.width: 2
+                border.color: t.raised
+                scale: ps.selected ? 1 : 0
+                Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
+                Glyph { anchors.centerIn: parent; name: "check"; size: 10; stroke: 2.2; color: t.inverse }
+            }
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 49
+            text: ps.option.label || ""
+            color: ps.selected ? t.ink : t.textDim
+            font.family: t.font
+            font.pixelSize: 11
+            font.weight: ps.selected ? Font.DemiBold : Font.Medium
+        }
+        MouseArea {
+            id: psHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.RadioButton
+            Accessible.name: ps.option.label || ""
+            Accessible.checked: ps.selected
+            onClicked: ps.picked()
+        }
+    }
+
+    // A colour dot; the chosen one gets a ring around it.
+    component AccentSwatch: Item {
+        id: acs
+        property var option: ({})
+        property bool selected: false
+        signal picked()
+        width: 30
+        height: 30
+
+        Rectangle {
+            anchors.fill: parent
+            radius: width / 2
+            color: "transparent"
+            border.width: 2
+            border.color: acs.option.color || "transparent"
+            opacity: acs.selected ? 1 : 0
+            scale: acs.selected ? 1 : 0.7
+            Behavior on opacity { NumberAnimation { duration: 160 } }
+            Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
+        }
+        Rectangle {
+            anchors.centerIn: parent
+            width: acs.selected ? 20 : (asHit.containsMouse ? 24 : 22)
+            height: width
+            radius: width / 2
+            color: acs.option.color || "transparent"
+            Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        }
+        MouseArea {
+            id: asHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.RadioButton
+            Accessible.name: acs.option.label || ""
+            Accessible.checked: acs.selected
+            onClicked: acs.picked()
+        }
+    }
+
+    // A tiny buddy wearing the ring, so each preset is shown on the real thing.
+    component RingSwatch: Item {
+        id: rs
+        property var option: ({})
+        property bool selected: false
+        readonly property var stops: option.colors && option.colors.length === 4
+                                     ? option.colors : ["#ffffff", "#ffffff", "#ffffff", "#ffffff"]
+        signal picked()
+        width: 70
+        height: 74
+
+        Rectangle {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 2
+            width: 52
+            height: 52
+            radius: 26
+            color: rs.selected || rsHit.containsMouse ? t.hover : "transparent"
+            border.width: rs.selected ? 1 : 0
+            border.color: t.borderStrong
+            Behavior on color { ColorAnimation { duration: 140 } }
+        }
+
+        Item {
+            id: rsArt
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 8
+            width: 40
+            height: 40
+            scale: rsHit.pressed ? 0.92 : (rsHit.containsMouse ? 1.06 : 1)
+            Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 32
+                height: 32
+                radius: 16
+                color: t.orb
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 5
+                    Repeater {
+                        model: 2
+                        Rectangle { width: 4; height: 9; radius: 2; color: "#ffffff" }
+                    }
+                }
+            }
+            Shape {
+                anchors.fill: parent
+                preferredRendererType: Shape.CurveRenderer
+                rotation: rsHit.containsMouse ? 120 : 0
+                Behavior on rotation { NumberAnimation { duration: 700; easing.type: Easing.OutCubic } }
+                ShapePath {
+                    strokeColor: "transparent"
+                    strokeWidth: -1
+                    fillRule: ShapePath.OddEvenFill
+                    fillGradient: ConicalGradient {
+                        centerX: 20
+                        centerY: 20
+                        angle: 90
+                        GradientStop { position: 0.00; color: rs.stops[0] }
+                        GradientStop { position: 0.27; color: rs.stops[1] }
+                        GradientStop { position: 0.52; color: rs.stops[2] }
+                        GradientStop { position: 0.76; color: rs.stops[3] }
+                        GradientStop { position: 1.00; color: rs.stops[0] }
+                    }
+                    PathAngleArc { centerX: 20; centerY: 20; radiusX: 18.5; radiusY: 18.5; startAngle: 0; sweepAngle: 360 }
+                    PathAngleArc { moveToStart: true; centerX: 20; centerY: 20; radiusX: 15.5; radiusY: 15.5; startAngle: 0; sweepAngle: 360 }
+                }
+            }
+        }
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: 58
+            text: rs.option.label || ""
+            color: rs.selected ? t.ink : t.textDim
+            font.family: t.font
+            font.pixelSize: 11
+            font.weight: rs.selected ? Font.DemiBold : Font.Medium
+        }
+        MouseArea {
+            id: rsHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.RadioButton
+            Accessible.name: rs.option.label || ""
+            Accessible.checked: rs.selected
+            onClicked: rs.picked()
+        }
+    }
+
     component SectionHeader: Item {
         property string title
         property string rightText: ""
@@ -81,7 +410,7 @@ Item {
 
         Text {
             anchors.left: parent.left
-            anchors.leftMargin: 4
+            anchors.leftMargin: 2
             anchors.verticalCenter: parent.verticalCenter
             text: parent.title.toUpperCase()
             color: t.textDim
@@ -93,7 +422,7 @@ Item {
         Text {
             visible: parent.rightText.length > 0
             anchors.right: parent.right
-            anchors.rightMargin: 4
+            anchors.rightMargin: 2
             anchors.verticalCenter: parent.verticalCenter
             text: parent.rightText
             color: t.textFaint
@@ -106,7 +435,7 @@ Item {
     component GroupCard: Rectangle {
         default property alias cardContent: innerCol.data
         width: parent ? parent.width : 340
-        implicitHeight: innerCol.implicitHeight + 20
+        implicitHeight: innerCol.implicitHeight + 24
         radius: 14
         color: t.raised
         border.width: 1
@@ -114,10 +443,10 @@ Item {
 
         Column {
             id: innerCol
-            x: 14
-            y: 10
-            width: parent.width - 28
-            spacing: 8
+            x: 16
+            y: 12
+            width: parent.width - 32
+            spacing: 10
         }
     }
 
@@ -130,7 +459,7 @@ Item {
     component ToggleRow: Item {
         id: tr
         property string label
-        property string sub
+        property string sub: ""
         property bool checked
         property bool enabled2: true
         signal toggled(bool checked)
@@ -142,14 +471,14 @@ Item {
             id: textCol
             anchors.left: parent.left
             anchors.right: sw.left
-            anchors.rightMargin: 14
+            anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             spacing: 2
             opacity: tr.enabled2 ? 1 : 0.45
 
             Text {
                 text: tr.label
-                color: t.text
+                color: t.ink
                 font.family: t.font
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -162,7 +491,7 @@ Item {
                 font.family: t.font
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
-                lineHeight: 1.12
+                lineHeight: 1.15
             }
         }
 
@@ -176,6 +505,67 @@ Item {
         }
     }
 
+    // Compact tile for 2-column grid settings on the wider General tab.
+    component ToggleTile: Rectangle {
+        id: tt
+        property string label
+        property string sub: ""
+        property bool checked
+        property bool enabled2: true
+        signal toggled(bool checked)
+
+        height: 68
+        radius: 12
+        color: t.raised
+        border.width: 1
+        border.color: tileHover.hovered ? t.border : t.borderSoft
+        Behavior on border.color { ColorAnimation { duration: 120 } }
+
+        HoverHandler { id: tileHover }
+
+        Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 14
+            anchors.right: tileSwitch.left
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 3
+            opacity: tt.enabled2 ? 1 : 0.45
+
+            Text {
+                width: parent.width
+                text: tt.label
+                color: t.ink
+                font.family: t.font
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+            Text {
+                visible: tt.sub.length > 0
+                width: parent.width
+                text: tt.sub
+                color: t.textDim
+                font.family: t.font
+                font.pixelSize: 11
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                lineHeight: 1.12
+            }
+        }
+
+        Toggle {
+            id: tileSwitch
+            anchors.right: parent.right
+            anchors.rightMargin: 14
+            anchors.verticalCenter: parent.verticalCenter
+            checked: tt.checked
+            enabled2: tt.enabled2
+            onToggled: (c) => tt.toggled(c)
+        }
+    }
+
     component IconButton: Item {
         id: ib
         property string icon
@@ -185,6 +575,11 @@ Item {
         width: 26
         height: 26
 
+        Rectangle {
+            anchors.fill: parent
+            radius: 7
+            color: ibHit.containsMouse ? (ib.danger ? t.dangerSoft : t.tile) : "transparent"
+        }
         Glyph {
             anchors.centerIn: parent
             name: ib.icon
@@ -210,15 +605,16 @@ Item {
         property bool primary: false
         property bool danger: false
         signal clicked()
-        implicitWidth: spbRow.implicitWidth + 20
+        implicitWidth: spbRow.implicitWidth + 22
         implicitHeight: 28
+        opacity: spb.enabled ? 1 : 0.5
 
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: spb.primary ? t.ink
-                 : spb.danger ? "transparent"
-                 : t.raised
+            color: spb.primary ? (spbHit.containsMouse ? t.accentHover : t.accent)
+                 : spb.danger ? (spbHit.containsMouse ? t.dangerSoft : "transparent")
+                 : (spbHit.containsMouse ? t.tileActive : t.tile)
             border.width: spb.primary ? 0 : 1
             border.color: spb.danger && spbHit.containsMouse ? t.danger : t.border
             scale: spbHit.pressed ? 0.95 : 1
@@ -234,12 +630,12 @@ Item {
                 name: spb.icon
                 size: 12
                 stroke: 2.1
-                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.text)
+                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.ink)
             }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: spb.label
-                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.text)
+                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.ink)
                 font.family: t.font
                 font.pixelSize: 12
                 font.weight: Font.Bold
@@ -249,27 +645,291 @@ Item {
             id: spbHit
             anchors.fill: parent
             hoverEnabled: true
+            enabled: spb.enabled
             cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.Button
+            Accessible.name: spb.label
             onClicked: spb.clicked()
         }
     }
 
-    // ---------- header (matches HubPanel structure)
+    component FieldBox: Item {
+        id: fb
+        property string label: ""
+        property string hint: ""
+        property string placeholder: ""
+        property string text: ""
+        property bool secret: false
+        property bool mono: false
+        property bool clearable: true
+        property bool revealed: false
+        signal edited(string text)
+        signal accepted()
+
+        readonly property bool hasText: text.length > 0
+
+        width: parent ? parent.width : 260
+        implicitHeight: (label.length > 0 ? 21 : 0) + 36 + (hint.length > 0 ? 19 : 0)
+
+        Text {
+            id: fbLabel
+            visible: fb.label.length > 0
+            anchors.top: parent.top
+            width: parent.width
+            height: 15
+            text: fb.label
+            color: t.textDim
+            font.family: t.font
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+        }
+
+        Rectangle {
+            id: fbBox
+            anchors.top: fbLabel.visible ? fbLabel.bottom : parent.top
+            anchors.topMargin: fbLabel.visible ? 6 : 0
+            width: parent.width
+            height: 36
+            radius: 10
+            color: t.field
+            border.width: 1
+            border.color: fbInput.activeFocus ? t.accent : t.fieldBorder
+            Behavior on border.color { ColorAnimation { duration: 130 } }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.IBeamCursor
+                onClicked: fbInput.forceActiveFocus()
+            }
+        }
+
+        Row {
+            id: fbTail
+            anchors.right: parent.right
+            anchors.rightMargin: 5
+            anchors.verticalCenter: fbBox.verticalCenter
+            spacing: 1
+
+            Item {
+                id: fbClear
+                visible: fb.clearable && fb.hasText
+                width: 22
+                height: 22
+                Glyph {
+                    anchors.centerIn: parent
+                    name: "close"
+                    size: 10
+                    stroke: 2.2
+                    color: fbClearHit.containsMouse ? t.text : t.textFaint
+                }
+                MouseArea {
+                    id: fbClearHit
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Clear")
+                    onClicked: {
+                        fbInput.text = ""
+                        fb.edited("")
+                        fbInput.forceActiveFocus()
+                    }
+                }
+            }
+
+            Item {
+                visible: fb.secret
+                width: 22
+                height: 22
+                Glyph {
+                    anchors.centerIn: parent
+                    name: fb.revealed ? "eye-off" : "eye"
+                    size: 13
+                    stroke: 1.7
+                    color: fbRevealHit.containsMouse ? t.text : t.textFaint
+                }
+                MouseArea {
+                    id: fbRevealHit
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    Accessible.role: Accessible.Button
+                    Accessible.name: fb.revealed ? qsTr("Hide value") : qsTr("Show value")
+                    onClicked: fb.revealed = !fb.revealed
+                }
+            }
+        }
+
+        TextInput {
+            id: fbInput
+            anchors.left: parent.left
+            anchors.leftMargin: 11
+            anchors.right: fbTail.left
+            anchors.rightMargin: 5
+            anchors.verticalCenter: fbBox.verticalCenter
+            height: 20
+            verticalAlignment: TextInput.AlignVCenter
+            color: t.ink
+            selectionColor: t.accent
+            selectedTextColor: t.inverse
+            font.family: fb.mono ? "Consolas" : t.font
+            font.pixelSize: 13
+            clip: true
+            selectByMouse: true
+            echoMode: fb.secret && !fb.revealed ? TextInput.Password : TextInput.Normal
+            text: fb.text
+            onTextEdited: fb.edited(text)
+            Keys.onReturnPressed: (event) => { fb.accepted(); event.accepted = true }
+            Keys.onEnterPressed: (event) => { fb.accepted(); event.accepted = true }
+
+            Accessible.role: Accessible.EditableText
+            Accessible.name: fb.label.length > 0 ? fb.label : fb.placeholder
+
+            Text {
+                anchors.fill: parent
+                visible: fbInput.text.length === 0
+                verticalAlignment: TextInput.AlignVCenter
+                text: fb.placeholder
+                color: t.textFaint
+                font: fbInput.font
+                elide: Text.ElideRight
+            }
+        }
+
+        Text {
+            anchors.top: fbBox.bottom
+            anchors.topMargin: 6
+            visible: fb.hint.length > 0
+            width: parent.width
+            text: fb.hint
+            color: t.textFaint
+            font.family: t.font
+            font.pixelSize: 11
+            elide: Text.ElideMiddle
+        }
+    }
+
+    component Chip: Item {
+        id: chip
+        property string text: ""
+        property bool selected: false
+        signal picked()
+        implicitWidth: chipText.implicitWidth + 20
+        implicitHeight: 26
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: chip.selected ? t.accent
+                 : chipHit.containsMouse ? t.tileActive : t.tile
+            border.width: chip.selected ? 0 : 1
+            border.color: t.border
+            Behavior on color { ColorAnimation { duration: 120 } }
+            scale: chipHit.pressed ? 0.96 : 1
+            Behavior on scale { NumberAnimation { duration: 100 } }
+        }
+        Text {
+            id: chipText
+            anchors.centerIn: parent
+            text: chip.text
+            color: chip.selected ? t.inverse : (chipHit.containsMouse ? t.ink : t.textDim)
+            font.family: t.font
+            font.pixelSize: 11
+            font.weight: chip.selected ? Font.DemiBold : Font.Medium
+            Behavior on color { ColorAnimation { duration: 120 } }
+        }
+        MouseArea {
+            id: chipHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.Button
+            Accessible.name: chip.text
+            onClicked: chip.picked()
+        }
+    }
+
+    component LabeledSlider: Column {
+        id: ls
+        property string label: ""
+        property real value: 0
+        property int decimals: 2
+        signal moved(real value)
+        width: parent ? parent.width : 200
+        spacing: 6
+
+        Item {
+            width: parent.width
+            height: 15
+            Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: ls.label
+                color: t.textDim
+                font.family: t.font
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+            }
+            Text {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: Number(ls.value).toFixed(ls.decimals)
+                color: t.ink
+                font.family: t.font
+                font.pixelSize: 11
+                font.weight: Font.Bold
+                font.features: ({ "tnum": 1 })
+            }
+        }
+        SizeSlider {
+            width: parent.width
+            height: 36
+            from: 0
+            to: 1
+            value: ls.value
+            onMoved: (v) => ls.moved(v)
+        }
+    }
+
+    // ---------- header --------------------------------------------------------
     Item {
         id: header
         width: parent.width
         height: panel.headerH
 
-        Segmented {
+        Column {
             anchors.left: parent.left
-            anchors.leftMargin: 16
-            anchors.right: closeBtn.left
-            anchors.rightMargin: 10
+            anchors.leftMargin: 20
             anchors.verticalCenter: parent.verticalCenter
+            spacing: 2
+
+            Text {
+                text: qsTr("Settings")
+                color: t.ink
+                font.family: t.font
+                font.pixelSize: 16
+                font.weight: Font.Bold
+            }
+            Text {
+                text: panel.tab === 0 ? qsTr("Scale, appearance & system behavior")
+                    : (panel.tab === 1 ? qsTr("Manage pinned dock & installed apps")
+                                       : qsTr("Desktop buddy & AI provider"))
+                color: t.textDim
+                font.family: t.font
+                font.pixelSize: 11
+            }
+        }
+
+        Segmented {
+            anchors.right: closeBtn.left
+            anchors.rightMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            width: 300
             height: 34
             options: [
                 { label: qsTr("General"), value: 0 },
-                { label: qsTr("Apps (%1)").arg(panel.dockModel.length), value: 1 }
+                { label: qsTr("Apps (%1)").arg(panel.dockModel.length), value: 1 },
+                { label: qsTr("Buddy"), value: 2 }
             ]
             value: panel.tab
             onPicked: (v) => panel.tab = v
@@ -278,10 +938,10 @@ Item {
         IconButton {
             id: closeBtn
             anchors.right: parent.right
-            anchors.rightMargin: 12
+            anchors.rightMargin: 14
             anchors.verticalCenter: parent.verticalCenter
-            width: 28
-            height: 28
+            width: 30
+            height: 30
             icon: "close"
             glyphSize: 15
             onClicked: panel.closeRequested()
@@ -296,7 +956,7 @@ Item {
         color: t.borderSoft
     }
 
-    // ---------- body
+    // ---------- body ----------------------------------------------------------
     Item {
         id: content
         anchors.top: topRule.bottom
@@ -305,7 +965,7 @@ Item {
         clip: true
         Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
-        // ---- Tab 0: General
+        // ==== Tab 0: General ==================================================
         Flickable {
             anchors.fill: parent
             contentWidth: width
@@ -315,21 +975,19 @@ Item {
             flickDeceleration: 3500
             clip: true
             visible: panel.tab === 0 || general.opacity > 0.01
-            // The active tab fades in above the one fading out; without this
-            // the apps tab stayed drawn on top during the fade back.
             z: panel.tab === 0 ? 1 : 0
 
             Column {
                 id: general
-                x: 18 - (panel.tab === 0 ? 0 : 18)
-                width: content.width - 36
-                topPadding: 14
-                bottomPadding: 14
-                spacing: 10
+                x: 20 - (panel.tab === 0 ? 0 : 16)
+                width: content.width - 40
+                topPadding: 16
+                bottomPadding: 16
+                spacing: 12
                 opacity: panel.tab === 0 ? 1 : 0
                 enabled: panel.tab === 0
-                Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
                 SectionHeader {
                     title: qsTr("Size & Scale")
@@ -337,30 +995,37 @@ Item {
                 }
 
                 GroupCard {
-                    Segmented {
+                    Row {
                         width: parent.width
-                        height: 30
-                        options: [
-                            { label: "S", value: 0.8 },
-                            { label: "M", value: 1.0 },
-                            { label: "L", value: 1.2 },
-                            { label: "XL", value: 1.4 }
-                        ]
-                        value: panel.prefs.sizeScale
-                        onPicked: (v) => panel.prefs.sizeScale = v
-                    }
+                        spacing: 14
 
-                    SizeSlider {
-                        width: parent.width
-                        from: 0.7
-                        to: 1.6
-                        value: panel.prefs.sizeScale
-                        onMoved: (v) => panel.prefs.sizeScale = Math.round(v * 100) / 100
+                        Segmented {
+                            width: 220
+                            height: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            options: [
+                                { label: "S", value: 0.8 },
+                                { label: "M", value: 1.0 },
+                                { label: "L", value: 1.2 },
+                                { label: "XL", value: 1.4 }
+                            ]
+                            value: panel.prefs.sizeScale
+                            onPicked: (v) => panel.prefs.sizeScale = v
+                        }
+
+                        SizeSlider {
+                            width: parent.width - 234
+                            anchors.verticalCenter: parent.verticalCenter
+                            from: 0.7
+                            to: 1.6
+                            value: panel.prefs.sizeScale
+                            onMoved: (v) => panel.prefs.sizeScale = Math.round(v * 100) / 100
+                        }
                     }
 
                     Text {
                         width: parent.width
-                        text: qsTr("Drag the handle below the notch or Ctrl + scroll on it.")
+                        text: qsTr("Drag the handle below the notch or Ctrl + scroll on the notch to resize live.")
                         color: t.textFaint
                         font.family: t.font
                         font.pixelSize: 11
@@ -370,40 +1035,94 @@ Item {
 
                 SectionHeader { title: qsTr("Appearance & Bar") }
 
-                GroupCard {
-                    ToggleRow {
+                // 2x2 grid of appearance cards utilizing the wider layout
+                Grid {
+                    width: parent.width
+                    columns: 2
+                    rowSpacing: 10
+                    columnSpacing: 10
+
+                    readonly property real tileW: Math.floor((width - columnSpacing) / 2)
+
+                    ToggleTile {
+                        width: parent.tileW
                         label: qsTr("Light theme")
-                        sub: qsTr("Pale frosted glass instead of dark glass.")
+                        sub: qsTr("Crisp light surface instead of dark carbon.")
                         checked: panel.lightTheme
                         onToggled: (c) => panel.themeToggled(c)
                     }
-                    CardDivider {}
-                    ToggleRow {
+                    ToggleTile {
+                        width: parent.tileW
                         label: qsTr("Monochrome icons")
                         sub: qsTr("Render dock icons in high-contrast monochrome.")
                         checked: panel.prefs.monoIcons
                         onToggled: (c) => panel.prefs.monoIcons = c
                     }
-                    CardDivider { visible: panel.blurSupported }
-                    ToggleRow {
-                        visible: panel.blurSupported
-                        label: qsTr("Blur behind (beta)")
-                        sub: qsTr("Real desktop blur behind the glass surface.")
-                        checked: panel.blurBehind
-                        onToggled: (c) => panel.blurToggled(c)
-                    }
-                    CardDivider {}
-                    ToggleRow {
+                    ToggleTile {
+                        width: parent.tileW
                         label: qsTr("Show clock")
+                        sub: qsTr("Display current time and date on the notch.")
                         checked: panel.prefs.showClock
                         onToggled: (c) => panel.prefs.showClock = c
                     }
+                }
+
+                SectionHeader {
+                    title: qsTr("Theme colours")
+                    rightText: panel.optionLabel(panel.paletteOpts, appearance.palette)
+                               + " · " + panel.optionLabel(panel.accentOpts, appearance.accent)
+                }
+
+                GroupCard {
+                    Text {
+                        text: qsTr("Surface")
+                        color: t.textDim
+                        font.family: t.font
+                        font.pixelSize: 12
+                        font.weight: Font.Medium
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 12
+                        Repeater {
+                            model: panel.paletteOpts
+                            PaletteSwatch {
+                                required property var modelData
+                                option: modelData
+                                selected: appearance.palette === modelData.id
+                                onPicked: appearance.palette = modelData.id
+                            }
+                        }
+                    }
+
                     CardDivider {}
-                    ToggleRow {
-                        label: qsTr("System stats")
-                        sub: qsTr("Show live CPU, RAM and battery next to the clock.")
-                        checked: panel.prefs.showStats
-                        onToggled: (c) => panel.prefs.showStats = c
+
+                    Item {
+                        width: parent.width
+                        height: 34
+                        Text {
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Accent")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                        }
+                        Row {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+                            Repeater {
+                                model: panel.accentOpts
+                                AccentSwatch {
+                                    required property var modelData
+                                    option: modelData
+                                    selected: appearance.accent === modelData.id
+                                    onPicked: appearance.accent = modelData.id
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -412,7 +1131,7 @@ Item {
                 GroupCard {
                     ToggleRow {
                         label: qsTr("Auto-hide notch")
-                        sub: qsTr("Tucks into the top edge; hover the top of the screen to reveal.")
+                        sub: qsTr("Tucks into the top edge; hover the top dash to reveal.")
                         checked: panel.prefs.autoHide
                         onToggled: (c) => panel.prefs.autoHide = c
                     }
@@ -420,7 +1139,7 @@ Item {
                     Item {
                         visible: panel.prefs.autoHide
                         width: parent.width
-                        height: 30
+                        height: 32
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("Hide delay")
@@ -432,7 +1151,7 @@ Item {
                         Segmented {
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 232
+                            width: 268
                             height: 28
                             options: [
                                 { label: "0.3s", value: 300 },
@@ -454,11 +1173,27 @@ Item {
                         onToggled: (c) => panel.prefs.suppressInFullscreen = c
                     }
                     CardDivider {}
-                    ToggleRow {
-                        label: qsTr("Desktop buddy")
-                        sub: qsTr("A little helper on a rope at the top edge. Click it for plans, demo charts and research notes.")
-                        checked: panel.prefs.buddyEnabled
-                        onToggled: (c) => panel.prefs.buddyEnabled = c
+                    Item {
+                        width: parent.width
+                        implicitHeight: buddyToggle.implicitHeight
+
+                        ToggleRow {
+                            id: buddyToggle
+                            width: parent.width - (resetPosBtn.visible ? resetPosBtn.width + 12 : 0)
+                            label: qsTr("Desktop buddy")
+                            sub: qsTr("Interactive orb companion. Drag it anywhere or click it for tasks, timers and AI chat.")
+                            checked: panel.prefs.buddyEnabled
+                            onToggled: (c) => panel.prefs.buddyEnabled = c
+                        }
+                        SmallPillButton {
+                            id: resetPosBtn
+                            visible: panel.buddyMovedCustom
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: "reset"
+                            label: qsTr("Reset position")
+                            onClicked: panel.resetBuddyPosRequested()
+                        }
                     }
                     CardDivider {}
                     ToggleRow {
@@ -477,6 +1212,7 @@ Item {
                     ToggleRow {
                         visible: panel.startupSupported
                         label: qsTr("Launch at startup")
+                        sub: qsTr("Start Noch automatically when you sign in to Windows.")
                         checked: panel.launchAtStartup
                         onToggled: (c) => panel.startupToggled(c)
                     }
@@ -484,417 +1220,953 @@ Item {
             }
         }
 
-        // ---- Tab 1: Apps (Pinned in Notch + List of Installed Apps to Add)
+        // ==== Tab 1: Apps (Side-by-Side 2-Column Split View) ==================
         Flickable {
             anchors.fill: parent
             contentWidth: width
-            contentHeight: appsCol.implicitHeight
+            contentHeight: appsView.implicitHeight
             interactive: contentHeight > height + 1
             boundsBehavior: Flickable.StopAtBounds
             clip: true
-            visible: panel.tab === 1 || appsCol.opacity > 0.01
+            visible: panel.tab === 1 || appsView.opacity > 0.01
             z: panel.tab === 1 ? 1 : 0
 
-            Column {
-                id: appsCol
-                x: 18 + (panel.tab === 1 ? 0 : 18)
-                width: content.width - 36
-                topPadding: 14
-                bottomPadding: 14
-                spacing: 10
+            Item {
+                id: appsView
+                x: 20 + (panel.tab === 1 ? 0 : 16)
+                width: content.width - 40
+                implicitHeight: 392
+                height: implicitHeight
                 opacity: panel.tab === 1 ? 1 : 0
                 enabled: panel.tab === 1
-                Behavior on opacity { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-                // ── Section 1: Pinned in Notch ──────────────────────────────
-                Item {
-                    width: parent.width
-                    height: 26
+                readonly property real colGap: 14
+                readonly property real leftW: Math.floor((width - colGap) * 0.47)
+                readonly property real rightW: width - leftW - colGap
 
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: qsTr("PINNED IN NOTCH (%1)").arg(panel.dockModel.length)
-                        color: t.textDim
-                        font.family: t.font
-                        font.pixelSize: 11
-                        font.weight: Font.Bold
-                        font.letterSpacing: 0.8
+                // ── Left Column: Pinned in Notch ──────────────────────────────
+                Column {
+                    x: 0
+                    y: 16
+                    width: appsView.leftW
+                    spacing: 10
+
+                    Item {
+                        width: parent.width
+                        height: 28
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("PINNED (%1)").arg(panel.dockModel.length)
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 11
+                            font.weight: Font.Bold
+                            font.letterSpacing: 0.8
+                        }
+
+                        Row {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 6
+
+                            SmallPillButton {
+                                icon: "reset"
+                                label: qsTr("Defaults")
+                                onClicked: panel.resetRequested()
+                            }
+                            SmallPillButton {
+                                icon: "folder"
+                                label: qsTr("Browse…")
+                                onClicked: panel.addRequested()
+                            }
+                        }
                     }
 
-                    Row {
-                        anchors.right: parent.right
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 6
+                    Rectangle {
+                        width: parent.width
+                        height: 322
+                        radius: 14
+                        color: t.raised
+                        border.width: 1
+                        border.color: t.borderSoft
+                        clip: true
 
-                        SmallPillButton {
-                            icon: "reset"
-                            label: qsTr("Defaults")
-                            onClicked: panel.resetRequested()
+                        Text {
+                            visible: panel.dockModel.length === 0
+                            anchors.centerIn: parent
+                            width: parent.width - 32
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            text: qsTr("No apps pinned yet.\nClick + Add on the right to pin apps.")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 12
                         }
-                        SmallPillButton {
-                            icon: "folder"
-                            label: qsTr("Browse…")
-                            onClicked: panel.addRequested()
+
+                        ListView {
+                            id: pinnedList
+                            visible: panel.dockModel.length > 0
+                            x: 6
+                            y: 6
+                            width: parent.width - 12
+                            height: parent.height - 12
+                            clip: true
+                            interactive: contentHeight > height
+                            boundsBehavior: Flickable.StopAtBounds
+                            cacheBuffer: 320
+                            model: panel.dockModel
+                            spacing: 2
+
+                            displaced: Transition {
+                                NumberAnimation { properties: "y"; duration: 180; easing.type: Easing.OutCubic }
+                            }
+
+                            delegate: Item {
+                                id: appRow
+                                required property int index
+                                required property var modelData
+                                width: pinnedList.width
+                                height: 40
+
+                                readonly property bool isRunning: panel.runningList.indexOf(modelData.exe) >= 0
+
+                                HoverHandler { id: rowHover }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 9
+                                    color: rowHover.hovered ? t.hover : "transparent"
+                                }
+
+                                Item {
+                                    id: rowIcon
+                                    x: 10
+                                    width: 22
+                                    height: 22
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Image {
+                                        id: rowImg
+                                        anchors.fill: parent
+                                        source: appRow.modelData.iconId
+                                                ? "image://appicon/" + (panel.prefs.monoIcons ? t.iconMono : "color") + "/" + appRow.modelData.iconId
+                                                : ""
+                                        sourceSize: Qt.size(96, 96)
+                                        mipmap: true
+                                        smooth: true
+                                        fillMode: Image.PreserveAspectFit
+                                        visible: status === Image.Ready
+                                    }
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        visible: rowImg.status !== Image.Ready
+                                        radius: 6
+                                        color: t.tile
+                                        border.width: 1
+                                        border.color: t.border
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: (appRow.modelData.name || "?").charAt(0).toUpperCase()
+                                            color: t.ink
+                                            font.family: t.font
+                                            font.pixelSize: 11
+                                            font.weight: Font.Bold
+                                        }
+                                    }
+                                }
+
+                                Row {
+                                    anchors.left: rowIcon.right
+                                    anchors.leftMargin: 10
+                                    anchors.right: rowActions.left
+                                    anchors.rightMargin: 6
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 6
+
+                                    Text {
+                                        width: Math.min(implicitWidth, parent.width - (appRow.isRunning ? 14 : 0))
+                                        text: appRow.modelData.name
+                                        color: t.ink
+                                        elide: Text.ElideRight
+                                        font.family: t.font
+                                        font.pixelSize: 13
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Rectangle {
+                                        visible: appRow.isRunning
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 6
+                                        height: 6
+                                        radius: 3
+                                        color: t.success
+                                    }
+                                }
+
+                                Row {
+                                    id: rowActions
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 6
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 2
+                                    opacity: rowHover.hovered ? 1 : 0.65
+                                    Behavior on opacity { NumberAnimation { duration: 110 } }
+
+                                    IconButton {
+                                        icon: "up"
+                                        glyphSize: 13
+                                        visible: appRow.index > 0
+                                        onClicked: panel.moveRequested(appRow.index, appRow.index - 1)
+                                    }
+                                    IconButton {
+                                        icon: "down"
+                                        glyphSize: 13
+                                        visible: appRow.index < panel.dockModel.length - 1
+                                        onClicked: panel.moveRequested(appRow.index, appRow.index + 1)
+                                    }
+                                    IconButton {
+                                        icon: "close"
+                                        glyphSize: 13
+                                        danger: true
+                                        onClicked: panel.unpinRequested(appRow.index)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                Rectangle {
-                    width: parent.width
-                    height: panel.dockModel.length === 0 ? 52 : Math.min(pinnedList.contentHeight, 4 * 40) + 8
-                    radius: 14
-                    color: t.raised
-                    border.width: 1
-                    border.color: t.borderSoft
-                    clip: true
-                    Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                // ── Right Column: Installed Apps List to Add ──────────────────
+                Column {
+                    x: appsView.leftW + appsView.colGap
+                    y: 16
+                    width: appsView.rightW
+                    spacing: 10
 
-                    Text {
-                        visible: panel.dockModel.length === 0
-                        anchors.centerIn: parent
-                        text: qsTr("No apps pinned — click + Add below to pin apps")
-                        color: t.textDim
-                        font.family: t.font
-                        font.pixelSize: 12
+                    Item {
+                        width: parent.width
+                        height: 28
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("ADD APPS")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 11
+                            font.weight: Font.Bold
+                            font.letterSpacing: 0.8
+                        }
+                        Text {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("%1 available").arg(panel.availableList.length)
+                            color: t.textFaint
+                            font.family: t.font
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                        }
                     }
 
-                    ListView {
-                        id: pinnedList
-                        visible: panel.dockModel.length > 0
-                        x: 6
-                        y: 4
-                        width: parent.width - 12
-                        height: parent.height - 8
+                    Rectangle {
+                        width: parent.width
+                        height: 322
+                        radius: 14
+                        color: t.raised
+                        border.width: 1
+                        border.color: t.borderSoft
                         clip: true
-                        interactive: contentHeight > height
-                        boundsBehavior: Flickable.StopAtBounds
-                        model: panel.dockModel
-                        spacing: 0
 
-                        displaced: Transition {
-                            NumberAnimation { properties: "y"; duration: 180; easing.type: Easing.OutCubic }
-                        }
+                        // Search bar pinned at the top of the right card
+                        Rectangle {
+                            id: filterBar
+                            x: 10
+                            y: 10
+                            width: parent.width - 20
+                            height: 34
+                            radius: 9
+                            color: t.field
+                            border.width: 1
+                            border.color: filterInput.activeFocus ? t.accent : t.fieldBorder
+                            Behavior on border.color { ColorAnimation { duration: 130 } }
 
-                        delegate: Item {
-                            id: appRow
-                            required property int index
-                            required property var modelData
-                            width: pinnedList.width
-                            height: 40
-
-                            readonly property bool isRunning: panel.runningList.indexOf(modelData.exe) >= 0
-
-                            HoverHandler { id: rowHover }
-
-                            Item {
-                                id: rowIcon
-                                x: 10
-                                width: 22
-                                height: 22
+                            Glyph {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 10
                                 anchors.verticalCenter: parent.verticalCenter
+                                name: "search"
+                                size: 13
+                                stroke: 2
+                                color: filterInput.activeFocus ? t.accent : t.textDim
+                            }
 
-                                Image {
-                                    id: rowImg
+                            TextInput {
+                                id: filterInput
+                                anchors.left: parent.left
+                                anchors.leftMargin: 30
+                                anchors.right: clearFilterBtn.visible ? clearFilterBtn.left : parent.right
+                                anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: t.ink
+                                selectionColor: t.accent
+                                selectedTextColor: t.inverse
+                                font.family: t.font
+                                font.pixelSize: 13
+                                font.weight: Font.Medium
+                                clip: true
+                                selectByMouse: true
+                                onTextChanged: panel.appFilter = text
+
+                                Text {
                                     anchors.fill: parent
-                                    source: appRow.modelData.iconId
-                                            ? "image://appicon/" + (panel.prefs.monoIcons ? t.iconMono : "color") + "/" + appRow.modelData.iconId
-                                            : ""
-                                    sourceSize: Qt.size(96, 96)
-                                    mipmap: true
-                                    smooth: true
-                                    fillMode: Image.PreserveAspectFit
-                                    visible: status === Image.Ready
-                                }
-                                Rectangle {
-                                    anchors.fill: parent
-                                    visible: rowImg.status !== Image.Ready
-                                    radius: 6
-                                    color: t.raised
-                                    border.width: 1
-                                    border.color: t.border
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: (appRow.modelData.name || "?").charAt(0).toUpperCase()
-                                        color: t.text
-                                        font.family: t.font
-                                        font.pixelSize: 11
-                                        font.weight: Font.Bold
-                                    }
+                                    visible: filterInput.text.length === 0
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    text: qsTr("Search installed apps…")
+                                    color: t.textFaint
+                                    font: filterInput.font
                                 }
                             }
 
-                            Row {
-                                anchors.left: rowIcon.right
-                                anchors.leftMargin: 10
-                                anchors.right: rowActions.left
-                                anchors.rightMargin: 8
+                            IconButton {
+                                id: clearFilterBtn
+                                visible: filterInput.text.length > 0
+                                anchors.right: parent.right
+                                anchors.rightMargin: 4
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: 6
+                                width: 24
+                                height: 24
+                                icon: "close"
+                                glyphSize: 11
+                                onClicked: {
+                                    filterInput.text = ""
+                                    filterInput.forceActiveFocus()
+                                }
+                            }
+                        }
+
+                        Text {
+                            visible: panel.availableList.length === 0
+                            anchors.centerIn: parent
+                            anchors.verticalCenterOffset: 16
+                            text: filterInput.text.length > 0
+                                  ? qsTr("No matching unpinned apps found")
+                                  : qsTr("All detected apps are already pinned")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 12
+                        }
+
+                        ListView {
+                            id: addList
+                            visible: panel.availableList.length > 0
+                            x: 6
+                            y: 50
+                            width: parent.width - 12
+                            height: parent.height - 56
+                            clip: true
+                            interactive: contentHeight > height
+                            boundsBehavior: Flickable.StopAtBounds
+                            cacheBuffer: 320
+                            model: panel.availableList
+                            spacing: 2
+
+                            displaced: Transition {
+                                NumberAnimation { properties: "y"; duration: 180; easing.type: Easing.OutCubic }
+                            }
+
+                            delegate: Item {
+                                id: candRow
+                                required property int index
+                                required property var modelData
+                                width: addList.width
+                                height: 40
+
+                                HoverHandler { id: candHover }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 9
+                                    color: candHover.hovered ? t.hover : "transparent"
+                                }
+
+                                Item {
+                                    id: candIcon
+                                    x: 10
+                                    width: 22
+                                    height: 22
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Image {
+                                        id: candImg
+                                        anchors.fill: parent
+                                        source: candRow.modelData.iconId
+                                                ? "image://appicon/color/" + candRow.modelData.iconId
+                                                : ""
+                                        sourceSize: Qt.size(96, 96)
+                                        mipmap: true
+                                        smooth: true
+                                        fillMode: Image.PreserveAspectFit
+                                        visible: status === Image.Ready
+                                    }
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        visible: candImg.status !== Image.Ready
+                                        radius: 6
+                                        color: t.tile
+                                        border.width: 1
+                                        border.color: t.border
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: (candRow.modelData.name || "?").charAt(0).toUpperCase()
+                                            color: t.ink
+                                            font.family: t.font
+                                            font.pixelSize: 11
+                                            font.weight: Font.Bold
+                                        }
+                                    }
+                                }
 
                                 Text {
-                                    text: appRow.modelData.name
-                                    color: t.text
+                                    anchors.left: candIcon.right
+                                    anchors.leftMargin: 10
+                                    anchors.right: addPill.left
+                                    anchors.rightMargin: 8
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: candRow.modelData.name
+                                    color: t.ink
                                     elide: Text.ElideRight
                                     font.family: t.font
                                     font.pixelSize: 13
                                     font.weight: Font.DemiBold
                                 }
+
                                 Rectangle {
-                                    visible: appRow.isRunning
+                                    id: addPill
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 8
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: 6
-                                    height: 6
-                                    radius: 3
-                                    color: t.success
-                                }
-                            }
-
-                            Row {
-                                id: rowActions
-                                anchors.right: parent.right
-                                anchors.rightMargin: 6
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 2
-                                opacity: rowHover.hovered ? 1 : 0.55
-                                Behavior on opacity { NumberAnimation { duration: 110 } }
-
-                                IconButton {
-                                    icon: "up"
-                                    glyphSize: 13
-                                    visible: appRow.index > 0
-                                    onClicked: panel.moveRequested(appRow.index, appRow.index - 1)
-                                }
-                                IconButton {
-                                    icon: "down"
-                                    glyphSize: 13
-                                    visible: appRow.index < panel.dockModel.length - 1
-                                    onClicked: panel.moveRequested(appRow.index, appRow.index + 1)
-                                }
-                                IconButton {
-                                    icon: "close"
-                                    glyphSize: 13
-                                    danger: true
-                                    onClicked: panel.unpinRequested(appRow.index)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ── Section 2: Installed Apps List to Add ───────────────────
-                SectionHeader {
-                    title: qsTr("Add Apps")
-                    rightText: qsTr("%1 available").arg(panel.availableList.length)
-                }
-
-                // Search / Filter bar for installed apps
-                Rectangle {
-                    width: parent.width
-                    height: 36
-                    radius: 11
-                    color: t.raised
-                    border.width: 1
-                    border.color: filterInput.activeFocus ? t.borderStrong : t.borderSoft
-                    Behavior on border.color { ColorAnimation { duration: 130 } }
-
-                    Glyph {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: "search"
-                        size: 14
-                        stroke: 2
-                        color: filterInput.activeFocus ? t.ink : t.textDim
-                    }
-
-                    TextInput {
-                        id: filterInput
-                        anchors.left: parent.left
-                        anchors.leftMargin: 34
-                        anchors.right: clearFilterBtn.visible ? clearFilterBtn.left : parent.right
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: t.ink
-                        selectionColor: t.ink
-                        selectedTextColor: t.inverse
-                        font.family: t.font
-                        font.pixelSize: 13
-                        font.weight: Font.Medium
-                        clip: true
-                        selectByMouse: true
-                        onTextChanged: panel.appFilter = text
-
-                        Text {
-                            anchors.fill: parent
-                            visible: filterInput.text.length === 0
-                            verticalAlignment: TextInput.AlignVCenter
-                            text: qsTr("Search installed apps to add…")
-                            color: t.textFaint
-                            font: filterInput.font
-                        }
-                    }
-
-                    IconButton {
-                        id: clearFilterBtn
-                        visible: filterInput.text.length > 0
-                        anchors.right: parent.right
-                        anchors.rightMargin: 5
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 24
-                        height: 24
-                        icon: "close"
-                        glyphSize: 11
-                        onClicked: {
-                            filterInput.text = ""
-                            filterInput.forceActiveFocus()
-                        }
-                    }
-                }
-
-                // Scrollable list of installed apps ready to add
-                Rectangle {
-                    width: parent.width
-                    height: panel.availableList.length === 0 ? 64 : Math.min(addList.contentHeight + 8, 5 * 44 + 8)
-                    radius: 14
-                    color: t.raised
-                    border.width: 1
-                    border.color: t.borderSoft
-                    clip: true
-                    Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-
-                    Text {
-                        visible: panel.availableList.length === 0
-                        anchors.centerIn: parent
-                        text: filterInput.text.length > 0
-                              ? qsTr("No matching unpinned apps found")
-                              : qsTr("All detected apps are already pinned")
-                        color: t.textDim
-                        font.family: t.font
-                        font.pixelSize: 12
-                    }
-
-                    ListView {
-                        id: addList
-                        visible: panel.availableList.length > 0
-                        x: 6
-                        y: 4
-                        width: parent.width - 12
-                        height: parent.height - 8
-                        clip: true
-                        interactive: contentHeight > height
-                        boundsBehavior: Flickable.StopAtBounds
-                        model: panel.availableList
-                        spacing: 2
-
-                        displaced: Transition {
-                            NumberAnimation { properties: "y"; duration: 180; easing.type: Easing.OutCubic }
-                        }
-
-                        delegate: Item {
-                            id: candRow
-                            required property int index
-                            required property var modelData
-                            width: addList.width
-                            height: 42
-
-                            HoverHandler { id: candHover }
-
-                            Item {
-                                id: candIcon
-                                x: 10
-                                width: 24
-                                height: 24
-                                anchors.verticalCenter: parent.verticalCenter
-
-                                Image {
-                                    id: candImg
-                                    anchors.fill: parent
-                                    source: candRow.modelData.iconId
-                                            ? "image://appicon/color/" + candRow.modelData.iconId
-                                            : ""
-                                    sourceSize: Qt.size(96, 96)
-                                    mipmap: true
-                                    smooth: true
-                                    fillMode: Image.PreserveAspectFit
-                                    visible: status === Image.Ready
-                                }
-                                Rectangle {
-                                    anchors.fill: parent
-                                    visible: candImg.status !== Image.Ready
-                                    radius: 7
-                                    color: t.raised
-                                    border.width: 1
+                                    width: addPillRow.implicitWidth + 16
+                                    height: 25
+                                    radius: 12.5
+                                    color: candHover.hovered ? t.accent : t.tile
+                                    border.width: candHover.hovered ? 0 : 1
                                     border.color: t.border
-                                    Text {
+                                    scale: candTap.pressed ? 0.94 : 1
+                                    Behavior on scale { NumberAnimation { duration: 100 } }
+                                    Behavior on color { ColorAnimation { duration: 110 } }
+
+                                    Row {
+                                        id: addPillRow
                                         anchors.centerIn: parent
-                                        text: (candRow.modelData.name || "?").charAt(0).toUpperCase()
-                                        color: t.text
-                                        font.family: t.font
-                                        font.pixelSize: 11
-                                        font.weight: Font.Bold
+                                        spacing: 4
+                                        Glyph {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            name: "plus"
+                                            size: 11
+                                            stroke: 2.2
+                                            color: candHover.hovered ? t.inverse : t.ink
+                                        }
+                                        Text {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: qsTr("Add")
+                                            color: candHover.hovered ? t.inverse : t.ink
+                                            font.family: t.font
+                                            font.pixelSize: 12
+                                            font.weight: Font.Bold
+                                        }
                                     }
                                 }
+
+                                TapHandler {
+                                    id: candTap
+                                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                                    onTapped: panel.pinAppRequested(candRow.modelData.name, candRow.modelData.path)
+                                }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==== Tab 2: Buddy AI Provider (Properly parented inside `content`) ===
+        Flickable {
+            anchors.fill: parent
+            contentWidth: width
+            contentHeight: buddyCol.implicitHeight
+            interactive: contentHeight > height + 1
+            boundsBehavior: Flickable.StopAtBounds
+            clip: true
+            visible: panel.tab === 2 || buddyCol.opacity > 0.01
+            z: panel.tab === 2 ? 1 : 0
+
+            Column {
+                id: buddyCol
+                x: 20 + (panel.tab === 2 ? 0 : 16)
+                width: content.width - 40
+                topPadding: 16
+                bottomPadding: 16
+                spacing: 12
+                opacity: panel.tab === 2 ? 1 : 0
+                enabled: panel.tab === 2
+                Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                SectionHeader {
+                    title: qsTr("Desktop Buddy")
+                    rightText: panel.prefs.buddyEnabled
+                                 ? (panel.realChat ? panel.labelFor(panel.prefs.buddyProvider) : qsTr("Local mode"))
+                                 : qsTr("Disabled")
+                }
+
+                GroupCard {
+                    Item {
+                        width: parent.width
+                        implicitHeight: enableBuddyRow.implicitHeight
+
+                        ToggleRow {
+                            id: enableBuddyRow
+                            width: parent.width - (resetBuddyBtn2.visible ? resetBuddyBtn2.width + 12 : 0)
+                            label: qsTr("Enable desktop buddy")
+                            sub: qsTr("Show the interactive orb on your desktop. Drag to move, click to ask.")
+                            checked: panel.prefs.buddyEnabled
+                            onToggled: (c) => panel.prefs.buddyEnabled = c
+                        }
+
+                        SmallPillButton {
+                            id: resetBuddyBtn2
+                            visible: panel.buddyMovedCustom
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: "reset"
+                            label: qsTr("Reset position")
+                            onClicked: panel.resetBuddyPosRequested()
+                        }
+                    }
+
+                    CardDivider {}
+
+                    Item {
+                        width: parent.width
+                        implicitHeight: sfxToggleRow.implicitHeight
+
+                        ToggleRow {
+                            id: sfxToggleRow
+                            width: parent.width - (previewSfxBtn.width + 12)
+                            label: qsTr("Buddy sound effects")
+                            sub: qsTr("Expressive companion chirps, purrs, and chimes when interacting.")
+                            checked: panel.prefs.buddySfxEnabled
+                            onToggled: (c) => {
+                                panel.prefs.buddySfxEnabled = c
+                                if (c && typeof buddySfx !== "undefined" && buddySfx)
+                                    Qt.callLater(function() { buddySfx.play("wake") })
+                            }
+                        }
+
+                        SmallPillButton {
+                            id: previewSfxBtn
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: panel.prefs.buddySfxEnabled ? "volume" : "mute"
+                            label: qsTr("Test sound")
+                            enabled: panel.prefs.buddySfxEnabled
+                            onClicked: {
+                                if (typeof buddySfx !== "undefined" && buddySfx)
+                                    buddySfx.play("happy")
+                            }
+                        }
+                    }
+
+                    Row {
+                        visible: panel.prefs.buddySfxEnabled
+                        width: parent.width
+                        spacing: 14
+
+                        Column {
+                            width: Math.floor((parent.width - 14) * 0.54)
+                            spacing: 6
 
                             Text {
-                                anchors.left: candIcon.right
-                                anchors.leftMargin: 10
-                                anchors.right: addPill.left
-                                anchors.rightMargin: 10
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: candRow.modelData.name
-                                color: t.text
-                                elide: Text.ElideRight
+                                width: parent.width
+                                text: qsTr("Voice style")
+                                color: t.textDim
                                 font.family: t.font
-                                font.pixelSize: 13
+                                font.pixelSize: 11
                                 font.weight: Font.DemiBold
                             }
 
-                            Rectangle {
-                                id: addPill
-                                anchors.right: parent.right
-                                anchors.rightMargin: 8
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: addPillRow.implicitWidth + 16
-                                height: 26
-                                radius: 13
-                                color: t.tile
-                                border.width: 1
-                                border.color: candHover.hovered ? t.borderStrong : t.border
-                                scale: candTap.pressed ? 0.94 : 1
-                                Behavior on scale { NumberAnimation { duration: 100 } }
+                            Segmented {
+                                width: parent.width
+                                height: 30
+                                options: [
+                                    { label: qsTr("Cute"), value: "cute" },
+                                    { label: qsTr("Warm"), value: "warm" },
+                                    { label: qsTr("Mellow"), value: "mellow" }
+                                ]
+                                value: panel.prefs.buddySfxStyle
+                                onPicked: (v) => {
+                                    panel.prefs.buddySfxStyle = v
+                                    if (typeof buddySfx !== "undefined" && buddySfx)
+                                        Qt.callLater(function() { buddySfx.play("wake") })
+                                }
+                            }
+                        }
 
-                                Row {
-                                    id: addPillRow
-                                    anchors.centerIn: parent
-                                    spacing: 4
-                                    Glyph {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        name: "plus"
-                                        size: 11
-                                        stroke: 2.2
-                                        color: t.ink
-                                    }
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: qsTr("Add")
-                                        color: t.ink
-                                        font.family: t.font
-                                        font.pixelSize: 12
-                                        font.weight: Font.Bold
-                                    }
+                        Column {
+                            width: parent.width - Math.floor((parent.width - 14) * 0.54) - 14
+                            spacing: 6
+
+                            Row {
+                                width: parent.width
+                                Text {
+                                    text: qsTr("Sound volume")
+                                    color: t.textDim
+                                    font.family: t.font
+                                    font.pixelSize: 11
+                                    font.weight: Font.DemiBold
+                                }
+                                Item { width: Math.max(4, parent.width - 115); height: 1 }
+                                Text {
+                                    text: Math.round(panel.prefs.buddySfxVolume * 100) + "%"
+                                    color: t.ink
+                                    font.family: t.font
+                                    font.pixelSize: 11
+                                    font.weight: Font.DemiBold
                                 }
                             }
 
-                            TapHandler {
-                                id: candTap
-                                gesturePolicy: TapHandler.ReleaseWithinBounds
-                                onTapped: panel.pinAppRequested(candRow.modelData.name, candRow.modelData.path)
+                            SizeSlider {
+                                width: parent.width
+                                height: 30
+                                from: 0.05
+                                to: 1.0
+                                value: panel.prefs.buddySfxVolume
+                                onMoved: (v) => panel.prefs.buddySfxVolume = Math.round(v * 100) / 100
                             }
                         }
+                    }
+
+                    CardDivider {}
+
+                    ToggleRow {
+                        label: qsTr("Solid color ring")
+                        sub: qsTr("Show the solid accent outline and aura ring around buddy during interactions.")
+                        checked: panel.prefs.buddySolidRing
+                        onToggled: (c) => panel.prefs.buddySolidRing = c
+                    }
+
+                    CardDivider {}
+
+                    ToggleRow {
+                        label: qsTr("Real chat (AI provider)")
+                        sub: panel.realChat
+                             ? qsTr("Questions go to %1 (%2). Local timers, app launch and plans still run directly.")
+                                  .arg(panel.labelFor(panel.prefs.buddyProvider))
+                                  .arg(panel.prefs.buddyModel || qsTr("no model"))
+                             : qsTr("Off: answers come from built-in local routes (timers, app launch, plans, sample cards).")
+                        checked: panel.realChat
+                        onToggled: (c) => panel.setRealChat(c)
+                    }
+                }
+
+                SectionHeader {
+                    title: qsTr("Ring colour")
+                    rightText: panel.optionLabel(panel.ringOpts, appearance.ring)
+                }
+
+                GroupCard {
+                    Text {
+                        width: parent.width
+                        text: qsTr("The neon halo your buddy wears when it's happy.")
+                        color: t.textFaint
+                        font.family: t.font
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 4
+                        Repeater {
+                            model: panel.ringOpts
+                            RingSwatch {
+                                required property var modelData
+                                option: modelData
+                                selected: appearance.ring === modelData.id
+                                onPicked: {
+                                    appearance.ring = modelData.id
+                                    panel.ringPreviewRequested()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SectionHeader {
+                    visible: panel.realChat
+                    title: qsTr("Provider Configuration")
+                    rightText: panel.labelFor(panel.prefs.buddyProvider)
+                }
+
+                GroupCard {
+                    visible: panel.realChat
+
+                    Column {
+                        width: parent.width
+                        spacing: 6
+
+                        Text {
+                            width: parent.width
+                            text: qsTr("Provider")
+                            color: t.textDim
+                            font.family: t.font
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                        }
+
+                        Segmented {
+                            width: parent.width
+                            height: 34
+                            options: [
+                                { label: panel.labelFor("openai"), value: "openai" },
+                                { label: panel.labelFor("ollama"), value: "ollama" },
+                                { label: panel.labelFor("anthropic"), value: "anthropic" },
+                                { label: panel.labelFor("custom"), value: "custom" }
+                            ]
+                            value: panel.prefs.buddyProvider
+                            onPicked: (v) => panel.pickProvider(v)
+                        }
+                    }
+
+                    CardDivider {}
+
+                    // Side-by-side Base URL and API Key on the wide layout
+                    Row {
+                        width: parent.width
+                        spacing: 12
+
+                        readonly property bool showKey: panel.showsKeyFor(panel.prefs.buddyProvider)
+                        readonly property real halfW: Math.floor((width - spacing) / 2)
+
+                        FieldBox {
+                            width: parent.showKey ? parent.halfW : parent.width
+                            label: qsTr("Base URL")
+                            placeholder: panel.infoFor(panel.prefs.buddyProvider).base
+                                         || qsTr("https://your-endpoint")
+                            hint: qsTr("POST %1").arg(panel.chatEndpoint())
+                            mono: true
+                            text: panel.prefs.buddyApiBase
+                            onEdited: (v) => { panel.prefs.buddyApiBase = v; panel.markDirty() }
+                        }
+
+                        FieldBox {
+                            visible: parent.showKey
+                            width: parent.halfW
+                            label: qsTr("API key")
+                            placeholder: panel.infoFor(panel.prefs.buddyProvider).needsKey
+                                         ? qsTr("Paste your API key")
+                                         : qsTr("Optional for local servers")
+                            hint: panel.infoFor(panel.prefs.buddyProvider).needsKey
+                                  ? qsTr("Stored locally in Noch settings.")
+                                  : qsTr("Leave blank if not required.")
+                            secret: true
+                            mono: true
+                            text: panel.prefs.buddyApiKey
+                            onEdited: (v) => { panel.prefs.buddyApiKey = v; panel.markDirty() }
+                        }
+                    }
+
+                    CardDivider {}
+
+                    // Side-by-side Model + Temperature slider
+                    Row {
+                        width: parent.width
+                        spacing: 14
+
+                        FieldBox {
+                            width: parent.width - 184
+                            label: qsTr("Model")
+                            placeholder: qsTr("Model id, e.g. gpt-4o-mini")
+                            mono: true
+                            text: panel.prefs.buddyModel
+                            onEdited: (v) => { panel.prefs.buddyModel = v; panel.markDirty() }
+                        }
+
+                        LabeledSlider {
+                            width: 170
+                            label: qsTr("Temperature")
+                            decimals: 2
+                            value: panel.prefs.buddyTemperature
+                            onMoved: (v) => panel.prefs.buddyTemperature = Math.round(v * 100) / 100
+                        }
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        visible: panel.modelChips.length > 0
+
+                        Repeater {
+                            model: panel.modelChips
+                            delegate: Chip {
+                                required property var modelData
+                                text: modelData
+                                selected: String(panel.prefs.buddyModel) === String(modelData)
+                                onPicked: panel.setModel(modelData)
+                            }
+                        }
+                    }
+
+                    CardDivider {}
+
+                    Row {
+                        width: parent.width
+                        spacing: 12
+
+                        SmallPillButton {
+                            id: testBtn
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: "wifi"
+                            label: panel.testState === "testing" ? qsTr("Testing…") : qsTr("Test connection")
+                            primary: true
+                            enabled: panel.testState !== "testing"
+                            onClicked: panel.runTest()
+                        }
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(0, parent.width - testBtn.width - 12)
+                            text: panel.testMessage.length > 0
+                                  ? panel.testMessage
+                                  : qsTr("Verify endpoint & fetch available models.")
+                            color: panel.testState === "ok" ? t.success
+                                 : panel.testState === "failed" ? t.danger : t.textDim
+                            font.family: t.font
+                            font.pixelSize: 12
+                            wrapMode: Text.WordWrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                SectionHeader {
+                    title: qsTr("Anthropic Agent SDK & Tools")
+                    rightText: panel.prefs.buddyAgentMode
+                                 ? qsTr("%1 of 9 tool suites armed")
+                                     .arg((panel.prefs.buddyAllowBash ? 1 : 0)
+                                          + (panel.prefs.buddyAllowComputer ? 1 : 0)
+                                          + (panel.prefs.buddyAllowEditor ? 1 : 0)
+                                          + (panel.prefs.buddyAllowCodeSearch ? 1 : 0)
+                                          + (panel.prefs.buddyAllowMemory ? 1 : 0)
+                                          + (panel.prefs.buddyAllowWebSearch ? 1 : 0)
+                                          + (panel.prefs.buddyAllowToolSearch ? 1 : 0)
+                                          + (panel.prefs.buddyAllowAdvisor ? 1 : 0)
+                                          + (panel.prefs.buddyAllowTodoTask ? 1 : 0))
+                                 : qsTr("Disabled")
+                }
+
+                GroupCard {
+                    ToggleRow {
+                        label: qsTr("Enable Agent SDK tool loop")
+                        sub: qsTr("Allow Anthropic and all configured AI agents to autonomously run multi-turn tool calls, execute commands, consult the advisor, and use the computer.")
+                        checked: panel.prefs.buddyAgentMode
+                        onToggled: (c) => panel.prefs.buddyAgentMode = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Command execution (bash / PowerShell)")
+                        sub: qsTr("Run terminal and PowerShell commands asynchronously with output capture and 25s timeout protection.")
+                        checked: panel.prefs.buddyAllowBash
+                        onToggled: (c) => panel.prefs.buddyAllowBash = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Computer use (screen, mouse & keyboard)")
+                        sub: qsTr("Anthropic Computer Use API: capture 1280×800 screenshots, move/click cursor, scroll, and synthesize keyboard input.")
+                        checked: panel.prefs.buddyAllowComputer
+                        onToggled: (c) => panel.prefs.buddyAllowComputer = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("File editor (str_replace_editor)")
+                        sub: qsTr("Inspect directories, view file line ranges, create files, apply exact replacements, and undo edits.")
+                        checked: panel.prefs.buddyAllowEditor
+                        onToggled: (c) => panel.prefs.buddyAllowEditor = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Code search (glob_grep)")
+                        sub: qsTr("Anthropic Agent SDK Glob & Grep: fast recursive file pattern matching and regex code search with line numbers.")
+                        checked: panel.prefs.buddyAllowCodeSearch
+                        onToggled: (c) => panel.prefs.buddyAllowCodeSearch = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Memory tool (/memories)")
+                        sub: qsTr("Anthropic Memory Tool: persist notes, context, and structured files across conversations in a sandboxed /memories directory.")
+                        checked: panel.prefs.buddyAllowMemory
+                        onToggled: (c) => panel.prefs.buddyAllowMemory = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Web search & fetch (web_search / web_fetch)")
+                        sub: qsTr("Search the live web with source citations and extract structured text, links, and metadata from URLs.")
+                        checked: panel.prefs.buddyAllowWebSearch
+                        onToggled: (c) => panel.prefs.buddyAllowWebSearch = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Tool search (tool_search BM25 & regex)")
+                        sub: qsTr("Anthropic Tool Search: dynamically discover and inspect Agent SDK tool schemas using BM25 natural language or regex queries.")
+                        checked: panel.prefs.buddyAllowToolSearch
+                        onToggled: (c) => panel.prefs.buddyAllowToolSearch = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Advisor consultation (advisor_20260301)")
+                        sub: qsTr("Anthropic Advisor Tool: invoke strategic architectural review, debugging verification, security auditing, and execution planning.")
+                        checked: panel.prefs.buddyAllowAdvisor
+                        onToggled: (c) => panel.prefs.buddyAllowAdvisor = c
+                    }
+
+                    CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                    ToggleRow {
+                        visible: panel.prefs.buddyAgentMode
+                        label: qsTr("Task checklist & desktop context (todo_write)")
+                        sub: qsTr("Anthropic TodoWrite live task tracker, Windows clipboard read/write, and live CPU/RAM/display telemetry.")
+                        checked: panel.prefs.buddyAllowTodoTask
+                        onToggled: (c) => panel.prefs.buddyAllowTodoTask = c
                     }
                 }
             }
@@ -909,7 +2181,7 @@ Item {
         color: t.borderSoft
     }
 
-    // ---------- footer
+    // ---------- footer --------------------------------------------------------
     Item {
         id: footer
         anchors.top: bottomRule.bottom
@@ -918,25 +2190,25 @@ Item {
 
         Row {
             anchors.left: parent.left
-            anchors.leftMargin: 18
+            anchors.leftMargin: 20
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 7
+            spacing: 8
 
             Text {
                 text: "Noch"
-                color: t.text
+                color: t.ink
                 font.family: t.font
                 font.pixelSize: 13
                 font.weight: Font.ExtraBold
             }
             Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
-                width: verText.implicitWidth + 10
-                height: 18
-                radius: 9
+                width: verText.implicitWidth + 12
+                height: 20
+                radius: 10
                 color: t.raised
                 border.width: 1
-                border.color: t.borderSoft
+                border.color: t.border
                 Text {
                     id: verText
                     anchors.centerIn: parent
@@ -949,14 +2221,24 @@ Item {
             }
         }
 
-        SmallPillButton {
+        Row {
             anchors.right: parent.right
-            anchors.rightMargin: 14
+            anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
-            icon: "power"
-            label: qsTr("Quit Noch")
-            danger: true
-            onClicked: panel.quitRequested()
+            spacing: 8
+
+            SmallPillButton {
+                icon: "folder"
+                label: qsTr("Data folder")
+                onClicked: dock.openDataFolder()
+            }
+
+            SmallPillButton {
+                icon: "power"
+                label: qsTr("Quit Noch")
+                danger: true
+                onClicked: panel.quitRequested()
+            }
         }
     }
 }

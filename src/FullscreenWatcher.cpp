@@ -15,16 +15,68 @@
 #endif
 
 namespace {
-constexpr int kCheckMs = 1000;
+constexpr int kCheckMs = 2000;
 }
+
+#ifdef Q_OS_WIN
+
+// A WinEvent hook has no per-instance context, so keep both the handle and the
+// live object in file scope. Windows delivers foreground changes on the GUI
+// thread, so the callback can call into the object directly.
+FullscreenWatcher *s_liveWatcher = nullptr;
+HWINEVENTHOOK s_hookHandle = nullptr;
+
+void CALLBACK foregroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD)
+{
+    if (s_liveWatcher)
+        s_liveWatcher->check();
+}
+
+void startForegroundHook()
+{
+    s_hookHandle = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
+                                   &foregroundChanged, 0, 0, WINEVENT_OUTOFCONTEXT);
+}
+
+void stopForegroundHook()
+{
+    if (s_hookHandle) {
+        UnhookWinEvent(s_hookHandle);
+        s_hookHandle = nullptr;
+    }
+}
+
+#endif
 
 FullscreenWatcher::FullscreenWatcher(QObject *parent)
     : QObject(parent)
 {
+#ifdef Q_OS_WIN
+    s_liveWatcher = this;
+    startForegroundHook();
+#endif
     m_timer.setInterval(kCheckMs);
-    connect(&m_timer, &QTimer::timeout, this, &FullscreenWatcher::check);
-    m_timer.start();
+    connect(this, &FullscreenWatcher::activeChanged, this, [this] {
+        // The hook catches every transition already; the timer only has to
+        // keep verifying while the guard is actually up (borderline
+        // full-screen apps, a window that swapped monitors without a
+        // foreground event, etc.), so the peaceful desktop pays nothing.
+        if (m_active)
+            m_timer.start();
+        else
+            m_timer.stop();
+    });
     check();
+    if (m_active)
+        m_timer.start();
+}
+
+FullscreenWatcher::~FullscreenWatcher()
+{
+#ifdef Q_OS_WIN
+    s_liveWatcher = nullptr;
+    stopForegroundHook();
+#endif
 }
 
 void FullscreenWatcher::check()

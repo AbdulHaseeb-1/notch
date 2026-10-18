@@ -36,7 +36,7 @@ Item {
         width: knob.x + knob.width / 2
         height: 4
         radius: 2
-        color: t.ink
+        color: t.accent
     }
 
     Rectangle {
@@ -46,7 +46,7 @@ Item {
         radius: width / 2
         anchors.verticalCenter: parent.verticalCenter
         x: slider.ratio * (slider.width - width)
-        color: t.ink
+        color: t.accent
         border.width: hit.pressed ? 3 : 0
         border.color: t.hairline
         Behavior on width { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }

@@ -17,16 +17,8 @@ your apps, tucks itself away and drops back down when you need it.
   then Ctrl + Alt + P) and Settings says which shortcut is live.
 - **Resize** - drag the small handle under the notch, Ctrl + scroll on the
   notch, or use S / M / L / XL and the slider in Settings (70%-160%).
-- **Hub** - click the clock to open the hub: **System**, **Timer** and
+- **Hub** - click the clock to open the hub: **Timer** and
   **Clipboard** pages in one card.
-  - *System*: quick controls, then the gauges. The quick row has the **sound
-    output** list (click a device to make it the default), **Wi-Fi**,
-    **Bluetooth**, **night light** and a **microphone mute** switch; each
-    reflects the real system state. Below it: **Lock** and **Sleep**. Then CPU,
-    memory, battery, disk, network throughput and uptime. Turn on
-    System stats in Settings for CPU, memory and battery beside the clock.
-    Numbers turn red when they're in trouble (CPU or memory over 90%, battery
-    under 15%).
   - *Timer*: a focus timer (5 / 15 / 25 / 45 / 60 min, `+` adds five). It keeps
     running with the panel closed; a live pill beside the music pill shows a
     progress ring and the time left, and pulses with a toast when the session
@@ -53,9 +45,6 @@ your apps, tucks itself away and drops back down when you need it.
   - Drag any app, shortcut or folder onto the notch to pin it, or use
     **Add app** in Settings.
   - A white dot under an icon means the app is running.
-- **Open apps** - programs with a window open sit in their own pill to the left
-  of the notch, like the music pill on the right. Hover one to preview its
-  windows, click a window to bring it forward. Pinned apps stay in the notch.
 - **Games and full-screen apps** - while a full-screen app (a game, a video, a
   presentation) is in front, the notch stays tucked away even when the pointer
   touches the top edge, so it never drops over the action. Ctrl + Alt + Space
@@ -111,18 +100,17 @@ cmake --build build
 | `qml/Main.qml` | Window, notch, reveal/auto-hide, resize, tooltip, context menu, click-through mask |
 | `qml/SettingsPanel.qml` | Settings flyout (General / Apps tabs; scrolls on short screens) |
 | `qml/Flyout.qml` | The spring-animated glass card every flyout and menu sits in |
-| `qml/HubPanel.qml` | The hub card: tab strip and the System / Timer / Clipboard pages |
+| `qml/HubPanel.qml` | The hub card: tab strip and the Timer / Clipboard pages |
 | `qml/FocusTimer.qml`, `qml/TimerView.qml`, `qml/TimerPill.qml` | Focus timer: logic, panel page and the live pill |
 | `qml/ClipboardView.qml` | Clipboard page |
 | `qml/MusicPanel.qml`, `qml/NowPlaying.qml` | Music player and the compact control in the notch |
 | `qml/PaletteCard.qml` | Command palette card: search, calculator, web, commands |
-| `qml/SystemPanel.qml`, `qml/StatusBlock.qml` | System page of the hub and the clock / stats block |
+| `qml/StatusBlock.qml` | Clock block in the notch |
 | `qml/DockItem.qml` | One app icon: magnification, launch bounce, running dot |
 | `qml/Theme.qml` | Colour tokens (dark and light) |
 | `qml/Toggle.qml`, `Segmented.qml`, `SizeSlider.qml`, `MenuRow.qml`, `MoreButton.qml`, `Glyph.qml` | Controls |
 | `src/DockController.*` | Pinned apps: discovery, persistence, launching, running detection, start-up entry |
 | `src/MusicPlayer.*` | Local playback queue, metadata, cover art |
-| `src/SystemMonitor.*` | CPU, memory, battery, disk, network, uptime |
 | `src/AppIconProvider.*` | `image://appicon/...` - extracts real app icons, renders them black and white |
 | `src/OverlayController.*` | Limits mouse input to the visible shapes so the rest clicks through |
 | `src/RunningApps.*` | Programs with open windows, window previews, bringing a window forward |
@@ -139,6 +127,6 @@ cmake --build build
 | `src/ShapeRegion.h` | Builds a region from the rounded shapes QML reports |
 | `src/Appearance.*` | The dark / light theme setting |
 | `qml/Glass.qml` | The shared glass surface |
-| `qml/OpenApps.qml`, `qml/WindowPreview.qml` | Open-apps pill and its hover preview |
+| `qml/WindowPreview.qml` | Window hover preview for running apps |
 
 Settings live in the registry under `HKCU\Software\noch\noch`.

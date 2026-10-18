@@ -19,7 +19,7 @@
 
 namespace {
 
-constexpr int kRefreshMs = 2000;
+constexpr int kRefreshMs = 4000;
 constexpr int kPreviewWidth = 360;
 
 struct OpenWindow {
@@ -44,8 +44,14 @@ QString displayName(const QString &path)
 }
 
 #ifdef Q_OS_WIN
+static QHash<DWORD, QString> s_pidCache;
+
 QString programPath(DWORD pid)
 {
+    auto it = s_pidCache.constFind(pid);
+    if (it != s_pidCache.constEnd())
+        return it.value();
+
     const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process)
         return {};
@@ -55,6 +61,12 @@ QString programPath(DWORD pid)
     if (QueryFullProcessImageNameW(process, 0, buffer, &size))
         path = QString::fromWCharArray(buffer, static_cast<int>(size));
     CloseHandle(process);
+
+    if (!path.isEmpty()) {
+        if (s_pidCache.size() > 512)
+            s_pidCache.clear();
+        s_pidCache.insert(pid, path);
+    }
     return path;
 }
 

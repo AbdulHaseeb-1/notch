@@ -191,6 +191,7 @@ Item {
             clip: true
             interactive: contentHeight > view.rowH * view.maxRows
             boundsBehavior: Flickable.StopAtBounds
+            cacheBuffer: 320
             model: clipboard.items
 
             delegate: Item {

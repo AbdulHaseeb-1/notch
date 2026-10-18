@@ -49,12 +49,9 @@ QString iconIdFor(const QString &path)
         QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Md5).toHex().left(16));
 }
 
-// -1 no match; higher is better. Exact, prefix, word-start, substring, then a
-// loose subsequence so "vsc" finds "Visual Studio Code".
-int scoreText(const QString &name, const QString &query)
+// -1 no match; higher is better. Expects haystack and needle to be lowercased.
+int scoreText(const QString &haystack, const QString &needle)
 {
-    const QString haystack = name.toLower();
-    const QString needle = query.toLower();
     if (needle.isEmpty() || haystack.isEmpty())
         return -1;
     if (haystack == needle)
@@ -177,8 +174,10 @@ void AppSearch::ensureIndex()
 
                 Entry entry;
                 entry.name = name;
+                entry.lowerName = name.toLower();
                 entry.path = file;
                 entry.exe = exe;
+                entry.lowerExe = exe.toLower();
                 entry.iconId = iconIdFor(file);
                 entries.append(entry);
                 icons.insert(entry.iconId, file);
@@ -217,8 +216,10 @@ void AppSearch::applyIndex(QList<Entry> entries, QHash<QString, QString> icons)
     if (!haveExplorer) {
         Entry entry;
         entry.name = QStringLiteral("File Explorer");
+        entry.lowerName = QStringLiteral("file explorer");
         entry.path = explorerPath;
         entry.exe = QStringLiteral("explorer.exe");
+        entry.lowerExe = QStringLiteral("explorer.exe");
         entry.iconId = iconIdFor(explorerPath);
         entries.append(entry);
         icons.insert(entry.iconId, explorerPath);
@@ -268,8 +269,10 @@ QVariantList AppSearch::availableApps(const QString &query)
 
             Entry extra;
             extra.name = name;
+            extra.lowerName = name.toLower();
             extra.path = path;
             extra.exe = exe;
+            extra.lowerExe = exe;
             extra.iconId = iconId.isEmpty() ? iconIdFor(path) : iconId;
             combined.append(extra);
             {
@@ -280,6 +283,7 @@ QVariantList AppSearch::availableApps(const QString &query)
     }
 
     const QString text = query.trimmed();
+    const QString needle = text.toLower();
     struct ScoredEntry {
         int score;
         Entry entry;
@@ -288,11 +292,11 @@ QVariantList AppSearch::availableApps(const QString &query)
     matches.reserve(combined.size());
 
     for (const Entry &entry : std::as_const(combined)) {
-        if (text.isEmpty()) {
+        if (needle.isEmpty()) {
             matches.append({0, entry});
         } else {
-            const int score = qMax(scoreText(entry.name, text),
-                                   scoreText(entry.exe, text) - 50);
+            const int score = qMax(scoreText(entry.lowerName, needle),
+                                   scoreText(entry.lowerExe, needle) - 50);
             if (score > 0)
                 matches.append({score, entry});
         }
@@ -378,8 +382,10 @@ QVariantList AppSearch::search(const QString &query)
 
     ensureIndex();
 
+    const QString needle = text.toLower();
+
     for (const Entry &entry : m_entries) {
-        const int score = scoreText(entry.name, text);
+        const int score = scoreText(entry.lowerName, needle);
         if (score > 0) {
             QVariantMap row;
             row.insert(QStringLiteral("kind"), QStringLiteral("app"));
@@ -393,17 +399,22 @@ QVariantList AppSearch::search(const QString &query)
 
     for (const CommandDef &def : kCommands) {
         const QString title = QCoreApplication::translate("AppSearch", def.title);
-        const int score = scoreText(title, text);
+        const int score = scoreText(title.toLower(), needle);
         if (score > 0)
             addHit(score + 10, commandRow(def));
     }
 
     if (m_running) {
-        for (const QVariant &item : m_running->allWindows()) {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (m_cachedWindows.isEmpty() || (now - m_cachedWindowsTime) > 1500) {
+            m_cachedWindows = m_running->allWindows();
+            m_cachedWindowsTime = now;
+        }
+        for (const QVariant &item : m_cachedWindows) {
             const QVariantMap window = item.toMap();
             const QString title = window.value(QStringLiteral("title")).toString();
             const QString name = window.value(QStringLiteral("name")).toString();
-            const int score = qMax(scoreText(title, text), scoreText(name, text) - 100);
+            const int score = qMax(scoreText(title.toLower(), needle), scoreText(name.toLower(), needle) - 100);
             if (score <= 0)
                 continue;
 

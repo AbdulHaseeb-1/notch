@@ -116,7 +116,15 @@ MediaHub::MediaHub(MusicPlayer *player, SmtcMedia *smtc, AudioDevices *audio,
                 m_forcedSource.clear();
             refresh();
         });
-        connect(m_player, &MusicPlayer::positionChanged, this, &MediaHub::refresh);
+        // Position ticks fire many times per second; only the progress bar needs
+        // them, and throttling keeps the rest of the card from re-binding that often.
+        connect(m_player, &MusicPlayer::positionChanged, this, [this] {
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (now - m_lastLocalPositionEmit < 200)
+                return;
+            m_lastLocalPositionEmit = now;
+            emit changed();
+        });
         connect(m_player, &MusicPlayer::durationChanged, this, &MediaHub::refresh);
         connect(m_player, &MusicPlayer::coverChanged, this, &MediaHub::refresh);
         connect(m_player, &MusicPlayer::shuffleChanged, this, &MediaHub::refresh);
@@ -138,6 +146,10 @@ MediaHub::MediaHub(MusicPlayer *player, SmtcMedia *smtc, AudioDevices *audio,
         connect(m_smtc, &SmtcMedia::sessionChanged, this, &MediaHub::refresh);
         connect(m_smtc, &SmtcMedia::positionChanged, this, [this] {
             m_systemStamp = QDateTime::currentMSecsSinceEpoch();
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (now - m_lastSystemPositionEmit < 200)
+                return;
+            m_lastSystemPositionEmit = now;
             emit changed();
         });
     }
@@ -145,9 +157,6 @@ MediaHub::MediaHub(MusicPlayer *player, SmtcMedia *smtc, AudioDevices *audio,
         connect(m_audio, &AudioDevices::masterVolumeChanged, this, &MediaHub::volumeChanged);
     }
 
-    m_ticker.setInterval(250);
-    connect(&m_ticker, &QTimer::timeout, this, &MediaHub::refresh);
-    m_ticker.start();
     updateVisuals();
 }
 
@@ -423,7 +432,6 @@ void MediaHub::refresh()
 {
     updateVisuals();
     emit changed();
-    emit volumeChanged();
 }
 
 void MediaHub::toggle()

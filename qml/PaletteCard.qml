@@ -36,6 +36,12 @@ Item {
         list.positionViewAtBeginning()
     }
 
+    Timer {
+        id: searchDebounce
+        interval: 60
+        onTriggered: palette.refresh()
+    }
+
     function move(delta) {
         if (results.length === 0)
             return
@@ -83,7 +89,7 @@ Item {
                 name: "search"
                 size: 17
                 stroke: 2
-                color: paletteInput.activeFocus ? t.ink : t.textFaint
+                color: paletteInput.activeFocus ? t.accent : t.textFaint
             }
 
             TextInput {
@@ -94,7 +100,7 @@ Item {
                 anchors.rightMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
                 color: t.ink
-                selectionColor: t.ink
+                selectionColor: t.accent
                 selectedTextColor: t.inverse
                 font.family: t.font
                 font.pixelSize: 15
@@ -102,7 +108,14 @@ Item {
                 clip: true
                 selectByMouse: true
 
-                onTextChanged: palette.refresh()
+                onTextChanged: {
+                    if (text === "") {
+                        searchDebounce.stop()
+                        palette.refresh()
+                    } else {
+                        searchDebounce.restart()
+                    }
+                }
                 onAccepted: palette.runCurrent()
 
                 Keys.onDownPressed: (event) => {
@@ -171,6 +184,7 @@ Item {
             Behavior on height { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
             interactive: count * palette.rowH > height
             boundsBehavior: Flickable.StopAtBounds
+            cacheBuffer: 320
             clip: true
 
             model: palette.results

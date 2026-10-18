@@ -141,12 +141,12 @@ Item {
                     GradientStop {
                         position: 0.0
                         color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.55)
-                        Behavior on color { ColorAnimation { duration: 420 } }
+                        Behavior on color { ColorAnimation { duration: 160 } }
                     }
                     GradientStop {
                         position: 0.52
                         color: Qt.rgba(panel.dynAmbient.r, panel.dynAmbient.g, panel.dynAmbient.b, 0.28)
-                        Behavior on color { ColorAnimation { duration: 420 } }
+                        Behavior on color { ColorAnimation { duration: 160 } }
                     }
                     GradientStop {
                         position: 1.0
@@ -257,7 +257,7 @@ Item {
                         Behavior on color { ColorAnimation { duration: 280 } }
 
                         SequentialAnimation on opacity {
-                            running: panel.playing
+                            running: panel.playing && panel.visible
                             loops: Animation.Infinite
                             // `on <property>` swaps the binding out while it
                             // runs; restore it when paused so the dot does not
@@ -473,7 +473,9 @@ Item {
                             id: coverImg
                             anchors.fill: parent
                             source: media.hasCover ? media.coverUrl : ""
-                            sourceSize: Qt.size(560, 560)
+                            // Cover is shown down to ~180px wide circles; 256
+                            // is plenty and keeps the texture light.
+                            sourceSize: Qt.size(256, 256)
                             fillMode: Image.PreserveAspectCrop
                             visible: media.hasCover && status === Image.Ready
                             asynchronous: true
@@ -496,7 +498,7 @@ Item {
                                         color: Qt.rgba(panel.dynAmbient.r * 0.65,
                                                        panel.dynAmbient.g * 0.65,
                                                        panel.dynAmbient.b * 0.65, 1.0)
-                                        Behavior on color { ColorAnimation { duration: 360 } }
+                                        Behavior on color { ColorAnimation { duration: 140 } }
                                     }
                                     GradientStop { position: 1.0; color: "#0a0a0d" }
                                 }
@@ -516,12 +518,12 @@ Item {
                                         GradientStop {
                                             position: 0.0
                                             color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.36)
-                                            Behavior on color { ColorAnimation { duration: 360 } }
+                                            Behavior on color { ColorAnimation { duration: 140 } }
                                         }
                                         GradientStop {
                                             position: 0.55
                                             color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.12)
-                                            Behavior on color { ColorAnimation { duration: 360 } }
+                                            Behavior on color { ColorAnimation { duration: 140 } }
                                         }
                                         GradientStop { position: 1.0; color: "transparent" }
                                     }
@@ -543,7 +545,7 @@ Item {
                                 anchors.verticalCenterOffset: -3 * bob
 
                                 SequentialAnimation on bob {
-                                    running: panel.playing && defaultArt.visible
+                                    running: panel.playing && defaultArt.visible && panel.visible
                                     loops: Animation.Infinite
                                     NumberAnimation { from: 0; to: 1; duration: 1600; easing.type: Easing.InOutSine }
                                     NumberAnimation { from: 1; to: 0; duration: 1600; easing.type: Easing.InOutSine }
@@ -563,7 +565,7 @@ Item {
                                             GradientStop {
                                                 position: 0.0
                                                 color: Qt.rgba(panel.dynAccent.r, panel.dynAccent.g, panel.dynAccent.b, 0.55)
-                                                Behavior on color { ColorAnimation { duration: 360 } }
+                                                Behavior on color { ColorAnimation { duration: 140 } }
                                             }
                                             GradientStop { position: 1.0; color: "#30707078" }
                                         }
@@ -710,12 +712,12 @@ Item {
                         GradientStop {
                             position: 0.0
                             color: panel.accentDeep
-                            Behavior on color { ColorAnimation { duration: 280 } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
                         GradientStop {
                             position: 1.0
                             color: panel.accent
-                            Behavior on color { ColorAnimation { duration: 280 } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
                     }
                 }
@@ -800,7 +802,7 @@ Item {
                 glyphSize: 17
                 opacity: media.canShuffle ? 1.0 : 0.35
                 color: media.shuffle ? panel.accent : panel.textFaint
-                hoverColor: media.shuffle ? panel.accentLight : t.ink
+                hoverColor: media.shuffle ? panel.accentLight : t.accent
                 onClicked: if (media.canShuffle) media.toggleShuffle()
             }
 
@@ -830,12 +832,12 @@ Item {
                         GradientStop {
                             position: 0.0
                             color: media.hasTrack ? panel.accent : t.ink
-                            Behavior on color { ColorAnimation { duration: 280 } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
                         GradientStop {
                             position: 1.0
                             color: media.hasTrack ? panel.accentDeep : t.inkSoft
-                            Behavior on color { ColorAnimation { duration: 280 } }
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
                     }
                     scale: playHit.pressed ? 0.92 : (playHit.containsMouse ? 1.04 : 1)
@@ -886,7 +888,7 @@ Item {
                 glyphSize: 17
                 opacity: media.canRepeat ? 1.0 : 0.35
                 color: media.repeatMode > 0 ? panel.accent : panel.textFaint
-                hoverColor: media.repeatMode > 0 ? panel.accentLight : t.ink
+                hoverColor: media.repeatMode > 0 ? panel.accentLight : t.accent
                 onClicked: if (media.canRepeat) media.cycleRepeat()
 
                 // "1" badge for repeat-one.
@@ -962,6 +964,7 @@ Item {
             width: parent.width
             height: panel.queueOpen && player.count > 0 && media.source !== "system"
                     ? Math.min(queueList.contentHeight, 176) + 18 : 0
+            visible: height > 1
             clip: true
             Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
@@ -982,6 +985,9 @@ Item {
                 model: player.tracks
                 spacing: 2
                 boundsBehavior: Flickable.StopAtBounds
+                // Keep scrolled-out rows materialized: the queue is short, and
+                // rebuilding delegates on the fly shows as a hitch mid-flick.
+                cacheBuffer: 320
 
                 delegate: Item {
                     id: qRow

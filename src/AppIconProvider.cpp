@@ -5,12 +5,14 @@
 #include "RunningApps.h"
 
 #include <QAbstractFileIconProvider>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
 #include <QPainter>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #ifdef Q_OS_WIN
@@ -19,11 +21,40 @@
 #  endif
 #  include <windows.h>
 #  include <shellapi.h>
+#  include <commctrl.h>
+#  include <commoncontrols.h>
 #endif
 
 namespace {
 
 constexpr int kIconExtent = 128;
+// Each cached icon is a 128px ARGB32 image (~64 KB): a dock with a dozen
+// pinned apps plus every currently open program already touches dozens, and
+// apps cycle in and out, so cap how much sticks around instead of growing
+// with the user's whole session.
+constexpr int kCacheLimit = 64;
+
+// Precomputed 256-entry lookup tables for Rec. 709 luminance adjustments.
+// Replaces 16,384 std::pow calls per 128x128 icon with an instant L1-cache lookup.
+static const auto s_monoLut = []() {
+    std::array<int, 256> lut{};
+    for (int i = 0; i < 256; ++i) {
+        const double l = i / 255.0;
+        const double lifted = 0.08 + 0.92 * std::pow(l, 0.82);
+        lut[i] = std::clamp(int(std::lround(lifted * 255.0)), 0, 255);
+    }
+    return lut;
+}();
+
+static const auto s_inkLut = []() {
+    std::array<int, 256> lut{};
+    for (int i = 0; i < 256; ++i) {
+        const double l = i / 255.0;
+        const double ink = 0.06 + 0.6 * std::pow(l, 0.9);
+        lut[i] = std::clamp(int(std::lround(ink * 255.0)), 0, 255);
+    }
+    return lut;
+}();
 
 #ifdef Q_OS_WIN
 using PrivateExtractIconsWFn = UINT(WINAPI *)(LPCWSTR, int, int, int, HICON *, UINT *, UINT, UINT);
@@ -51,6 +82,33 @@ QImage extractLargeIcon(const QString &file, int extent)
         }
     }
     return {};
+}
+
+// The shell's 256 px "jumbo" image list: sharp icons for things that are
+// not an exe/ico/dll (Store apps, documents, .url shortcuts). Files that only
+// ship a small icon come back centred on a transparent canvas, which
+// trimTransparent() removes afterwards.
+QImage jumboShellIcon(const QString &file)
+{
+    const std::wstring path = QDir::toNativeSeparators(file).toStdWString();
+    SHFILEINFOW info = {};
+    if (!SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info), SHGFI_SYSICONINDEX))
+        return {};
+    // IID_IImageList {46EB5926-582E-4017-9FDF-E8998DAA0950}, spelled out so
+    // no extra import library is needed.
+    static const GUID kIidImageList = { 0x46eb5926, 0x582e, 0x4017,
+                                        { 0x9f, 0xdf, 0xe8, 0x99, 0x8d, 0xaa, 0x09, 0x50 } };
+    IImageList *list = nullptr;
+    if (FAILED(SHGetImageList(SHIL_JUMBO, kIidImageList, reinterpret_cast<void **>(&list))) || !list)
+        return {};
+    HICON icon = nullptr;
+    const HRESULT hr = list->GetIcon(info.iIcon, ILD_TRANSPARENT, &icon);
+    list->Release();
+    if (FAILED(hr) || !icon)
+        return {};
+    QImage image = QImage::fromHICON(icon);
+    DestroyIcon(icon);
+    return image;
 }
 
 QImage shellIcon(const QString &file)
@@ -109,17 +167,53 @@ AppIconProvider::AppIconProvider(const DockController *dock, const RunningApps *
 {
 }
 
+// Caller must hold m_mutex. Drops the oldest entry of the named ring if the
+// cap is exceeded. `which` selects among the colour / mono / ink caches.
+void AppIconProvider::insertCached(const QString &file, const QImage &image, const char *which)
+{
+    QStringList *order = nullptr;
+    if (which == "colour") {
+        m_cache.insert(file, image);
+        order = &m_cacheOrder;
+    } else if (which == "mono") {
+        m_monoCache.insert(file, image);
+        order = &m_monoOrder;
+    } else {
+        m_inkCache.insert(file, image);
+        order = &m_inkOrder;
+    }
+    if (!order->contains(file))
+        order->append(file);
+    if (order->size() > kCacheLimit) {
+        const QString retire = order->takeFirst();
+        if (which == "colour")
+            m_cache.remove(retire);
+        else if (which == "mono")
+            m_monoCache.remove(retire);
+        else
+            m_inkCache.remove(retire);
+    }
+}
+
 // Colour icon for a file, loaded once. The caller must hold m_mutex.
 QImage AppIconProvider::colourIcon(const QString &file)
 {
     auto it = m_cache.constFind(file);
     if (it != m_cache.constEnd())
         return it.value();
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    auto failIt = m_failedLookups.constFind(file);
+    if (failIt != m_failedLookups.constEnd() && (now - failIt.value() < 5000))
+        return {};
+
     const QImage image = loadIcon(file, kIconExtent);
-    // Only cache successes: a failed load (locked file, missing icon) must be
-    // retried next paint instead of remembered as null for the whole session.
-    if (!image.isNull())
-        m_cache.insert(file, image);
+    if (!image.isNull()) {
+        insertCached(file, image, "colour");
+        m_failedLookups.remove(file);
+    } else {
+        m_failedLookups.insert(file, now);
+    }
     return image;
 }
 
@@ -148,7 +242,7 @@ QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize
                     image = onLight ? toInkMonochrome(colour) : toMonochrome(colour);
                 // Same rule as colourIcon(): failures stay re-retryable.
                 if (!image.isNull())
-                    cache.insert(file, image);
+                    insertCached(file, image, onLight ? "ink" : "mono");
             }
         } else {
             image = colourIcon(file);
@@ -187,6 +281,8 @@ QImage AppIconProvider::loadIcon(const QString &file, int extent)
         image = extractLargeIcon(source, extent);
     }
     if (image.isNull())
+        image = jumboShellIcon(file);
+    if (image.isNull())
         image = shellIcon(file);
 #endif
     if (image.isNull()) {
@@ -213,12 +309,10 @@ QImage AppIconProvider::toMonochrome(const QImage &source)
             const int a = qAlpha(line[x]);
             if (a == 0)
                 continue;
-            // Rec. 709 luminance, then a gentle lift so dark icons stay
-            // readable against the black notch.
-            const double l = (0.2126 * qRed(line[x]) + 0.7152 * qGreen(line[x])
-                              + 0.0722 * qBlue(line[x])) / 255.0;
-            const double lifted = 0.08 + 0.92 * std::pow(l, 0.82);
-            const int v = std::clamp(int(std::lround(lifted * 255.0)), 0, 255);
+            // Rec. 709 luminance with precomputed lift LUT
+            const int lum = int(0.2126 * qRed(line[x]) + 0.7152 * qGreen(line[x])
+                               + 0.0722 * qBlue(line[x]) + 0.5);
+            const int v = s_monoLut[std::clamp(lum, 0, 255)];
             line[x] = qRgba(v, v, v, a);
         }
     }
@@ -236,10 +330,9 @@ QImage AppIconProvider::toInkMonochrome(const QImage &source)
             const int a = qAlpha(line[x]);
             if (a == 0)
                 continue;
-            const double l = (0.2126 * qRed(line[x]) + 0.7152 * qGreen(line[x])
-                              + 0.0722 * qBlue(line[x])) / 255.0;
-            const double ink = 0.06 + 0.6 * std::pow(l, 0.9);
-            const int v = std::clamp(int(std::lround(ink * 255.0)), 0, 255);
+            const int lum = int(0.2126 * qRed(line[x]) + 0.7152 * qGreen(line[x])
+                               + 0.0722 * qBlue(line[x]) + 0.5);
+            const int v = s_inkLut[std::clamp(lum, 0, 255)];
             line[x] = qRgba(v, v, v, a);
         }
     }

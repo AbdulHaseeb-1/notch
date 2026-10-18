@@ -43,81 +43,34 @@ HRGN toWinRegion(const QRegion &region)
 GlassBackdrop::GlassBackdrop(QObject *parent)
     : QObject(parent)
 {
-    const QSettings settings;
-    m_enabled = settings.value(QLatin1String(kEnabledKey), false).toBool();
+    m_enabled = false;
 }
 
 bool GlassBackdrop::supported() const
 {
-#ifdef Q_OS_WIN
-    return true;
-#else
     return false;
-#endif
 }
 
 void GlassBackdrop::setWindow(QWindow *window)
 {
     m_window = window;
-    apply();
 }
 
 void GlassBackdrop::setEnabled(bool enabled)
 {
-    if (m_enabled == enabled)
-        return;
-    m_enabled = enabled;
-    QSettings settings;
-    settings.setValue(QLatin1String(kEnabledKey), m_enabled);
-    emit enabledChanged();
-    apply();
+    Q_UNUSED(enabled);
+    if (m_enabled) {
+        m_enabled = false;
+        emit enabledChanged();
+    }
 }
 
 void GlassBackdrop::setShapes(const QVariantList &shapes)
 {
-    if (!m_enabled)
-        return; // nothing to track while the blur is off
-    const qreal scale = m_window ? m_window->devicePixelRatio() : 1.0;
-    const QRegion next = regionFromShapes(shapes, 0, scale);
-    if (next == m_shapes)
-        return;
-    m_shapes = next;
-    apply();
+    Q_UNUSED(shapes);
 }
 
 void GlassBackdrop::apply()
 {
-#ifdef Q_OS_WIN
-    if (!m_window)
-        return;
-
-    const bool want = m_enabled && transparencyEnabled() && !m_shapes.isEmpty();
-    // Until the blur has been asked for once, leave the window exactly as Qt
-    // made it. Qt itself relies on DWM blur-behind with an empty region to keep
-    // per-pixel transparency working, so "off" must put that back instead of
-    // switching blur-behind off.
-    if (!want && !m_applied) {
-        if (m_blurActive) {
-            m_blurActive = false;
-            emit blurActiveChanged();
-        }
-        return;
-    }
-
-    const HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
-    HRGN region = want ? toWinRegion(m_shapes) : CreateRectRgn(0, 0, -1, -1);
-    DWM_BLURBEHIND blur{};
-    blur.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-    blur.fEnable = TRUE;
-    blur.hRgnBlur = region;
-    const bool ok = SUCCEEDED(DwmEnableBlurBehindWindow(hwnd, &blur));
-    DeleteObject(region);
-    m_applied = true;
-
-    const bool active = want && ok;
-    if (active != m_blurActive) {
-        m_blurActive = active;
-        emit blurActiveChanged();
-    }
-#endif
 }
+

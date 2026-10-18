@@ -20,19 +20,66 @@ Window {
 
     Settings {
         id: cfg
+        location: dock.settingsFileUrl
         category: "ui"
         property real sizeScale: 1.0
         property bool autoHide: true
         property int hideDelay: 1200
         property bool monoIcons: true
         property bool showClock: true
-        property bool showStats: false
         property int focusMinutes: 25
         property bool hotkeyPalette: true
         property bool suppressInFullscreen: true
         property bool buddyEnabled: true
+        property bool buddySolidRing: true
         property real buddyX: -1
+        property real buddyY: -1
         property string buddyPlan: ""
+        // Past questions and answers, newest first (JSON, capped in Buddy.qml).
+        property string buddyHistory: "[]"
+        // ---- Desktop buddy AI provider ---------------------------------------
+        // "none" = demo fixtures only. "openai"/"custom" = OpenAI-compatible
+        // chat/completions endpoint. "ollama" = local Ollama. "anthropic" =
+        // Anthropic Messages API.
+        property string buddyProvider: "none"
+        property string buddyApiKey: ""
+        property string buddyApiBase: ""
+        property string buddyModel: "gpt-4o-mini"
+        property real buddyTemperature: 0.7
+        // ---- Anthropic Agent SDK & Computer Use tools ------------------------
+        property bool buddyAgentMode: true
+        property bool buddyAllowBash: true
+        property bool buddyAllowComputer: true
+        property bool buddyAllowEditor: true
+        property bool buddyAllowCodeSearch: true
+        property bool buddyAllowMemory: true
+        property bool buddyAllowWebSearch: true
+        property bool buddyAllowToolSearch: true
+        property bool buddyAllowAdvisor: true
+        property bool buddyAllowTodoTask: true
+        // ---- Desktop buddy sound effects -------------------------------------
+        property bool buddySfxEnabled: true
+        property real buddySfxVolume: 0.75
+        property string buddySfxStyle: "warm"
+    }
+
+    readonly property string snapshotKey: [
+        cfg.sizeScale, cfg.autoHide, cfg.hideDelay, cfg.monoIcons, cfg.showClock,
+        cfg.focusMinutes, cfg.hotkeyPalette, cfg.suppressInFullscreen,
+        cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
+        cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
+        cfg.buddyApiBase, cfg.buddyModel, cfg.buddyTemperature,
+        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyAllowEditor,
+        cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
+        cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
+        cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle,
+        appearance.light, appearance.palette, appearance.accent, appearance.ring
+    ].join("|")
+    onSnapshotKeyChanged: snapshotSyncTimer.restart()
+    Timer {
+        id: snapshotSyncTimer
+        interval: 600
+        onTriggered: dock.syncStateSnapshot()
     }
 
     // ------------------------------------------------------------------ size
@@ -84,16 +131,14 @@ Window {
     // When tucked away (!revealed), ONLY hovering the dash (peekZone) brings
     // the notch out — hovering around it does nothing.
     readonly property bool fullscreenGuard: cfg.suppressInFullscreen && fullscreen.active && !paletteOpen
-    readonly property bool pointerInside: !fullscreenGuard
-                                          && (revealed
-                                              ? (pillHover.hovered || peekZone.containsMouse
-                                                 || grip.containsMouse || panelItem.hovered
+    readonly property bool notchElementsHovered: pillHover.hovered || grip.containsMouse || panelItem.hovered
                                                  || menu.hovered || musicFlyout.hovered
                                                  || hubFlyout.hovered || musicPillHover.hovered
-                                                 || openRow.hovered || previewCard.hovered || timerPill.hovered
-                                                 || paletteFlyout.hovered)
-                                              : peekZone.containsMouse)
-    readonly property bool dragging: peekDrop.containsDrag || pillDrop.containsDrag
+                                                 || previewCard.hovered || timerPill.hovered
+                                                 || paletteFlyout.hovered
+    readonly property bool pointerInside: !fullscreenGuard
+                                          && (peekZone.containsMouse || (revealed && notchElementsHovered))
+    readonly property bool dragging: peekZone.containsDrag || pillDrop.containsDrag || musicDrop.containsDrag
                                      || musicDrop.containsDrag
     readonly property bool holdOpen: !cfg.autoHide || panelOpen || musicOpen || hubOpen || paletteOpen
                                      || menuIndex >= 0 || resizing || launchHold || introHold
@@ -105,7 +150,8 @@ Window {
     function syncReveal() {
         if (wantVisible) {
             hideTimer.stop()
-            revealed = true
+            if (!revealed)
+                revealed = true
         } else {
             hideTimer.restart()
         }
@@ -114,7 +160,7 @@ Window {
     Timer {
         id: hideTimer
         interval: cfg.hideDelay
-        onTriggered: if (!root.wantVisible) root.revealed = false
+        onTriggered: if (!root.wantVisible && root.revealed) root.revealed = false
     }
     Timer { running: true; interval: 140; onTriggered: root.syncReveal() }         // drop-in on launch
     Timer { running: true; interval: 2200; onTriggered: root.introHold = false }    // stay a moment, then tuck away
@@ -160,14 +206,6 @@ Window {
     readonly property var apps: dock.apps
     readonly property var running: dock.running
     readonly property var openList: openApps.apps
-    readonly property var unpinnedOpenList: {
-        const pinnedExes = {}
-        for (let i = 0; i < apps.length; ++i) {
-            if (apps[i].exe)
-                pinnedExes[apps[i].exe.toLowerCase()] = true
-        }
-        return openList.filter(a => !a.exe || !pinnedExes[a.exe.toLowerCase()])
-    }
 
     function activateOrLaunchApp(i) {
         if (i < 0 || i >= apps.length)
@@ -339,12 +377,17 @@ Window {
     readonly property bool paletteVisible: paletteFlyout.shown
     // Flyout sizes for the mask are the sizes they are heading for, not the
     // animated ones, so the mask is not rebuilt on every frame of an animation.
-    readonly property real panelTargetH: settings.targetHeight
-    readonly property real hubTargetH: hubPanel.targetHeight
-    readonly property real musicTargetH: musicPanel.targetHeight
-    readonly property real paletteTargetH: paletteCard.targetHeight
-    readonly property var openMenuRect: openRow.menuRectIn(root.contentItem)
-    readonly property var maskKey: [revealed, fullyHidden, Math.round(pillW), Math.round(pillH), width,
+    readonly property real panelTargetH: panelItem.targetHeight
+    readonly property real hubTargetH: hubFlyout.targetHeight
+    readonly property real musicTargetH: musicFlyout.targetHeight
+    readonly property real paletteTargetH: paletteFlyout.targetHeight
+    // The mask key is a STRING, not an array: Qt compares property values with
+    // strict equality, and a fresh JS array never equals the previous one, so
+    // every single dependency change (including no-op hover ticks) re-fired
+    // onMaskKeyChanged and queued a full Win32 region rebuild. Joined, the
+    // comparison actually succeeds and identical states cost nothing.
+    readonly property bool buddyInteracting: buddy.dragging || buddyPanel.interacting
+    readonly property string maskKey: [revealed, fullyHidden, Math.round(pillW), Math.round(pillH), width,
                                     Math.round(musicDock.width), Math.round(timerPill.width),
                                     panelVisible, Math.round(panelTargetH), menuVisible,
                                     Math.round(menu.x), Math.round(menu.height),
@@ -352,25 +395,32 @@ Window {
                                     hubVisible, Math.round(hubTargetH),
                                     paletteVisible, Math.round(paletteFlyout.width),
                                     Math.round(paletteTargetH),
-                                    tipVisible, hudVisible,
-                                    openRow.visible, Math.round(openRow.x),
-                                    openRow.menuShown, Math.round(openMenuRect.x),
-                                    Math.round(openMenuRect.height),
+                                    tipVisible, hudVisible, tip.opacity > 0.01,
+                                    Math.round(tip.targetX), Math.round(tip.targetWidth),
                                     previewShown, Math.round(previewCard.x),
                                     Math.round(previewCard.width), Math.round(previewCard.height),
-                                    cfg.buddyEnabled, buddy.session, Math.round(buddy.anchor),
-                                    buddy.inputShown, Math.round(buddy.inputItem.height),
+                                    cfg.buddyEnabled, buddy.session, buddyInteracting,
+                                    buddyInteracting ? 0 : Math.round(buddy.x),
+                                    buddyInteracting ? 0 : Math.round(buddy.y),
+                                    Math.round(buddy.width), Math.round(buddy.height),
+                                    buddyInteracting ? "" : buddy.maskSig,
                                     buddyPanel.open, buddyPanel.visible,
-                                    Math.round(buddyPanel.dragX), Math.round(buddyPanel.dragY),
-                                    Math.round(buddyPanel.width), Math.round(buddyPanel.height)]
+                                    buddyInteracting ? 0 : Math.round(buddyPanel.dragX),
+                                    buddyInteracting ? 0 : Math.round(buddyPanel.dragY),
+                                    Math.round(buddyPanel.width),
+                                    buddyInteracting ? 0 : Math.round(buddyPanel.height)].join(",")
     onMaskKeyChanged: Qt.callLater(updateMask)
 
-    // The buddy's regions exist whether or not the notch is tucked away: the
-    // creature lives independently at the top edge. Main owns this because the
-    // result panel is a window-level card, like the flyouts above.
+    // The buddy's regions exist whether or not the notch is tucked away.
+    // While dragging the buddy or its panel, expand to the full window rect so
+    // Win32 SetWindowRgn is called only once at drag start and once on release.
     function pushBuddyRegions(r) {
         if (!cfg.buddyEnabled || !buddy.visible)
             return
+        if (buddyInteracting) {
+            r.push({ x: 0, y: 0, width: root.width, height: root.height, radius: 0 })
+            return
+        }
         const br = buddy.regionsIn(root.contentItem)
         for (let i = 0; i < br.length; ++i)
             r.push(br[i])
@@ -388,13 +438,19 @@ Window {
             r.push({ x: peekZone.x, y: 0, width: peekZone.width, height: peekZone.height, radius: 0 })
         } else {
             const m = 8
-            const notchLeft = (width - pillW) / 2 - m
-            const left = openRow.visible ? Math.min(notchLeft, openRow.x - m) : notchLeft
+            const effPillW = Math.max(pillW, animatedPillW)
+            const left = (width - effPillW) / 2 - m
             const rightEdge = timerPill.visible ? timerPill.x + timerPill.width
-                                                : (width + pillW) / 2 + musicGap + musicDock.width
-            const right = Math.max(rightEdge, (width + pillW) / 2 + musicGap + musicDock.width) + m
-            const below = (tipVisible || hudVisible) ? 52 : m
+                                                : (width + effPillW) / 2 + musicGap + musicDock.width
+            const right = Math.max(rightEdge, (width + effPillW) / 2 + musicGap + musicDock.width) + m
+            const tipActive = tipVisible || hudVisible || tip.opacity > 0.01
+            const below = tipActive ? 52 : m
             r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 26 })
+            if (tipActive) {
+                const tx0 = Math.round(Math.min(tip.x, tip.targetX) - m)
+                const tx1 = Math.round(Math.max(tip.x + tip.width, tip.targetX + tip.targetWidth) + m)
+                r.push({ x: tx0, y: shownY + pillH, width: Math.max(40, tx1 - tx0), height: 52, radius: 14 })
+            }
             if (panelVisible) {
                 r.push({ x: panelItem.x - m, y: panelItem.baseY - 8,
                          width: panelItem.width + 2 * m, height: panelTargetH + 2 * m + 8, radius: 24 })
@@ -415,11 +471,6 @@ Window {
                 r.push({ x: paletteFlyout.x - m, y: paletteFlyout.baseY - 8,
                          width: paletteFlyout.width + 2 * m, height: paletteTargetH + 2 * m + 8, radius: 24 })
             }
-            if (openRow.menuShown) {
-                const om = openMenuRect
-                r.push({ x: om.x - m, y: om.y - m,
-                         width: om.width + 2 * m, height: om.height + 2 * m + 8, radius: 18 })
-            }
             if (previewShown) {
                 r.push({ x: previewCard.x - m, y: previewCard.y - 8,
                          width: previewCard.width + 2 * m, height: previewCard.height + 2 * m + 8, radius: 24 })
@@ -427,95 +478,72 @@ Window {
         }
         pushBuddyRegions(r)
         overlay.setInteractiveRegions(r)
-        updateGlass()
-    }
-
-    // The visible glass shapes, for the optional real blur (Settings > Blur
-    // behind). Only worked out while that is on.
-    function glassShape(item, radius) {
-        const p = item.mapToItem(null, 0, 0)
-        return { x: p.x, y: p.y, width: item.width * item.scale, height: item.height * item.scale, radius: radius }
-    }
-
-    function updateGlass() {
-        if (!glassBackdrop.enabled)
-            return
-        const g = []
-        if (!fullyHidden) {
-            g.push(glassShape(pill, pill.height / 2))
-            if (musicDock.visible)
-                g.push(glassShape(musicDock, musicDock.height / 2))
-            if (openRow.visible)
-                g.push(glassShape(openRow, openRow.height / 2))
-            if (timerPill.visible)
-                g.push(glassShape(timerPill, timerPill.height / 2))
-            if (panelVisible) g.push(glassShape(panelItem, 22))
-            if (menuVisible) g.push(glassShape(menu, 18))
-            if (musicVisible) g.push(glassShape(musicFlyout, 28))
-            if (hubVisible) g.push(glassShape(hubFlyout, 22))
-            if (paletteVisible) g.push(glassShape(paletteFlyout, 22))
-            if (openRow.menuShown) {
-                const om = openMenuRect
-                g.push({ x: om.x, y: om.y, width: om.width, height: om.height, radius: 16 })
-            }
-            if (previewShown) g.push(glassShape(previewCard, 22))
-        }
-        // The buddy's glass pieces stand outside the notch's hidden state.
-        if (cfg.buddyEnabled && buddy.visible) {
-            if (buddy.inputShown)
-                g.push(glassShape(buddy.inputItem, 21))
-            if (buddyPanel.open)
-                g.push(glassShape(buddyPanel, 20))
-        }
-        glassBackdrop.setShapes(g)
-    }
-
-    // While the blur is on, keep its shapes in step with the animations
-    // (a few updates a second is plenty; nothing runs when it is off).
-    Timer {
-        interval: 33
-        repeat: true
-        running: glassBackdrop.enabled && root.visible
-        onTriggered: root.updateGlass()
-    }
-    Connections {
-        target: glassBackdrop
-        function onEnabledChanged() { root.updateGlass() }
     }
 
     Component.onCompleted: updateMask()
 
+    // TEMP-BUDDY-DEMO-BEGIN (verification only; removed after testing)
+    Timer {
+        id: buddyDemo
+        property int step: 0
+        property var bub: null
+        property var sp: null
+        property var saved: null
+        readonly property string out: "C:/Users/ASIFCO~1/AppData/Local/Temp/claude/C--Users-Asif-Computer-Desktop-noch/cf5eb338-20af-4e33-8338-7aa4de60352f/scratchpad/shots2/"
+        running: Qt.application.arguments.indexOf("--buddy-demo") >= 0
+        interval: 1500
+        function grab(name) {
+            console.log("DEMO", name, Math.round(buddy.x), Math.round(buddy.y))
+            root.contentItem.grabToImage(function(r) { r.saveToFile(out + name + ".png") })
+        }
+        function find(item, pred) {
+            if (!item) return null
+            if (pred(item)) return item
+            const kids = item.children || []
+            for (let i = 0; i < kids.length; ++i) { const f = find(kids[i], pred); if (f) return f }
+            return null
+        }
+        function next(ms) { interval = ms; restart() }
+        onTriggered: {
+            if (!bub) bub = find(buddy, function(o) { return o.objectName === "buddyBubble" })
+            switch (step++) {
+            case 0:
+                saved = { h: cfg.buddyHistory, p: appearance.palette, a: appearance.accent, r: appearance.ring, l: appearance.light }
+                const now = Date.now()
+                cfg.buddyHistory = JSON.stringify([
+                    { q: "How do I stay focused in the afternoon?", kind: "chat", title: "", a: "Try a **25-minute** focus block, a short walk, and water before coffee.", t: now - 120000 },
+                    { q: "chart btc", kind: "chart", title: "BTC sample chart", a: "", t: now - 3 * 3600000 },
+                    { q: "plan my day", kind: "tasks", title: "Today's plan", a: "", t: now - 26 * 3600000 },
+                    { q: "What's a good name for a cat?", kind: "chat", title: "", a: "Miso, Pixel or Biscuit - all short and friendly.", t: now - 5 * 86400000 }
+                ])
+                buddy.openInput(); next(900); break
+            case 1: grab("h0_input"); bub.showHistory(); next(160); break
+            case 2: grab("h1_hist_anim"); next(800); break
+            case 3: grab("h2_hist"); bub.pickHistory(0); next(1600); break
+            case 4: grab("h3_replay"); buddy.dismiss(); next(700); break
+            case 5: appearance.palette = "midnight"; appearance.accent = "violet"; appearance.ring = "sunset"; buddy.openInput(); next(900); break
+            case 6: grab("t1_midnight_input"); buddy.dismiss(); buddy.setMood("happy", 5000); next(600); break
+            case 7: grab("t2_sunset_ring"); root.toggleSettings(); next(900); break
+            case 8: sp = find(root.contentItem, function(o) { return o.paletteOpts !== undefined && o.tab !== undefined }); grab("s1_general"); next(100); break
+            case 9: { const f = find(sp, function(o) { return o.contentHeight !== undefined && o.visible && o.contentHeight > o.height }); if (f) f.contentY = f.contentHeight - f.height; next(500); break }
+            case 10: grab("s1b_general_scrolled"); sp.tab = 2; next(600); break
+            case 11: grab("s2_buddy"); appearance.light = true; next(700); break
+            case 12: grab("s3_light"); next(100); break
+            case 13:
+                appearance.light = saved.l; appearance.palette = saved.p; appearance.accent = saved.a; appearance.ring = saved.r
+                cfg.buddyHistory = saved.h
+                root.toggleSettings(); console.log("DEMO restored"); break
+            }
+        }
+    }
+    // TEMP-BUDDY-DEMO-END
+
     // ------------------------------------------------------------ peek dash
     // While tucked away, only this centered dash at the screen edge catches
     // the pointer (and file drags) to pull the notch out.
-    MouseArea {
+    PeekDash {
         id: peekZone
-        width: root.dashW + Math.round(6 * root.s)
-        height: root.revealed ? (root.shownY + 2) : Math.max(7, root.dashH + 4)
-        x: Math.round((root.width - width) / 2)
-        y: 0
-        hoverEnabled: true
-        onClicked: if (!root.fullscreenGuard) root.revealed = true
-
-        Rectangle {
-            id: peekBar
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 2
-            width: root.dashW
-            height: root.dashH
-            radius: height / 2
-            color: peekZone.containsMouse ? t.ink : t.textDim
-            opacity: root.clamp01(1 - root.progress * 3.5)
-            Behavior on color { ColorAnimation { duration: 150 } }
-        }
-
-        DropArea {
-            id: peekDrop
-            anchors.fill: parent
-            // A drag over the tucked-away dash used to be dropped and lost;
-            // route it through the same ingestion path as everything else.
-            onDropped: (drop) => root.handleDrop(drop)
-        }
+        root: root
     }
 
     // ------------------------------------------------------------ notch
@@ -541,7 +569,7 @@ Window {
             id: bg
             anchors.fill: parent
             radius: height / 2
-            edge: root.dragging ? t.ink : "transparent"
+            edge: root.dragging ? t.accent : "transparent"
         }
 
         // Clicking empty notch space dismisses menus; right-click opens settings.
@@ -640,13 +668,13 @@ Window {
                                 radius: width * 0.28
                                 color: "transparent"
                                 border.width: 1.5
-                                border.color: t.ink
+                                border.color: t.accent
                                 Glyph {
                                     anchors.centerIn: parent
                                     name: "plus"
                                     size: root.iconSize * 0.55
                                     stroke: 2
-                                    color: t.ink
+                                    color: t.accent
                                 }
                             }
                         }
@@ -713,7 +741,6 @@ Window {
                     id: status
                     s: root.s
                     showClock: cfg.showClock
-                    showStats: cfg.showStats
                     active: root.hubOpen
                     appear: root.itemAppear(root.apps.length + 1)
                     onClicked: root.toggleHub(-1)
@@ -851,7 +878,7 @@ Window {
             root.timerAlert = false
             if (sessionTimer.finished)
                 sessionTimer.reset()
-            root.openHub(1)
+            root.openHub(0)
         }
         onHintRequested: (text) => {
             root.hoverHint = text
@@ -926,35 +953,8 @@ Window {
         id: previewHideTimer
         interval: 260
         onTriggered: {
-            if (!openRow.hovered && !previewCard.hovered && !appsHover.hovered)
+            if (!previewCard.hovered && !appsHover.hovered)
                 root.previewOpen = false
-        }
-    }
-
-    OpenApps {
-        id: openRow
-        x: pill.x - root.musicGap - width
-        y: pill.y
-        s: root.s
-        mono: cfg.monoIcons
-        apps: root.unpinnedOpenList
-        appear: root.clamp01(root.progress * 1.4 - 0.2)
-        scale: 0.85 + 0.15 * root.clamp01(root.progress)
-        transformOrigin: Item.Top
-
-        onActivated: (exe) => {
-            root.previewOpen = false
-            openApps.activateApp(exe)
-        }
-        onMenuShownChanged: if (menuShown) root.previewOpen = false
-        onPreviewRequested: (exe, centerX) => root.requestPreview(exe, centerX)
-        onHoveredChanged: {
-            if (hovered) {
-                previewHideTimer.stop()
-            } else {
-                previewShowTimer.stop()
-                previewHideTimer.restart()
-            }
         }
     }
 
@@ -989,364 +989,59 @@ Window {
     }
 
     // ------------------------------------------------------------ resize grip
-    MouseArea {
+    ResizeGrip {
         id: grip
-        width: Math.round(64 * root.s)
-        height: 16
-        x: (root.width - width) / 2
-        y: pill.y + pill.height - 6
-        hoverEnabled: true
-        enabled: root.revealed
-        cursorShape: Qt.SizeVerCursor
-        preventStealing: true
-
-        property real startY: 0
-        property real startScale: 1
-
-        onPressed: (mouse) => {
-            startY = mapToItem(null, mouse.x, mouse.y).y
-            startScale = cfg.sizeScale
-            root.resizing = true
-        }
-        onPositionChanged: (mouse) => {
-            if (!pressed)
-                return
-            const dy = mapToItem(null, mouse.x, mouse.y).y - startY
-            root.setScale(startScale + dy / 58)
-        }
-        onReleased: { root.resizing = false; hudTimer.restart() }
-        onCanceled: root.resizing = false
-
-        readonly property bool showBar: containsMouse || pressed
-            || (pillHover.hovered && !root.tipVisible && root.menuIndex < 0)
-
-        Rectangle {
-            anchors.centerIn: parent
-            anchors.verticalCenterOffset: 0
-            width: grip.containsMouse || grip.pressed ? 46 : 30
-            height: grip.pressed ? 5 : 4
-            radius: height / 2
-            color: grip.containsMouse || grip.pressed ? t.ink : t.textDim
-            border.width: 1
-            border.color: t.surface
-            opacity: grip.showBar && root.progress > 0.9 ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 150 } }
-            Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        }
+        root: root
+        cfg: cfg
+        pillItem: pill
+        pillHovered: pillHover.hovered
     }
 
     // ------------------------------------------------------------ tooltip / toast / size HUD
-    Rectangle {
+    TooltipToast {
         id: tip
-        readonly property bool showHud: root.hudVisible
-        readonly property string label: showHud ? Math.round(cfg.sizeScale * 100) + "%" : root.tipText
-
-        width: Math.min(root.width - 24, tipLabel.implicitWidth + 20)
-        height: 26
-        radius: 13
-        color: showHud ? t.surface : t.ink
-        border.width: showHud ? 1 : 0
-        border.color: t.borderStrong
-        x: Math.round(Math.max(12, Math.min(root.width - width - 12,
-               (showHud || root.toast.length > 0 ? root.width / 2 : root.tipX) - width / 2)))
-        y: root.shownY + root.pillH + 12 + (shown ? 0 : -4)
-        opacity: shown ? 1 : 0
-        scale: shown ? 1 : 0.94
-        readonly property bool shown: showHud || root.tipVisible
-
-        Behavior on opacity { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        Behavior on y { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        Behavior on x { enabled: tip.opacity > 0.5; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-
-        Text {
-            id: tipLabel
-            anchors.centerIn: parent
-            width: Math.min(implicitWidth, tip.width - 20)
-            elide: Text.ElideRight
-            text: tip.label
-            color: tip.showHud ? t.text : t.inverse
-            font.family: t.font
-            font.pixelSize: 12
-            font.weight: Font.Bold
-        }
+        root: root
+        cfg: cfg
     }
 
     // ------------------------------------------------------------ app context menu
-    Flyout {
+    AppContextMenu {
         id: menu
-        open: root.menuIndex >= 0
-        radius: 18
-        baseY: root.shownY + root.pillH + 10
-        property bool renaming: false
-        // Snapshot of the app this menu belongs to; rows resolve the live
-        // index through root.menuRowIndex().
-        property var shownApp: null
-        readonly property var app: shownApp
-
-        onOpenChanged: {
-            if (open) {
-                shownApp = root.menuIndex >= 0 ? root.apps[root.menuIndex] : null
-                renaming = false
-            }
-        }
-        Connections {
-            target: root
-            function onMenuIndexChanged() {
-                if (root.menuIndex >= 0) {
-                    menu.shownApp = root.apps[root.menuIndex]
-                    menu.renaming = false
-                }
-            }
-        }
-
-        width: 280
-        height: menuCol.implicitHeight + 12
-        x: Math.round(Math.max(12, Math.min(root.width - width - 12, root.menuX - width / 2)))
-
-        Column {
-            id: menuCol
-            y: 6
-            width: parent.width
-
-            Item {
-                width: parent.width
-                height: 52
-                Column {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 16
-                    anchors.right: parent.right
-                    anchors.rightMargin: 16
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 1
-                    Text {
-                        visible: !menu.renaming
-                        width: parent.width
-                        text: menu.app ? menu.app.name : ""
-                        color: t.ink
-                        elide: Text.ElideRight
-                        font.family: t.font
-                        font.pixelSize: 15
-                        font.weight: Font.ExtraBold
-                    }
-                    Rectangle {
-                        visible: menu.renaming
-                        width: parent.width
-                        height: 26
-                        radius: 6
-                        color: t.raised
-                        border.width: 1
-                        border.color: t.ink
-                        TextInput {
-                            id: renameInput
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            verticalAlignment: TextInput.AlignVCenter
-                            color: t.ink
-                            selectionColor: t.ink
-                            selectedTextColor: t.inverse
-                            font.family: t.font
-                            font.pixelSize: 13
-                            font.weight: Font.Bold
-                            clip: true
-                            onAccepted: {
-                                const i = root.menuRowIndex()
-                                if (i >= 0)
-                                    dock.rename(i, text)
-                                menu.renaming = false
-                            }
-                            Keys.onEscapePressed: menu.renaming = false
-                        }
-                    }
-                    Text {
-                        width: parent.width
-                        text: menu.app ? (root.running.indexOf(menu.app.exe) >= 0 ? qsTr("Running") : (menu.app.path || "")) : ""
-                        color: t.textDim
-                        elide: Text.ElideMiddle
-                        font.family: t.font
-                        font.pixelSize: 11
-                    }
-                }
-            }
-            Rectangle { width: parent.width; height: 1; color: t.borderSoft }
-            Item { width: 1; height: 4 }
-
-            MenuRow {
-                width: parent.width
-                label: qsTr("Open")
-                icon: "open"
-                hint: "↵"
-                onTriggered: {
-                    const i = root.menuRowIndex()
-                    if (i >= 0)
-                        root.launchApp(i)
-                }
-            }
-            MenuRow {
-                width: parent.width
-                label: qsTr("Rename")
-                icon: "edit"
-                onTriggered: {
-                    renameInput.text = menu.app ? menu.app.name : ""
-                    menu.renaming = true
-                    renameInput.forceActiveFocus()
-                    renameInput.selectAll()
-                }
-            }
-            MenuRow {
-                width: parent.width
-                label: qsTr("Show in folder")
-                icon: "folder"
-                visible: !!(menu.app && menu.app.path)
-                onTriggered: {
-                    const i = root.menuRowIndex()
-                    if (i >= 0)
-                        dock.revealInFolder(i)
-                    root.menuIndex = -1
-                }
-            }
-            MenuRow {
-                width: parent.width
-                label: qsTr("Move left")
-                icon: "left"
-                readonly property int liveIndex: root.menuRowIndex()
-                visible: liveIndex > 0
-                onTriggered: { dock.move(liveIndex, liveIndex - 1); root.menuIndex = -1 }
-            }
-            MenuRow {
-                width: parent.width
-                label: qsTr("Move right")
-                icon: "right"
-                readonly property int liveIndex: root.menuRowIndex()
-                visible: liveIndex >= 0 && liveIndex < root.apps.length - 1
-                onTriggered: { dock.move(liveIndex, liveIndex + 1); root.menuIndex = -1 }
-            }
-            Item { width: 1; height: 4 }
-            Rectangle { width: parent.width; height: 1; color: t.borderSoft }
-            Item { width: 1; height: 4 }
-            MenuRow {
-                width: parent.width
-                label: qsTr("Unpin")
-                icon: "unpin"
-                danger: true
-                onTriggered: {
-                    const i = root.menuRowIndex()
-                    root.menuIndex = -1
-                    if (i >= 0)
-                        dock.unpin(i)
-                }
-            }
-        }
+        root: root
     }
 
     // ------------------------------------------------------------ settings panel
-    Flyout {
+    SettingsFlyout {
         id: panelItem
-        open: root.panelOpen
-        radius: 22
-        baseY: root.shownY + root.pillH + 12
-
-        width: settings.implicitWidth
-        height: settings.implicitHeight
-        x: Math.round((root.width - width) / 2)
-
-        SettingsPanel {
-            id: settings
-            anchors.fill: parent
-            prefs: cfg
-            dockModel: root.apps
-            runningList: root.running
-            version: dock.version
-            startupSupported: dock.startupSupported
-            launchAtStartup: dock.launchAtStartup
-            blurSupported: glassBackdrop.supported
-            blurBehind: glassBackdrop.enabled
-            maxBodyHeight: root.height - (root.shownY + root.pillH + 12) - settings.headerH - settings.footerH - 24
-
-            onCloseRequested: root.panelOpen = false
-            onAddRequested: fileDialog.open()
-            onPinAppRequested: (name, path) => {
-                if (dock.pinApp(name, path))
-                    root.showToast(qsTr("Pinned %1").arg(name))
-            }
-            onResetRequested: dock.resetToDefaults()
-            onQuitRequested: dock.quit()
-            onUnpinRequested: (i) => dock.unpin(i)
-            onMoveRequested: (from, to) => dock.move(from, to)
-            onStartupToggled: (on) => dock.launchAtStartup = on
-            onBlurToggled: (on) => glassBackdrop.enabled = on
-            lightTheme: appearance.light
-            onThemeToggled: (on) => appearance.light = on
-        }
+        root: root
+        cfg: cfg
+        fileDialog: fileDialog
     }
 
     // ------------------------------------------------------------ music player
-    Flyout {
+    MusicFlyout {
         id: musicFlyout
         objectName: "musicFlyout"
-        open: root.musicOpen
-        radius: 28
-        baseY: root.shownY + root.pillH + 12
-
-        width: musicPanel.implicitWidth
-        height: musicPanel.implicitHeight
-        x: Math.round(Math.max(12, (root.width - width) / 2))
-
-        MusicPanel {
-            id: musicPanel
-            anchors.fill: parent
-            onCloseRequested: root.musicOpen = false
-            onAddRequested: musicDialog.open()
-            onToastRequested: (text) => root.showToast(text)
-            onDropForwarded: (drop) => root.handleDrop(drop)
-        }
+        root: root
+        musicDialog: musicDialog
     }
 
     // ------------------------------------------------------------ hub
-    // System, Timer and Clipboard in one card, opened from the clock.
-    Flyout {
+    // Timer and Clipboard in one card, opened from the clock.
+    HubFlyout {
         id: hubFlyout
         objectName: "hubFlyout"
-        open: root.hubOpen
-        radius: 22
-        baseY: root.shownY + root.pillH + 12
-
-        width: hubPanel.implicitWidth
-        height: hubPanel.implicitHeight
-        x: Math.round(Math.max(12, (root.width - width) / 2))
-
-        HubPanel {
-            id: hubPanel
-            anchors.fill: parent
-            tab: root.hubTab
-            focusTimer: sessionTimer
-            maxBodyHeight: root.height - (root.shownY + root.pillH + 12) - hubPanel.headerH - 24
-            onCloseRequested: root.hubOpen = false
-            onTabPicked: (i) => root.hubTab = i
-            onToastRequested: (text) => root.showToast(text)
-        }
+        root: root
+        sessionTimer: sessionTimer
     }
 
     // ------------------------------------------------------------ command palette
     // The hotkey's card: search apps, switch windows, do maths, search the
     // web, or run one of Noch's own commands.
-    Flyout {
+    PaletteFlyout {
         id: paletteFlyout
         objectName: "paletteFlyout"
-        open: root.paletteOpen
-        radius: 22
-        baseY: root.shownY + root.pillH + 12
-
-        width: paletteCard.implicitWidth
-        height: paletteCard.implicitHeight
-        x: Math.round((root.width - width) / 2)
-
-        PaletteCard {
-            id: paletteCard
-            anchors.fill: parent
-            onDismissed: root.closePalette()
-        }
+        root: root
     }
 
     // ------------------------------------------------------------ buddy
@@ -1356,27 +1051,68 @@ Window {
     // research, plan) are implemented in Buddy.qml + BuddyRouter.qml; the
     // result card reuses the app's glass and motion conventions.
     readonly property real buddyAnchor: cfg.buddyX >= 0
-        ? Math.max(48, Math.min(width - 48, cfg.buddyX))
+        ? Math.max(36, Math.min(width - 36, cfg.buddyX))
         : Math.max(48, Math.min(Math.round(width * 0.14),
-                                Math.round((width - pillW) / 2 - (openRow.visible ? openRow.width + musicGap : 0) - 64)))
+                                Math.round((width - pillW) / 2 - 64)))
+    readonly property real buddyAnchorY: cfg.buddyY >= 0
+        ? Math.max(8, Math.min(height - 64, cfg.buddyY))
+        : root.shownY
+
+    // Settings > Buddy > Ring colour: let the buddy show off the new halo.
+    function previewBuddyRing() {
+        if (!cfg.buddyEnabled)
+            return
+        buddy.setMood("happy", 2200)
+        buddy.hop(90)
+        buddy.neonBurst(true)
+    }
 
     Buddy {
         id: buddy
         visible: cfg.buddyEnabled
+        solidRing: cfg.buddySolidRing
+        motionPaused: root.fullscreenGuard
         s: root.s
         desktop: root.contentItem
         focusTimer: sessionTimer
         savedPlan: cfg.buddyPlan
         anchor: root.buddyAnchor
+        anchorY: root.buddyAnchorY
         resultPanel: buddyPanel
 
-        onBuddyMoved: (x) => cfg.buddyX = Math.round(x)
+        onBuddyMoved: (x, y) => {
+            cfg.buddyX = Math.round(x)
+            cfg.buddyY = Math.round(y)
+        }
         onToastRequested: (text) => root.showToast(text)
         onPaletteRequested: root.summonPalette()
-        onClipboardRequested: root.openHub(2)
+        onClipboardRequested: root.openHub(1)
         onSettingsRequested: root.toggleSettings()
         onActivationRequested: root.requestActivate()
+        onPlanEdited: (plan) => cfg.buddyPlan = JSON.stringify(plan)
+        historyJson: cfg.buddyHistory
+        onHistorySaved: (json) => cfg.buddyHistory = json
     }
+
+    // Keep the C++ buddy provider and sound synthesizer in sync with saved settings.
+    Binding { target: buddyProvider; property: "provider"; value: cfg.buddyProvider }
+    Binding { target: buddyProvider; property: "apiKey"; value: cfg.buddyApiKey }
+    Binding { target: buddyProvider; property: "apiBase"; value: cfg.buddyApiBase }
+    Binding { target: buddyProvider; property: "model"; value: cfg.buddyModel }
+    Binding { target: buddyProvider; property: "temperature"; value: cfg.buddyTemperature }
+    Binding { target: buddyProvider; property: "agentMode"; value: cfg.buddyAgentMode }
+    Binding { target: buddyProvider; property: "allowBash"; value: cfg.buddyAllowBash }
+    Binding { target: buddyProvider; property: "allowComputer"; value: cfg.buddyAllowComputer }
+    Binding { target: buddyProvider; property: "allowEditor"; value: cfg.buddyAllowEditor }
+    Binding { target: buddyProvider; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
+    Binding { target: buddyProvider; property: "allowMemory"; value: cfg.buddyAllowMemory }
+    Binding { target: buddyProvider; property: "allowWebSearch"; value: cfg.buddyAllowWebSearch }
+    Binding { target: buddyProvider; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
+    Binding { target: buddyProvider; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
+    Binding { target: buddyProvider; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
+    Binding { target: buddySfx; property: "enabled"; value: cfg.buddySfxEnabled }
+    Binding { target: buddySfx; property: "volume"; value: cfg.buddySfxVolume }
+    Binding { target: buddySfx; property: "style"; value: cfg.buddySfxStyle }
 
     BuddyPanel {
         id: buddyPanel
@@ -1385,9 +1121,12 @@ Window {
 
         onDismissed: {
             open = false
-            buddy.session = "idle"
+            buddy.panelClosed()
         }
         onNewRequestRequested: buddy.openInput()
+        onFollowUpSubmitted: (text) => buddy.submit(text)
+        onLoved: () => buddy.celebrate()
+        onSpeakingTick: () => buddy.pulseSpeaking()
         onRetryRequested: {
             phase = "loading"
             buddy.retryTask()
