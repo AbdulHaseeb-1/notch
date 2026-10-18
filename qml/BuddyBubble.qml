@@ -45,6 +45,8 @@ Item {
     readonly property var responseMeta: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.responseMeta : ({})
     readonly property var agentTodos: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.agentTodos : []
     readonly property var citations: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.citations : []
+    readonly property var pendingApproval: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.pendingApproval : ({})
+    readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
     readonly property bool hasAdvisor: !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
@@ -270,12 +272,14 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: (hasTools || activeToolSummary.length > 0)
+    readonly property real thinkW: awaitingApproval ? 460
+                                 : (hasTools || activeToolSummary.length > 0)
                                  ? 420
                                  : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
-    readonly property real thinkH: hasTools
+    readonly property real thinkH: (hasTools
                                  ? (rowH + Math.min(toolSteps.length, 4) * 31 + 10)
-                                 : rowH
+                                 : rowH)
+                                 + (awaitingApproval ? approvalCard.implicitHeight + 10 : 0)
     readonly property real noteW: 46 + noteLabel.implicitWidth + 18
     readonly property real errorH: 16 + errText.implicitHeight + 12 + 28 + 14
     readonly property real histW: 420
@@ -1407,6 +1411,7 @@ Item {
 
                 // Live tool timeline (last four steps)
                 Column {
+                    id: liveTimeline
                     x: 10
                     y: tb.rowH + 4
                     width: parent.width - 20
@@ -1420,6 +1425,20 @@ Item {
                             width: parent.width
                             step: modelData
                         }
+                    }
+                }
+
+                // Human-in-the-loop: the agent is paused on a tool call.
+                ToolApprovalCard {
+                    id: approvalCard
+                    x: 10
+                    y: tb.hasTools ? tb.rowH + 4 + Math.min(tb.toolSteps.length, 4) * 31 + 4 : tb.rowH
+                    width: parent.width - 20
+                    visible: tb.awaitingApproval && tb.phase === "thinking"
+                    request: tb.pendingApproval
+                    onDecided: (approve, always) => {
+                        if (typeof buddyProvider !== "undefined" && buddyProvider)
+                            buddyProvider.resolveApproval(approve, always)
                     }
                 }
             }

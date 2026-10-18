@@ -48,7 +48,8 @@ Window {
         // ---- Anthropic Agent SDK & Computer Use tools ------------------------
         property bool buddyAgentMode: true
         property bool buddyAllowBash: true
-        property bool buddyAllowComputer: true
+        // Computer use (mouse/keyboard control) is off until the user opts in.
+        property bool buddyAllowComputer: false
         property bool buddyAllowEditor: true
         property bool buddyAllowCodeSearch: true
         property bool buddyAllowMemory: true
@@ -56,6 +57,14 @@ Window {
         property bool buddyAllowToolSearch: true
         property bool buddyAllowAdvisor: true
         property bool buddyAllowTodoTask: true
+        // ---- Agent safety (see docs/agent-safety.md) -------------------------
+        // "default" asks before side effects, "acceptEdits" auto-approves file
+        // edits inside the workspace, "plan" is read-only, "bypass" trusts all
+        // (hard-deny rules still apply).
+        property string buddyPermissionMode: "default"
+        property string buddyWorkspaceRoot: ""
+        property bool buddyRedactSecrets: true
+        property bool buddyKeepTraces: true
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
         property real buddySfxVolume: 0.75
@@ -71,6 +80,7 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
+        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
@@ -1112,6 +1122,10 @@ Window {
     Binding { target: buddyProvider; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
     Binding { target: buddyProvider; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
     Binding { target: buddyProvider; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
+    Binding { target: buddyProvider; property: "permissionMode"; value: cfg.buddyPermissionMode }
+    Binding { target: buddyProvider; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
+    Binding { target: buddyProvider; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
+    Binding { target: buddyProvider; property: "keepTraces"; value: cfg.buddyKeepTraces }
     Binding { target: buddySfx; property: "enabled"; value: cfg.buddySfxEnabled }
     Binding { target: buddySfx; property: "volume"; value: cfg.buddySfxVolume }
     Binding { target: buddySfx; property: "style"; value: cfg.buddySfxStyle }

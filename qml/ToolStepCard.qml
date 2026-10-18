@@ -15,17 +15,24 @@ Rectangle {
     property bool expanded: false
 
     readonly property string status: String(step.status || "done")
-    readonly property bool isError: status === "error" || status === "denied"
+    readonly property bool isError: status === "error"
+    readonly property bool isDenied: status === "denied"
     readonly property bool isRunning: status === "running"
     readonly property string detail: String(step.detail || "")
     readonly property string output: String(step.output || "")
+    readonly property string policyNote: String(step.policyNote || "")
+    readonly property bool isPending: status === "pending"
+    readonly property bool isFlagged: String(step.flag || "") === "injection"
 
     implicitHeight: inner.implicitHeight + 18
     height: implicitHeight
     radius: Theme.radiusMd
-    color: isError ? Theme.dangerSoft : (cardHover.hovered ? Theme.glassFillHover : Theme.glassFill)
+    color: isError ? Theme.dangerSoft
+         : isDenied ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.07)
+         : (cardHover.hovered ? Theme.glassFillHover : Theme.glassFill)
     border.width: 1
     border.color: isError ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.30)
+                : (isPending || isDenied) ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.35)
                 : isRunning ? Theme.glassBorderStrong : Theme.glassBorder
 
     HoverHandler { id: cardHover }
@@ -63,7 +70,7 @@ Rectangle {
                 anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
                 text: String(card.step.title || "")
-                color: card.isError ? Theme.danger : Theme.ink
+                color: card.isError ? Theme.danger : card.isDenied ? Theme.textDim : Theme.ink
                 font.family: Theme.font
                 font.pixelSize: Theme.fontBase
                 font.weight: Font.DemiBold
@@ -88,7 +95,10 @@ Rectangle {
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: text.length > 0
-                    text: card.isRunning ? qsTr("running") : Theme.formatDuration(card.step.durationMs)
+                    text: card.isRunning ? qsTr("running")
+                        : card.isPending ? qsTr("needs approval")
+                        : card.status === "denied" ? qsTr("not run")
+                        : Theme.formatDuration(card.step.durationMs)
                     color: Theme.textFaint
                     font.family: Theme.monoFont
                     font.pixelSize: Theme.fontXs
@@ -112,6 +122,31 @@ Rectangle {
             wrapMode: Text.WrapAnywhere
             maximumLineCount: card.expanded ? 6 : 2
             elide: Text.ElideRight
+        }
+
+        // Policy / guardrail note: why a call was asked, approved, blocked or flagged.
+        Row {
+            visible: card.policyNote.length > 0
+            leftPadding: 28
+            spacing: 5
+            width: parent.width
+            Glyph {
+                anchors.verticalCenter: parent.verticalCenter
+                name: card.isError || card.isDenied || card.isFlagged || card.isPending ? "shield-alert" : "shield-check"
+                size: 11
+                color: card.isError ? Theme.danger
+                     : (card.isFlagged || card.isPending || card.isDenied) ? Theme.warning : Theme.textFaint
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - 28 - 16
+                text: card.policyNote
+                color: card.isError ? Qt.lighter(Theme.danger, 1.1)
+                     : (card.isFlagged || card.isPending || card.isDenied) ? Theme.warning : Theme.textFaint
+                font.family: Theme.font
+                font.pixelSize: Theme.fontXs
+                elide: Text.ElideRight
+            }
         }
 
         Rectangle {

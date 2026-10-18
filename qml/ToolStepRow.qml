@@ -12,13 +12,15 @@ Item {
 
     readonly property string status: String(step.status || "done")
     readonly property bool isRunning: status === "running"
-    readonly property bool isError: status === "error" || status === "denied"
+    readonly property bool isError: status === "error"
+    readonly property bool isAttention: status === "pending" || status === "denied"
 
     Rectangle {
         anchors.fill: parent
         radius: Theme.radiusSm + 1
         color: row.isRunning ? Theme.glassFillActive
-             : row.isError ? Theme.dangerSoft : "transparent"
+             : row.isError ? Theme.dangerSoft
+             : row.isAttention ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.08) : "transparent"
         border.width: row.isRunning ? 1 : 0
         border.color: Theme.glassBorder
     }
@@ -74,10 +76,11 @@ Item {
         anchors.rightMargin: 9
         anchors.verticalCenter: parent.verticalCenter
         text: row.isRunning ? qsTr("running")
-            : row.status === "denied" ? qsTr("blocked")
+            : row.status === "denied" ? qsTr("not run")
+            : row.status === "pending" ? qsTr("waiting")
             : row.isError ? qsTr("failed")
             : (Theme.formatDuration(row.step.durationMs) || qsTr("done"))
-        color: row.isError ? Theme.danger : Theme.textFaint
+        color: row.isError ? Theme.danger : row.isAttention ? Theme.warning : Theme.textFaint
         font.family: Theme.monoFont
         font.pixelSize: Theme.fontXs
     }

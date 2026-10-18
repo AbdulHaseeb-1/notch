@@ -14,7 +14,13 @@ Rectangle {
     readonly property int failed: {
         let n = 0
         for (let i = 0; i < (steps ? steps.length : 0); ++i)
-            if (steps[i].status === "error" || steps[i].status === "denied") ++n
+            if (steps[i].status === "error") ++n
+        return n
+    }
+    readonly property int blocked: {
+        let n = 0
+        for (let i = 0; i < (steps ? steps.length : 0); ++i)
+            if (steps[i].status === "denied") ++n
         return n
     }
 
@@ -55,9 +61,10 @@ Rectangle {
             const d = Theme.formatDuration(bar.durationMs)
             if (d.length) s += "  ·  " + d
             if (bar.failed > 0) s += "  ·  " + qsTr("%1 failed").arg(bar.failed)
+            if (bar.blocked > 0) s += "  ·  " + qsTr("%1 not run").arg(bar.blocked)
             return s
         }
-        color: bar.failed > 0 ? Theme.inkSoft : Theme.textDim
+        color: bar.failed + bar.blocked > 0 ? Theme.inkSoft : Theme.textDim
         font.family: Theme.font
         font.pixelSize: Theme.fontSm
         font.weight: Font.Medium

@@ -39,6 +39,8 @@ Item {
 
     // Body height: defaults per kind, user-resizable with the bottom grip.
     property real bodyH: 356
+    readonly property var pendingApproval: buddyProvider ? buddyProvider.pendingApproval : ({})
+    readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
     property bool userResized: false
     readonly property bool interacting: dragHit.pressed || resizeHit.pressed
 
@@ -371,7 +373,7 @@ Item {
                     id: chipLabel
                     anchors.centerIn: parent
                     text: panel.phase === "error" ? qsTr("Failed")
-                        : (panel.phase === "loading" ? qsTr("Thinking…")
+                        : (panel.phase === "loading" ? (panel.awaitingApproval ? qsTr("Needs you") : qsTr("Thinking…"))
                         : (panel.isStreaming ? qsTr("Live") : qsTr("Ready")))
                     color: panel.phase === "error" ? Theme.danger
                         : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.success)
@@ -463,11 +465,13 @@ Item {
 
                 Column {
                     anchors.centerIn: parent
-                    anchors.verticalCenterOffset: panel.userPrompt.length > 0 ? 18 : 0
-                    spacing: 14
+                    anchors.verticalCenterOffset: panel.userPrompt.length > 0 ? (panel.awaitingApproval ? 24 : 18) : 0
+                    spacing: panel.awaitingApproval ? 8 : 14
 
-                    // Animated expressive thinking orb
+                    // Animated expressive thinking orb (folded away while an
+                    // approval card needs the room)
                     Item {
+                        visible: !panel.awaitingApproval
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: 56
                         height: 56
@@ -534,6 +538,7 @@ Item {
 
                     // Rhythmic wave bars
                     Row {
+                        visible: !panel.awaitingApproval
                         anchors.horizontalCenter: parent.horizontalCenter
                         spacing: 5
                         height: 16
@@ -566,13 +571,22 @@ Item {
                         visible: panel.hasTools
 
                         Repeater {
-                            model: panel.hasTools ? panel.toolSteps.slice(-4) : []
+                            model: panel.hasTools ? panel.toolSteps.slice(panel.awaitingApproval ? -3 : -4) : []
                             ToolStepRow {
                                 required property var modelData
                                 width: parent.width
                                 step: modelData
                             }
                         }
+                    }
+
+                    // Human-in-the-loop approval for a paused tool call.
+                    ToolApprovalCard {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: panel.width_ - 48
+                        visible: panel.awaitingApproval
+                        request: panel.pendingApproval
+                        onDecided: (approve, always) => buddyProvider.resolveApproval(approve, always)
                     }
                 }
             }

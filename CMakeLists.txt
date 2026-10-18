@@ -125,6 +125,7 @@ qt_add_qml_module(noch
         qml/ToolStepRow.qml
         qml/ToolStepCard.qml
         qml/ToolTraceBar.qml
+        qml/ToolApprovalCard.qml
     RESOURCES
         ${NOCH_ICONS}
 )
