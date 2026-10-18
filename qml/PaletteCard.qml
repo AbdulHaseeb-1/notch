@@ -5,7 +5,7 @@ import QtQuick
 // built-in commands and a web search fallback. The C++ side (AppSearch) does
 // the finding; this does the looking and the keys.
 Item {
-    id: palette
+    id: pcard
 
     // Raised when the palette should close because the user is done with it
     // (Escape, or a row was run).
@@ -17,8 +17,9 @@ Item {
     readonly property int rowH: 44
     readonly property int maxRows: 7
 
-    implicitWidth: 520
-    readonly property real targetListHeight: Math.min(results.length, palette.maxRows) * palette.rowH
+    property real maxPanelWidth: 100000
+    implicitWidth: Theme.fit(Theme.paletteWidth, maxPanelWidth)
+    readonly property real targetListHeight: Math.min(results.length, pcard.maxRows) * pcard.rowH
     readonly property real targetHeight: field.implicitHeight + 1 + targetListHeight + 1 + footer.implicitHeight
     implicitHeight: field.implicitHeight + 1 + list.height + 1 + footer.implicitHeight
 
@@ -38,7 +39,7 @@ Item {
     Timer {
         id: searchDebounce
         interval: 60
-        onTriggered: palette.refresh()
+        onTriggered: pcard.refresh()
     }
 
     function move(delta) {
@@ -69,7 +70,7 @@ Item {
     // so the very first keystroke fills up with real results when they arrive.
     Connections {
         target: search
-        function onIndexReady() { palette.refresh() }
+        function onIndexReady() { pcard.refresh() }
     }
 
     Column {
@@ -110,23 +111,23 @@ Item {
                 onTextChanged: {
                     if (text === "") {
                         searchDebounce.stop()
-                        palette.refresh()
+                        pcard.refresh()
                     } else {
                         searchDebounce.restart()
                     }
                 }
-                onAccepted: palette.runCurrent()
+                onAccepted: pcard.runCurrent()
 
                 Keys.onDownPressed: (event) => {
-                    palette.move(1)
+                    pcard.move(1)
                     event.accepted = true
                 }
                 Keys.onUpPressed: (event) => {
-                    palette.move(-1)
+                    pcard.move(-1)
                     event.accepted = true
                 }
                 Keys.onEscapePressed: (event) => {
-                    palette.dismissed()
+                    pcard.dismissed()
                     event.accepted = true
                 }
 
@@ -179,23 +180,23 @@ Item {
         ListView {
             id: list
             width: parent.width
-            height: palette.targetListHeight
+            height: pcard.targetListHeight
             Behavior on height { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-            interactive: count * palette.rowH > height
+            interactive: count * pcard.rowH > height
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 320
             clip: true
 
-            model: palette.results
-            onCountChanged: palette.currentIndex = Math.min(palette.currentIndex, Math.max(0, count - 1))
+            model: pcard.results
+            onCountChanged: pcard.currentIndex = Math.min(pcard.currentIndex, Math.max(0, count - 1))
 
             delegate: Item {
                 id: row
                 required property int index
                 required property var modelData
                 width: list.width
-                height: palette.rowH
-                readonly property bool active: index === palette.currentIndex
+                height: pcard.rowH
+                readonly property bool active: index === pcard.currentIndex
 
                 Rectangle {
                     x: 8
@@ -210,7 +211,7 @@ Item {
 
                 HoverHandler {
                     id: rowHover
-                    onHoveredChanged: if (hovered) palette.currentIndex = row.index
+                    onHoveredChanged: if (hovered) pcard.currentIndex = row.index
                 }
 
                 // Leading icon: a real app icon when there is one, a glyph
@@ -290,7 +291,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: palette.run(row.modelData)
+                    onClicked: pcard.run(row.modelData)
                 }
             }
         }
@@ -354,8 +355,8 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: 18
                 anchors.verticalCenter: parent.verticalCenter
-                visible: palette.results.length > 0
-                text: qsTr("%1 result(s)").arg(palette.results.length)
+                visible: pcard.results.length > 0
+                text: qsTr("%1 result(s)").arg(pcard.results.length)
                 color: Theme.textFaint
                 font.family: Theme.font
                 font.pixelSize: 10
