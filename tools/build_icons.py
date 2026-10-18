@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 
 # noch name -> lucide name (or None for a hand-drawn path in CUSTOM)
 MAP = {
+    "app": "app-window", "code": "code-xml", "music": "music",
     "close": "x", "plus": "plus", "minus": "minus", "check": "check",
     "open": "arrow-up-right", "external": "external-link", "folder": "folder",
     "pin": "pin", "unpin": "pin-off", "left": "chevron-left", "right": "chevron-right",

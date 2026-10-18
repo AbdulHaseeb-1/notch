@@ -47,6 +47,10 @@ Item {
     readonly property var citations: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.citations : []
     readonly property var pendingApproval: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    // Specialist currently in charge (handoffs), "" for Buddy itself.
+    readonly property string specialist: (typeof buddyProvider !== "undefined" && buddyProvider
+                                          && buddyProvider.activeAgent !== "buddy")
+                                         ? String(buddyProvider.activeAgentTitle).replace(" specialist", "") : ""
     // Live streamed answer text while the model is still writing.
     readonly property string liveText: (typeof buddyProvider !== "undefined" && buddyProvider && buddyProvider.streaming)
                                        ? String(buddyProvider.streamText).replace(/\*\*|`/g, "") : ""
@@ -1369,10 +1373,11 @@ Item {
 
                         Text {
                             id: stepCountText
-                            visible: tb.hasTools
+                            visible: tb.hasTools || tb.specialist.length > 0
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            text: tb.toolSteps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(tb.toolSteps.length)
+                            text: (tb.specialist.length > 0 ? tb.specialist + "  ·  " : "")
+                                  + (tb.toolSteps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(tb.toolSteps.length))
                             color: Theme.textFaint
                             font.family: Theme.monoFont
                             font.pixelSize: Theme.fontXs
@@ -1841,6 +1846,7 @@ Item {
                                             const parts = []
                                             if (m.model) parts.push(String(m.model))
                                             if (Number(m.turns || 0) > 1) parts.push(m.turns + " turns")
+                                            if (Number(m.handoffs || 0) > 0) parts.push(m.handoffs === 1 ? "1 handoff" : m.handoffs + " handoffs")
                                             if (Number(m.totalTokens || 0) > 0) parts.push(m.totalTokens + " tok")
                                             if (Number(m.durationMs || 0) > 0) parts.push(tb.formatDuration(m.durationMs))
                                             return parts.join(" · ")

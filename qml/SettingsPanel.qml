@@ -1700,6 +1700,117 @@ Item {
                             }
                         }
                     }
+
+                    SectionHeader {
+                        visible: panel.prefs.buddyAgentMode
+                        title: qsTr("Safety & permissions")
+                        rightText: ({ "default": qsTr("Asks before side effects"),
+                                      "acceptEdits": qsTr("Auto-approves workspace edits"),
+                                      "plan": qsTr("Read-only"),
+                                      "bypass": qsTr("Trusted — no prompts") })[panel.prefs.buddyPermissionMode] || ""
+                    }
+
+                    GroupCard {
+                        visible: panel.prefs.buddyAgentMode
+
+                        Column {
+                            width: parent.width
+                            spacing: 6
+
+                            Text {
+                                width: parent.width
+                                text: qsTr("Permission mode")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+
+                            Segmented {
+                                width: parent.width
+                                height: 34
+                                options: [
+                                    { label: qsTr("Ask"), value: "default" },
+                                    { label: qsTr("Auto-edit"), value: "acceptEdits" },
+                                    { label: qsTr("Plan"), value: "plan" },
+                                    { label: qsTr("Trusted"), value: "bypass" }
+                                ]
+                                value: panel.prefs.buddyPermissionMode
+                                onPicked: (v) => panel.prefs.buddyPermissionMode = v
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: panel.prefs.buddyPermissionMode === "bypass"
+                                      ? qsTr("Every tool call runs without asking. Destructive commands, system folders and credential stores stay blocked.")
+                                      : panel.prefs.buddyPermissionMode === "plan"
+                                        ? qsTr("The agent can look around and read, but cannot run commands with side effects, edit files or control the computer.")
+                                        : panel.prefs.buddyPermissionMode === "acceptEdits"
+                                          ? qsTr("File edits inside the workspace run straight away. Commands and computer control still ask first.")
+                                          : qsTr("Read-only commands run straight away. Anything that changes files, runs programs or clicks asks you first.")
+                                color: panel.prefs.buddyPermissionMode === "bypass" ? Theme.warning : Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        CardDivider {}
+
+                        FieldBox {
+                            width: parent.width
+                            label: qsTr("Workspace folder")
+                            placeholder: buddyProvider ? buddyProvider.effectiveWorkspace() : qsTr("~/Noch Workspace")
+                            hint: qsTr("Auto-edit mode only auto-approves edits inside this folder.")
+                            mono: true
+                            text: panel.prefs.buddyWorkspaceRoot
+                            onEdited: (v) => panel.prefs.buddyWorkspaceRoot = v
+                        }
+
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Redact secrets")
+                            sub: qsTr("Mask API keys, tokens and private keys in tool output before the model or the transcript sees them.")
+                            checked: panel.prefs.buddyRedactSecrets
+                            onToggled: (c) => panel.prefs.buddyRedactSecrets = c
+                        }
+
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Keep run traces")
+                            sub: qsTr("Save a local JSON trace of each run (model calls, tool calls, approvals) for debugging. Newest 40 are kept.")
+                            checked: panel.prefs.buddyKeepTraces
+                            onToggled: (c) => panel.prefs.buddyKeepTraces = c
+                        }
+                    }
+
+                    SectionHeader {
+                        visible: panel.prefs.buddyAgentMode
+                        title: qsTr("Agent behaviour")
+                        rightText: qsTr("OpenAI Agents SDK patterns")
+                    }
+
+                    GroupCard {
+                        visible: panel.prefs.buddyAgentMode
+
+                        ToggleRow {
+                            label: qsTr("Stream replies")
+                            sub: qsTr("Show the answer word by word while the model writes it (Anthropic and OpenAI-compatible providers).")
+                            checked: panel.prefs.buddyStreamReplies
+                            onToggled: (c) => panel.prefs.buddyStreamReplies = c
+                        }
+
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Specialist handoffs")
+                            sub: qsTr("Let Buddy hand research to a web-only specialist and code work to a files-and-shell specialist, each with a smaller toolset.")
+                            checked: panel.prefs.buddyHandoffs
+                            onToggled: (c) => panel.prefs.buddyHandoffs = c
+                        }
+                    }
                 }
 
                 // Right: what the agent is allowed to do.
@@ -1822,90 +1933,6 @@ Item {
                         }
                     }
 
-                    SectionHeader {
-                        visible: panel.prefs.buddyAgentMode
-                        title: qsTr("Safety & permissions")
-                        rightText: ({ "default": qsTr("Asks before side effects"),
-                                      "acceptEdits": qsTr("Auto-approves workspace edits"),
-                                      "plan": qsTr("Read-only"),
-                                      "bypass": qsTr("Trusted — no prompts") })[panel.prefs.buddyPermissionMode] || ""
-                    }
-
-                    GroupCard {
-                        visible: panel.prefs.buddyAgentMode
-
-                        Column {
-                            width: parent.width
-                            spacing: 6
-
-                            Text {
-                                width: parent.width
-                                text: qsTr("Permission mode")
-                                color: Theme.textDim
-                                font.family: Theme.font
-                                font.pixelSize: 11
-                                font.weight: Font.DemiBold
-                            }
-
-                            Segmented {
-                                width: parent.width
-                                height: 34
-                                options: [
-                                    { label: qsTr("Ask"), value: "default" },
-                                    { label: qsTr("Auto-edit"), value: "acceptEdits" },
-                                    { label: qsTr("Plan"), value: "plan" },
-                                    { label: qsTr("Trusted"), value: "bypass" }
-                                ]
-                                value: panel.prefs.buddyPermissionMode
-                                onPicked: (v) => panel.prefs.buddyPermissionMode = v
-                            }
-
-                            Text {
-                                width: parent.width
-                                text: panel.prefs.buddyPermissionMode === "bypass"
-                                      ? qsTr("Every tool call runs without asking. Destructive commands, system folders and credential stores stay blocked.")
-                                      : panel.prefs.buddyPermissionMode === "plan"
-                                        ? qsTr("The agent can look around and read, but cannot run commands with side effects, edit files or control the computer.")
-                                        : panel.prefs.buddyPermissionMode === "acceptEdits"
-                                          ? qsTr("File edits inside the workspace run straight away. Commands and computer control still ask first.")
-                                          : qsTr("Read-only commands run straight away. Anything that changes files, runs programs or clicks asks you first.")
-                                color: panel.prefs.buddyPermissionMode === "bypass" ? Theme.warning : Theme.textDim
-                                font.family: Theme.font
-                                font.pixelSize: 11
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-
-                        CardDivider {}
-
-                        FieldBox {
-                            width: parent.width
-                            label: qsTr("Workspace folder")
-                            placeholder: buddyProvider ? buddyProvider.effectiveWorkspace() : qsTr("~/Noch Workspace")
-                            hint: qsTr("Auto-edit mode only auto-approves edits inside this folder.")
-                            mono: true
-                            text: panel.prefs.buddyWorkspaceRoot
-                            onEdited: (v) => panel.prefs.buddyWorkspaceRoot = v
-                        }
-
-                        CardDivider {}
-
-                        ToggleRow {
-                            label: qsTr("Redact secrets")
-                            sub: qsTr("Mask API keys, tokens and private keys in tool output before the model or the transcript sees them.")
-                            checked: panel.prefs.buddyRedactSecrets
-                            onToggled: (c) => panel.prefs.buddyRedactSecrets = c
-                        }
-
-                        CardDivider {}
-
-                        ToggleRow {
-                            label: qsTr("Keep run traces")
-                            sub: qsTr("Save a local JSON trace of each run (model calls, tool calls, approvals) for debugging. Newest 40 are kept.")
-                            checked: panel.prefs.buddyKeepTraces
-                            onToggled: (c) => panel.prefs.buddyKeepTraces = c
-                        }
-                    }
                 }
             }
         }

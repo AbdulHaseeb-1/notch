@@ -100,22 +100,39 @@ Item {
             visible: status === Image.Ready
         }
 
-        // Monogram fallback when an app has no readable icon.
+        // Fallback when an app has no readable icon (always on non-Windows
+        // builds): a stone tile with a glyph guessed from the app's name, so
+        // apps stay tellable apart; the tooltip names them.
         Rectangle {
             anchors.fill: parent
             visible: icon.status !== Image.Ready
             radius: Math.round(width * 0.3)
-            color: Theme.raised
+            gradient: Gradient {
+                GradientStop { position: 0; color: Theme.tileActive }
+                GradientStop { position: 1; color: Theme.tile }
+            }
             border.width: 1
-            border.color: Theme.border
+            border.color: Theme.tileEdge
 
-            Text {
+            readonly property string kind: {
+                const n = String(item.modelData.name || "").toLowerCase()
+                if (/chrome|edge|firefox|browser|brave|opera|safari|vivaldi/.test(n)) return "globe"
+                if (/terminal|powershell|cmd|console|wsl|shell/.test(n)) return "terminal"
+                if (/code|studio|idea|vim|sublime|cursor|rider|zed/.test(n)) return "code"
+                if (/explorer|files|finder|folder|nautilus/.test(n)) return "folder"
+                if (/spotify|music|itunes|vlc|player|winamp/.test(n)) return "music"
+                if (/notepad|word|notes|obsidian|onenote|writer/.test(n)) return "doc"
+                if (/settings|control panel/.test(n)) return "settings"
+                if (/mail|outlook|thunderbird/.test(n)) return "chat"
+                return "app"
+            }
+
+            Glyph {
                 anchors.centerIn: parent
-                text: (item.modelData.name || "?").charAt(0).toUpperCase()
-                color: Theme.text
-                font.family: Theme.font
-                font.pixelSize: Math.round(parent.height * 0.5)
-                font.weight: Font.Bold
+                name: parent.kind
+                size: Math.round(parent.height * 0.52)
+                stroke: Math.max(1.4, parent.height / 22)
+                color: item.hovered ? Theme.ink : Theme.inkSoft
             }
         }
     }
