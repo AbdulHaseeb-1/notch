@@ -81,6 +81,19 @@ class BuddyProvider : public QObject
     // Streaming (SSE) replies: streamText is the answer text of the model
     // turn in flight, updated live (coalesced to ~25 fps, secrets redacted).
     Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
+    // Computer use with Anthropic's own tool definitions (the computer toolset
+    // or, for older models, computer_20251124 / computer_20250124) instead of
+    // Noch's function-style look-alike. Only the Anthropic provider can use
+    // them; anything else always gets the look-alike.
+    Q_PROPERTY(bool officialComputerTools READ officialComputerTools WRITE setOfficialComputerTools NOTIFY agentConfigChanged)
+    // Screenshot detail for computer use: "sharp" (up to 1920x1080, lossless)
+    // or "standard" (1280x800, JPEG).
+    Q_PROPERTY(QString computerDetail READ computerDetail WRITE setComputerDetail NOTIFY agentConfigChanged)
+    // Tool rounds per task (each round may hold several actions).
+    Q_PROPERTY(int maxSteps READ maxSteps WRITE setMaxSteps NOTIFY agentConfigChanged)
+    // Which computer tool the next request uses: "toolset", "computer_20251124",
+    // "computer_20250124" or "custom".
+    Q_PROPERTY(QString computerToolMode READ computerToolMode NOTIFY agentConfigChanged)
     // Agent cursor / edge glow / control HUD state for computer use.
     Q_PROPERTY(ComputerUse *computer READ computer CONSTANT)
     Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
@@ -157,6 +170,19 @@ public:
     bool streaming() const { return m_streamingNow; }
     bool handoffs() const { return m_handoffs; }
     void setHandoffs(bool on);
+    bool officialComputerTools() const { return m_officialComputer; }
+    void setOfficialComputerTools(bool on);
+    QString computerDetail() const { return m_computerDetail; }
+    void setComputerDetail(const QString &d);
+    int maxSteps() const { return m_maxSteps; }
+    void setMaxSteps(int n);
+    // The tool-version ladder. A model starts at the newest version it
+    // accepts; a 400 that names the computer tool steps down one rung.
+    enum class ComputerMode { Toolset = 0, V20251124 = 1, V20250124 = 2, Custom = 3 };
+    static ComputerMode computerModeForModel(const QString &model);
+    static QString computerModeName(ComputerMode m);
+    ComputerMode computerMode() const;
+    QString computerToolMode() const { return computerModeName(computerMode()); }
     QString activeAgent() const { return m_activeAgent; }
     QString activeAgentTitle() const;
     // Specialist registry (static): id -> title, icon, allowed tools, instructions.
@@ -235,6 +261,7 @@ private:
         QString name;
         QJsonObject input;
         int stepIndex = -1;
+        QString toolsetName;   // set when the model called a toolset member (e.g. left_click of "computer")
     };
 
     struct ToolOutcome {
@@ -242,6 +269,8 @@ private:
         QString name;
         QString output;
         QString imageBase64;
+        QString imageMediaType;
+        QString toolsetName;   // echoed on the tool_result of a toolset member
         bool isError = false;
     };
 
@@ -296,6 +325,11 @@ private:
     int m_continuations = 0;
     bool m_truncated = false;
     int m_outputTokenLimit = 8192;   // Anthropic max_tokens; lowered if the model rejects it
+    bool m_officialComputer = true;
+    QString m_computerDetail = QStringLiteral("sharp");
+    int m_maxSteps = 40;
+    int m_computerFallback = 0;      // rungs the 400 fallback has stepped down; reset with the model
+    bool m_computerBatchFailed = false;   // an action in this turn's batch failed: the rest are not run
 
     QVariantMap m_responseMeta;
     QVariantList m_agentTodos;
@@ -369,7 +403,12 @@ private:
     void emitFinal(const QString &text);
     void processNextToolCall();
     void finishCurrentToolCall(const PendingToolCall &call, const QString &output,
-                               const QString &imageBase64, bool isError);
+                               const QString &imageBase64, bool isError,
+                               const QString &imageMediaType = QString());
+    void applyComputerProfile() const;
+    void addBetaHeaders(QNetworkRequest &request, const QJsonObject &payload) const;
+    bool historyHasComputerToolUse() const;
+    static bool mentionsComputerTool(const QString &error);
     void updateResponseMeta();
     void addCitation(const QString &title, const QString &url);
 

@@ -116,7 +116,7 @@ private slots:
                 in["coordinate"] = QJsonArray{ 10, 20 };
             if (n == "type")
                 in["text"] = "hello";
-            if (n == "key")
+            if (n == "key" || n == "hold_key")
                 in["text"] = "ctrl+s";
             if (n == "zoom")
                 in["region"] = QJsonArray{ 0, 0, 100, 100 };
@@ -124,7 +124,8 @@ private slots:
             QVERIFY2(p.valid(), qPrintable(n + ": " + p.error));
             QCOMPARE(p.name, n);
         }
-        QCOMPARE(cu::actionNames().size(), 14);
+        // The 17 members of Anthropic's computer toolset.
+        QCOMPARE(cu::actionNames().size(), 17);
         QVERIFY(cu::isInputAction(Action::LeftClick));
         QVERIFY(!cu::isInputAction(Action::Zoom));
     }
@@ -160,7 +161,10 @@ private slots:
         const QSize as(1280, 800);
         QCOMPARE(cu::parseAction(act("scroll", { { "scroll_amount", 500 } }), as).scrollAmount, cu::kMaxScrollAmount);
         QCOMPARE(cu::parseAction(act("scroll", { { "scroll_amount", -3 } }), as).scrollAmount, 1);
-        QCOMPARE(cu::parseAction(act("wait", { { "duration", 60 } }), as).duration, 8.0);
+        const cu::ParsedAction longWait = cu::parseAction(act("wait", { { "duration", 60 } }), as);
+        QCOMPARE(longWait.duration, cu::kMaxWaitSeconds);
+        QVERIFY(longWait.durationClamped);
+        QVERIFY(!cu::parseAction(act("wait", { { "duration", 2 } }), as).durationClamped);
         const cu::ParsedAction z = cu::parseAction(act("zoom", { { "region", QJsonArray{ 300, 200, 100, 100 } } }), as);
         QVERIFY(z.valid());
         QCOMPARE(z.region.topLeft(), QPoint(100, 100));   // normalised
@@ -352,6 +356,292 @@ private slots:
                       [&](const ComputerUse::Result &r) { r.isError ? ++errors : ++ok; });
         QTRY_COMPARE(ok + errors, 3);
         QCOMPARE(errors, 1);
+    }
+
+    // ---- the official toolset's extra members and parameters -----------------
+
+    void toolsetModifierKeysOnClicksDragsAndScrolls() {
+        const QSize as(1280, 800);
+        const cu::ParsedAction shiftClick = cu::parseAction(
+            act("left_click", { { "coordinate", QJsonArray{ 5, 5 } }, { "text", "Shift" } }), as);
+        QVERIFY(shiftClick.valid());
+        QCOMPARE(shiftClick.modifiers, QStringList{ "shift" });
+        const cu::ParsedAction combo = cu::parseAction(
+            act("scroll", { { "text", "ctrl+shift" }, { "scroll_direction", "up" } }), as);
+        QCOMPARE(combo.modifiers, (QStringList{ "ctrl", "shift" }));
+        // Aliases and duplicates collapse.
+        QCOMPARE(cu::parseAction(act("left_click", { { "text", "control+ctl" } }), as).modifiers, QStringList{ "ctrl" });
+        // `text` on a click holds modifiers only: a letter is a mistake, not a key press.
+        const cu::ParsedAction bad = cu::parseAction(act("left_click", { { "text", "a" } }), as);
+        QVERIFY(!bad.valid());
+        QVERIFY(bad.error.contains("modifier"));
+        QVERIFY(cu::parseAction(act("left_click"), as).modifiers.isEmpty());
+    }
+
+    void keyRepeatIsParsedAndClamped() {
+        const QSize as(1280, 800);
+        QCOMPARE(cu::parseAction(act("key", { { "text", "Down" } }), as).repeat, 1);
+        QCOMPARE(cu::parseAction(act("key", { { "text", "Down" }, { "repeat", 7 } }), as).repeat, 7);
+        QCOMPARE(cu::parseAction(act("key", { { "text", "Down" }, { "repeat", 5000 } }), as).repeat, cu::kMaxKeyRepeat);
+        QCOMPARE(cu::parseAction(act("key", { { "text", "Down" }, { "repeat", 0 } }), as).repeat, 1);
+    }
+
+    void holdKeyNeedsAKeyAndClampsDuration() {
+        const QSize as(1280, 800);
+        QVERIFY(!cu::parseAction(act("hold_key"), as).valid());
+        const cu::ParsedAction h = cu::parseAction(act("hold_key", { { "text", "shift" }, { "duration", 300 } }), as);
+        QVERIFY(h.valid());
+        QCOMPARE(h.duration, cu::kMaxWaitSeconds);
+        QVERIFY(h.durationClamped);
+        QVERIFY(h.isInput());
+    }
+
+    void keyRepeatPressesThatManyTimes() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        ComputerUse::Result res;
+        bool done = false;
+        c.perform(cu::parseAction(act("key", { { "text", "Down" }, { "repeat", 3 } }), c.mapper().agentSize()),
+                  [&](const ComputerUse::Result &r) { res = r; done = true; });
+        QTRY_VERIFY(done);
+        QCOMPARE(sim->log, (QStringList{ "key down", "key down", "key down" }));
+        QVERIFY(res.text.contains("3 times"));
+    }
+
+    void modifiersAreHeldAroundTheClickAndReleased() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        bool done = false;
+        c.perform(cu::parseAction(act("left_click", { { "coordinate", QJsonArray{ 100, 100 } }, { "text", "ctrl+shift" } }),
+                                  QSize(1280, 800)),
+                  [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(done);
+        // Down in order, the click, then up in reverse: no modifier is left stuck.
+        QCOMPARE(sim->log, (QStringList{ "move 100,100", "keydown ctrl", "keydown shift", "left down", "left up",
+                                          "keyup shift", "keyup ctrl" }));
+    }
+
+    void modifiersWrapDragsToo() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        bool done = false;
+        c.perform(cu::parseAction(act("left_click_drag", { { "start_coordinate", QJsonArray{ 10, 10 } },
+                                                           { "coordinate", QJsonArray{ 50, 50 } }, { "text", "alt" } }),
+                                  QSize(1280, 800)),
+                  [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(done);
+        QCOMPARE(sim->log, (QStringList{ "move 10,10", "keydown alt", "left down", "move 50,50", "left up", "keyup alt" }));
+    }
+
+    void mouseDownThenUpHoldsTheButtonBetweenActions() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        c.rateLimiter() = RateLimiter(100, 60000, 0);   // several actions in a row, with no 80 ms gap
+        ComputerUse::Result res;
+        bool done = false;
+        const auto run = [&](const cu::ParsedAction &a) {
+            done = false;
+            c.perform(a, [&](const ComputerUse::Result &r) { res = r; done = true; });
+            QTRY_VERIFY(done);
+        };
+        run(cu::parseAction(act("mouse_move", { { "coordinate", QJsonArray{ 20, 20 } } }), QSize(1280, 800)));
+        run(cu::parseAction(act("left_mouse_down"), QSize(1280, 800)));
+        QVERIFY(!res.isError);
+        QVERIFY(c.dragging());
+        run(cu::parseAction(act("mouse_move", { { "coordinate", QJsonArray{ 220, 90 } } }), QSize(1280, 800)));
+        run(cu::parseAction(act("left_mouse_up"), QSize(1280, 800)));
+        QVERIFY(!c.dragging());
+        QCOMPARE(sim->log, (QStringList{ "move 20,20", "left down", "move 220,90", "left up" }));
+        // A second down while the first is held is an error the model can act on.
+        run(cu::parseAction(act("left_mouse_down"), QSize(1280, 800)));
+        run(cu::parseAction(act("left_mouse_down"), QSize(1280, 800)));
+        QVERIFY(res.isError);
+        QVERIFY(res.text.contains("already held"));
+    }
+
+    void heldMouseButtonIsReleasedWhenTheRunEnds() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        bool done = false;
+        c.perform(cu::parseAction(act("left_mouse_down"), QSize(1280, 800)), [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(done);
+        QVERIFY(sim->log.contains("left down"));
+        c.end();   // Stop, or the run simply finished without a left_mouse_up
+        QCOMPARE(sim->log.last(), QStringLiteral("left up"));
+    }
+
+    void takingOverReleasesAHeldButton() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        bool done = false;
+        c.perform(cu::parseAction(act("left_mouse_down"), QSize(1280, 800)), [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(done);
+        sim->onUserInput(false);
+        QTRY_VERIFY(c.paused());
+        QCOMPARE(sim->log.last(), QStringLiteral("left up"));   // the user's hand is on the mouse now
+    }
+
+    void holdKeyPressesWaitsAndReleases() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        ComputerUse::Result res;
+        bool done = false;
+        c.perform(cu::parseAction(act("hold_key", { { "text", "shift" }, { "duration", 0.2 } }), c.mapper().agentSize()),
+                  [&](const ComputerUse::Result &r) { res = r; done = true; });
+        QTRY_VERIFY(done);
+        QCOMPARE(sim->log, (QStringList{ "keydown shift", "keyup shift" }));
+        QVERIFY(res.text.contains("Held shift"));
+    }
+
+    void stopWhileAKeyIsHeldReleasesIt() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(1);
+        bool done = false;
+        c.perform(cu::parseAction(act("hold_key", { { "text", "ctrl" }, { "duration", 5 } }), c.mapper().agentSize()),
+                  [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(sim->log.contains("keydown ctrl"));
+        c.end();
+        QVERIFY(sim->log.contains("keyup ctrl"));
+        QVERIFY(!done);   // the cut-off action never reports back
+    }
+
+    void longWaitIsLimitedAndSaysSo() {
+        const cu::ParsedAction w = cu::parseAction(act("wait", { { "duration", 120 } }), QSize(1280, 800));
+        QVERIFY(w.valid());
+        QVERIFY(w.durationClamped);
+    }
+
+    // ---- screenshot size limits ----------------------------------------------
+
+    void standardLimitsAreTheOldBox() {
+        for (const QSize logical : { QSize(1920, 1080), QSize(2560, 1600), QSize(1366, 768), QSize(1080, 1920), QSize(800, 600) })
+            QCOMPARE(cu::fitToLimits(logical, cu::standardLimits()), CoordinateMapper::agentSizeFor(logical));
+    }
+
+    void sharpLimitsStayInsideWhatTheApiAccepts_data() {
+        QTest::addColumn<QSize>("logical");
+        QTest::newRow("fhd") << QSize(1920, 1080);
+        QTest::newRow("qhd") << QSize(2560, 1440);
+        QTest::newRow("4k") << QSize(3840, 2160);
+        QTest::newRow("16:10") << QSize(2560, 1600);
+        QTest::newRow("ultrawide") << QSize(5120, 1440);
+        QTest::newRow("portrait") << QSize(1080, 1920);
+        QTest::newRow("small") << QSize(1024, 768);
+    }
+    void sharpLimitsStayInsideWhatTheApiAccepts() {
+        QFETCH(QSize, logical);
+        const QSize s = cu::fitToLimits(logical, cu::sharpLimits());
+        // The toolset rejects (not downscales) anything over 2576 px or 4784 visual tokens.
+        QVERIFY2(qMax(s.width(), s.height()) <= 2576, qPrintable(QString::number(s.width())));
+        QVERIFY(cu::visualTokens(s) <= 4784);
+        // The docs advise against going above 1920x1080.
+        QVERIFY(qMax(s.width(), s.height()) <= 1920);
+        // Aspect ratio survives (within a pixel of rounding).
+        const double want = double(logical.width()) / logical.height();
+        QVERIFY(qAbs(double(s.width()) / s.height() - want) < 0.02);
+        QVERIFY(s.width() <= logical.width() && s.height() <= logical.height());   // never upscales
+    }
+
+    void sharpIsSharperThanStandardOnFullHd() {
+        const QSize std = cu::fitToLimits(QSize(1920, 1080), cu::standardLimits());
+        const QSize sharp = cu::fitToLimits(QSize(1920, 1080), cu::sharpLimits());
+        QCOMPARE(std, QSize(1280, 720));
+        QCOMPARE(sharp, QSize(1920, 1080));
+    }
+
+    void portraitScreensKeepTheirOrientationInSharpMode() {
+        const QSize s = cu::fitToLimits(QSize(1080, 1920), cu::sharpLimits());
+        QCOMPARE(s, QSize(1080, 1920));
+    }
+
+    void legacyLimitsMatchOlderModels_data() {
+        QTest::addColumn<QSize>("logical");
+        QTest::newRow("fhd") << QSize(1920, 1080);
+        QTest::newRow("4k") << QSize(3840, 2160);
+        QTest::newRow("16:10") << QSize(2560, 1600);
+        QTest::newRow("laptop") << QSize(1707, 1067);
+    }
+    void legacyLimitsMatchOlderModels() {
+        QFETCH(QSize, logical);
+        const QSize s = cu::fitToLimits(logical, cu::legacySharpLimits());
+        QVERIFY(qMax(s.width(), s.height()) <= 1568);
+        QVERIFY(qint64(s.width()) * s.height() <= 1150000);
+        QVERIFY(qint64(s.width()) * s.height() > 1000000 || logical.width() * logical.height() <= 1150000);   // uses the budget
+    }
+
+    void mapperUsesItsLimits() {
+        CoordinateMapper m;
+        m.setScreens({ screen(QRect(0, 0, 1920, 1080), 1.0, QPoint(), "s", true) });
+        QCOMPARE(m.agentSize(), QSize(1280, 720));
+        m.setLimits(cu::sharpLimits());
+        QCOMPARE(m.agentSize(), QSize(1920, 1080));
+        // Clicks land on the same real pixel at either size.
+        QCOMPARE(m.agentToLogical(QPoint(960, 540)), QPoint(960, 540));
+        m.setLimits(cu::standardLimits());
+        QCOMPARE(m.agentToLogical(QPoint(640, 360)), QPoint(960, 540));
+    }
+
+    void losslessScreenshotsArePng() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        ComputerUse::Result shot;
+        bool done = false;
+        const auto take = [&] {
+            done = false;
+            c.perform(cu::parseAction(act("screenshot"), c.mapper().agentSize()),
+                      [&](const ComputerUse::Result &r) { shot = r; done = true; });
+            QTRY_VERIFY(done);
+        };
+        take();
+        QCOMPARE(shot.mediaType, QStringLiteral("image/jpeg"));
+        c.setLosslessScreenshots(true);
+        take();
+        QCOMPARE(shot.mediaType, QStringLiteral("image/png"));
+        QImage img;
+        QVERIFY(img.loadFromData(QByteArray::fromBase64(shot.imageBase64.toLatin1()), "PNG"));
+        QCOMPARE(img.size(), QSize(1280, 800));
     }
 };
 

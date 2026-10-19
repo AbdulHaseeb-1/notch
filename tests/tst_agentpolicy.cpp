@@ -299,7 +299,8 @@ private slots:
         for (const char *a : { "screenshot", "zoom", "cursor_position", "wait" })
             QCOMPARE(p.evaluate("computer", cuAct(a)).verdict, V::Allow);
         for (const char *a : { "mouse_move", "left_click", "right_click", "double_click", "triple_click",
-                               "middle_click", "left_click_drag", "scroll", "type", "key" })
+                               "middle_click", "left_click_drag", "scroll", "type", "key",
+                               "left_mouse_down", "left_mouse_up", "hold_key" })
             QCOMPARE(p.evaluate("computer", cuAct(a)).verdict, V::Ask);
         QCOMPARE(p.evaluate("computer", cuAct("hover")).verdict, V::Deny);   // unknown action
         QCOMPARE(p.evaluate("computer", cuAct("type", QByteArray(2001, 'a').constData())).verdict, V::Deny);
@@ -308,6 +309,8 @@ private slots:
         QCOMPARE(p.evaluate("computer", cuAct("zoom")).verdict, V::Allow);
         QCOMPARE(p.evaluate("computer", cuAct("left_click")).verdict, V::Deny);
         QCOMPARE(p.evaluate("computer", cuAct("key", "ctrl+s")).verdict, V::Deny);
+        for (const char *a : { "left_mouse_down", "left_mouse_up", "hold_key" })
+            QCOMPARE(p.evaluate("computer", cuAct(a, "shift")).verdict, V::Deny);
         // Trusted: input runs ...
         p.setMode(AgentPolicy::Mode::Bypass);
         QCOMPARE(p.evaluate("computer", cuAct("left_click")).verdict, V::Allow);
@@ -322,6 +325,10 @@ private slots:
         QCOMPARE(p.evaluate("computer", cuAct("type", "Quarterly report draft")).verdict, V::Allow);
         QCOMPARE(p.evaluate("computer", cuAct("key", "ctrl+s")).verdict, V::Allow);
         QCOMPARE(p.evaluate("computer", cuAct("left_click")).verdict, V::Allow);
+        // Holding a system key is pressing it: same scrutiny as `key`.
+        QCOMPARE(p.evaluate("computer", cuAct("hold_key", "super")).verdict, V::Ask);
+        QCOMPARE(p.evaluate("computer", cuAct("hold_key", "shift")).verdict, V::Allow);
+        QCOMPARE(p.evaluate("computer", cuAct("left_mouse_down")).verdict, V::Allow);
         // Session grant behaves like Trusted for this.
         p.setMode(AgentPolicy::Mode::Default);
         p.allowForSession("computer");

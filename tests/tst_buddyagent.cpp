@@ -31,6 +31,7 @@ class FakeAnthropic : public QObject
 public:
     QList<Reply> queue;
     QList<QJsonObject> requests;
+    QList<QByteArray> headers;   // raw HTTP header block of each request, lower-cased
 
     bool start() {
         connect(&server, &QTcpServer::newConnection, this, &FakeAnthropic::onConnection);
@@ -60,6 +61,7 @@ private:
                 len = line.mid(15).trimmed().toInt();
         if (buf.size() < headerEnd + 4 + len)
             return;
+        headers.append(buf.left(headerEnd).toLower());
         requests.append(QJsonDocument::fromJson(buf.mid(headerEnd + 4, len)).object());
         buffers.remove(s);
         const Reply r = queue.isEmpty() ? Reply{ 500, "{\"error\":{\"message\":\"no reply queued\"}}" }
@@ -102,6 +104,47 @@ QByteArray toolUse(const QString &id, const QString &command)
         { "usage", QJsonObject{ { "input_tokens", 100 }, { "output_tokens", 10 }, { "cache_read_input_tokens", 80 } } },
     };
     return QJsonDocument(msg).toJson(QJsonDocument::Compact);
+}
+
+// One assistant reply holding several tool_use blocks (a batch of actions).
+// A block with a toolset_name is a computer toolset member call.
+struct Call { QString id; QString name; QJsonObject input; QString toolset = {}; };
+
+QByteArray toolUseBatch(const QList<Call> &calls)
+{
+    QJsonArray content;
+    for (const Call &c : calls) {
+        QJsonObject b{ { "type", "tool_use" }, { "id", c.id }, { "name", c.name }, { "input", c.input } };
+        if (!c.toolset.isEmpty())
+            b["toolset_name"] = c.toolset;
+        content.append(b);
+    }
+    QJsonObject msg{
+        { "id", "msg_batch" }, { "type", "message" }, { "role", "assistant" }, { "content", content },
+        { "stop_reason", "tool_use" }, { "usage", QJsonObject{ { "input_tokens", 10 }, { "output_tokens", 5 } } },
+    };
+    return QJsonDocument(msg).toJson(QJsonDocument::Compact);
+}
+
+Call member(const QString &id, const QString &name, const QJsonObject &input = {})
+{
+    return Call{ id, name, input, QStringLiteral("computer") };
+}
+
+QByteArray apiError(const QString &message)
+{
+    return QJsonDocument(QJsonObject{ { "type", "error" },
+        { "error", QJsonObject{ { "type", "invalid_request_error" }, { "message", message } } } }).toJson(QJsonDocument::Compact);
+}
+
+QJsonObject computerTool(const QJsonObject &req)
+{
+    for (const QJsonValue &t : req.value("tools").toArray()) {
+        const QString type = t.toObject().value("type").toString();
+        if (type.startsWith("computer_") || t.toObject().value("name").toString() == "computer")
+            return t.toObject();
+    }
+    return {};
 }
 
 QByteArray toolUseNamed(const QString &id, const QString &name, const QJsonObject &input)
@@ -811,12 +854,12 @@ private slots:
     }
 
     // ---- computer use (simulated backend, pinned 1920x1080 @150% layout) ----
-    SimulatedBackend *useSimulatedComputer() {
+    SimulatedBackend *useSimulatedComputer(QSize logical = QSize(1280, 720), qreal dpr = 1.5) {
         bp->setAllowComputer(true);
         bp->setComputerAutoScreens(false);
         ScreenInfo s;
-        s.geometry = QRect(0, 0, 1280, 720);   // 1920x1080 physical at 150 %
-        s.dpr = 1.5;
+        s.geometry = QRect(QPoint(0, 0), logical);   // default: 1920x1080 physical at 150 %
+        s.dpr = dpr;
         s.name = "sim";
         s.primary = true;
         bp->computer()->mapper().setScreens({ s });
@@ -824,11 +867,14 @@ private slots:
         sim->useRealScreens = false;
         bp->computer()->setBackend(std::unique_ptr<ComputerBackend>(sim));
         bp->computer()->setAnimationScale(0);
+        // Batches run actions back to back; the 80 ms gap is for real mice.
+        bp->computer()->rateLimiter() = RateLimiter(100, 60000, 0);
         return sim;
     }
 
     void computerToolSchemaIsClaudeStyle() {
         useSimulatedComputer();
+        bp->setOfficialComputerTools(false);   // Noch's own function-style definition
         fake->queue = { { 200, text("ok") } };
         QSignalSpy ready(bp, &BuddyProvider::responseReady);
         bp->sendMessage("hi");
@@ -935,6 +981,380 @@ private slots:
         QCOMPARE(ready.size(), 0);
         QCOMPARE(fake->requests.size(), 1);
         QVERIFY(!bp->computer()->active());
+    }
+
+
+    // ---- Anthropic's official computer tools ---------------------------------
+
+    void officialToolsetIsDeclaredWithoutSchemaOrBetaHeader() {
+        useSimulatedComputer();
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        const QJsonObject t = computerTool(fake->requests.first());
+        QCOMPARE(t.value("type").toString(), QStringLiteral("computer_toolset_20260801"));
+        // The model is trained on the toolset: no name, schema or display size is sent.
+        QVERIFY(!t.contains("name"));
+        QVERIFY(!t.contains("input_schema"));
+        QVERIFY(!t.contains("display_width_px"));
+        QVERIFY(!fake->headers.first().contains("anthropic-beta"));
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("toolset"));
+        QVERIFY(toolNames(fake->requests.first()).contains("bash"));   // the other tools are untouched
+        // The system prompt tells the model it may batch actions.
+        QVERIFY(systemText(fake->requests.first()).contains("several actions in one reply"));
+    }
+
+    void olderModelsGetTheirToolVersionAndBetaHeader_data() {
+        QTest::addColumn<QString>("model");
+        QTest::addColumn<QString>("type");
+        QTest::addColumn<QString>("beta");
+        QTest::addColumn<bool>("zoom");
+        QTest::newRow("opus 4.5") << "claude-opus-4-5-20251101" << "computer_20251124" << "computer-use-2025-11-24" << true;
+        QTest::newRow("sonnet 4.6") << "claude-sonnet-4-6" << "computer_20251124" << "computer-use-2025-11-24" << true;
+        QTest::newRow("opus 4.7 dotted") << "claude-opus-4.7" << "computer_20251124" << "computer-use-2025-11-24" << true;
+        QTest::newRow("sonnet 4.5") << "claude-sonnet-4-5-20250929" << "computer_20250124" << "computer-use-2025-01-24" << false;
+        QTest::newRow("haiku 4.5") << "claude-haiku-4-5" << "computer_20250124" << "computer-use-2025-01-24" << false;
+        QTest::newRow("sonnet 4 dated") << "claude-sonnet-4-20250514" << "computer_20250124" << "computer-use-2025-01-24" << false;
+        QTest::newRow("opus 5.5") << "claude-opus-5-5" << "computer_toolset_20260801" << "" << false;
+        QTest::newRow("sonnet 5.5") << "claude-sonnet-5-5" << "computer_toolset_20260801" << "" << false;
+        QTest::newRow("opus 4.8") << "claude-opus-4-8" << "computer_toolset_20260801" << "" << false;
+        QTest::newRow("unknown future model") << "claude-fable-9" << "computer_toolset_20260801" << "" << false;
+    }
+    void olderModelsGetTheirToolVersionAndBetaHeader() {
+        QFETCH(QString, model);
+        QFETCH(QString, type);
+        QFETCH(QString, beta);
+        QFETCH(bool, zoom);
+        useSimulatedComputer();
+        bp->setModel(model);
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        const QJsonObject t = computerTool(fake->requests.first());
+        QCOMPARE(t.value("type").toString(), type);
+        if (beta.isEmpty()) {
+            QVERIFY(!fake->headers.first().contains("anthropic-beta"));
+        } else {
+            QVERIFY2(fake->headers.first().contains("anthropic-beta: " + beta.toLatin1()), fake->headers.first().constData());
+            QCOMPARE(t.value("name").toString(), QStringLiteral("computer"));
+            QCOMPARE(t.value("display_width_px").toInt(), bp->computer()->mapper().agentSize().width());
+            QCOMPARE(t.value("display_height_px").toInt(), bp->computer()->mapper().agentSize().height());
+            QCOMPARE(t.value("enable_zoom").toBool(), zoom);
+        }
+    }
+
+    void officialToolsCanBeSwitchedOffForTheLookAlike() {
+        useSimulatedComputer();
+        bp->setOfficialComputerTools(false);
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        const QJsonObject t = computerTool(fake->requests.first());
+        QVERIFY(!t.contains("type"));
+        QVERIFY(t.contains("input_schema"));
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("custom"));
+        QVERIFY(!fake->headers.first().contains("anthropic-beta"));
+    }
+
+    void otherProvidersAlwaysGetTheLookAlike() {
+        useSimulatedComputer();
+        bp->setProvider("openai");
+        bp->setApiBase(fake->base() + "/v1");
+        fake->queue = { { 200, openAiText("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("custom"));
+        QStringList names;
+        for (const QJsonValue &t : fake->requests.first().value("tools").toArray())
+            names << t.toObject().value("function").toObject().value("name").toString();
+        QVERIFY(names.contains("computer"));
+        QVERIFY(!QJsonDocument(fake->requests.first()).toJson().contains("computer_toolset"));
+    }
+
+    void toolsetMemberCallRunsAndTheResultEchoesToolsetName() {
+        SimulatedBackend *sim = useSimulatedComputer();
+        fake->queue = { { 200, toolUseBatch({ member("c1", "left_click", { { "coordinate", QJsonArray{ 640, 360 } } }) }) },
+                        { 200, text("clicked") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("click the middle");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        // Policy and UI see one `computer` tool with an action, whatever the wire format.
+        QCOMPARE(bp->pendingApproval().value("tool").toString(), QStringLiteral("computer"));
+        QVERIFY(sim->log.isEmpty());
+        bp->resolveApproval(true, false);
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(sim->log, (QStringList{ "move 640,360", "left down", "left up" }));
+        const QJsonArray results = lastToolResults(fake->requests);
+        QCOMPARE(results.size(), 1);
+        const QJsonObject r = results.first().toObject();
+        QCOMPARE(r.value("tool_use_id").toString(), QStringLiteral("c1"));
+        QCOMPARE(r.value("toolset_name").toString(), QStringLiteral("computer"));
+        QVERIFY(!r.value("is_error").toBool());
+        // The assistant turn is replayed exactly as the model wrote it.
+        const QJsonArray msgs = fake->requests.last().value("messages").toArray();
+        const QJsonObject asst = msgs.at(msgs.size() - 2).toObject().value("content").toArray().first().toObject();
+        QCOMPARE(asst.value("name").toString(), QStringLiteral("left_click"));
+        QCOMPARE(asst.value("toolset_name").toString(), QStringLiteral("computer"));
+        QVERIFY(!asst.value("input").toObject().contains("action"));
+    }
+
+    void screenshotIsSharpPngByDefaultAndJpegWhenStandard() {
+        useSimulatedComputer(QSize(2560, 1440), 1.0);
+        fake->queue = { { 200, toolUseBatch({ member("s1", "screenshot") }) }, { 200, text("seen") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look");
+        QVERIFY(ready.wait(8000));
+        auto image = [](const QJsonObject &req) {
+            const QJsonObject last = req.value("messages").toArray().last().toObject();
+            const QJsonArray content = last.value("content").toArray().first().toObject().value("content").toArray();
+            for (const QJsonValue &v : content)
+                if (v.toObject().value("type").toString() == "image")
+                    return v.toObject().value("source").toObject();
+            return QJsonObject();
+        };
+        QJsonObject src = image(fake->requests.last());
+        QCOMPARE(src.value("media_type").toString(), QStringLiteral("image/png"));
+        QImage img;
+        QVERIFY(img.loadFromData(QByteArray::fromBase64(src.value("data").toString().toLatin1()), "PNG"));
+        QCOMPARE(img.size(), QSize(1920, 1080));   // sharp: up to 1920x1080 on a 2560x1440 screen
+        QVERIFY(lastToolResults(fake->requests).first().toObject().value("content").toArray().first()
+                    .toObject().value("text").toString().contains("1920x1080 coordinate space"));
+
+        bp->setComputerDetail("standard");
+        fake->requests.clear();
+        fake->queue = { { 200, toolUseBatch({ member("s2", "screenshot") }) }, { 200, text("seen again") } };
+        QSignalSpy ready2(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look again");
+        QVERIFY(ready2.wait(8000));
+        src = image(fake->requests.last());
+        QCOMPARE(src.value("media_type").toString(), QStringLiteral("image/jpeg"));
+        QVERIFY(img.loadFromData(QByteArray::fromBase64(src.value("data").toString().toLatin1()), "JPEG"));
+        QCOMPARE(img.size(), QSize(1280, 720));
+    }
+
+    void batchRunsEveryActionInOrderAndAnswersEachOne() {
+        SimulatedBackend *sim = useSimulatedComputer(QSize(1280, 720), 1.0);
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseBatch({ member("a", "mouse_move", { { "coordinate", QJsonArray{ 10, 10 } } }),
+                                              member("b", "left_click", { { "coordinate", QJsonArray{ 20, 20 } }, { "text", "shift" } }),
+                                              member("c", "key", { { "text", "ctrl+s" } }),
+                                              member("d", "screenshot") }) },
+                        { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("do four things");
+        QVERIFY(ready.wait(10000));
+        QCOMPARE(fake->requests.size(), 2);   // one round trip for the whole batch
+        QCOMPARE(sim->log, (QStringList{ "move 10,10", "move 20,20", "keydown shift", "left down", "left up", "keyup shift",
+                                          "key ctrl+s" }));
+        const QJsonArray results = lastToolResults(fake->requests);
+        QCOMPARE(results.size(), 4);
+        const QStringList ids{ "a", "b", "c", "d" };
+        for (int i = 0; i < 4; ++i) {
+            QCOMPARE(results.at(i).toObject().value("tool_use_id").toString(), ids.at(i));
+            QCOMPARE(results.at(i).toObject().value("toolset_name").toString(), QStringLiteral("computer"));
+            QVERIFY(!results.at(i).toObject().value("is_error").toBool());
+        }
+        QCOMPARE(bp->toolSteps().size(), 4);
+    }
+
+    void aDeclinedActionHaltsTheRestOfTheBatch() {
+        SimulatedBackend *sim = useSimulatedComputer(QSize(1280, 720), 1.0);
+        fake->queue = { { 200, toolUseBatch({ member("c1", "left_click", { { "coordinate", QJsonArray{ 100, 100 } } }),
+                                              member("c2", "type", { { "text", "hello" } }),
+                                              member("c3", "screenshot") }) },
+                        { 200, text("re-planned") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("click then type");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        bp->resolveApproval(false);
+        QVERIFY(ready.wait(8000));
+        QVERIFY(bp->pendingApproval().isEmpty());   // the typing was never even offered
+        QVERIFY(sim->log.isEmpty());
+        const QJsonArray results = lastToolResults(fake->requests);
+        QCOMPARE(results.size(), 3);   // every tool_use is answered, or the API rejects the request
+        QVERIFY(results.at(0).toObject().value("content").toString().contains("declined"));
+        for (int i = 1; i < 3; ++i) {
+            const QJsonObject r = results.at(i).toObject();
+            QVERIFY(r.value("is_error").toBool());
+            QCOMPARE(r.value("content").toString(),
+                     QStringLiteral("Not executed: an earlier computer action in this turn failed."));
+            QCOMPARE(r.value("toolset_name").toString(), QStringLiteral("computer"));
+        }
+        const QVariantList steps = bp->toolSteps();
+        QCOMPARE(steps.at(0).toMap().value("status").toString(), QStringLiteral("denied"));
+        QCOMPARE(steps.at(1).toMap().value("status").toString(), QStringLiteral("skipped"));
+        QCOMPARE(steps.at(2).toMap().value("status").toString(), QStringLiteral("skipped"));
+    }
+
+    void aFailedActionHaltsLaterComputerCallsButNotOtherTools() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        bp->setPermissionMode("bypass");
+        // The first click is outside the screenshot, so it fails; bash is not part of the batch.
+        fake->queue = { { 200, toolUseBatch({ member("c1", "left_click", { { "coordinate", QJsonArray{ 9000, 9000 } } }),
+                                              Call{ "b1", "bash", QJsonObject{ { "command", "echo still-runs" } } },
+                                              member("c2", "screenshot") }) },
+                        { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("go");
+        QVERIFY(ready.wait(8000));
+        const QJsonArray results = lastToolResults(fake->requests);
+        QCOMPARE(results.size(), 3);
+        QVERIFY(results.at(0).toObject().value("is_error").toBool());
+        QVERIFY(!results.at(1).toObject().value("is_error").toBool());
+        QVERIFY(results.at(1).toObject().value("content").toString().contains("still-runs"));
+        QVERIFY(results.at(2).toObject().value("is_error").toBool());
+        QVERIFY(results.at(2).toObject().value("content").toString().startsWith("Not executed"));
+    }
+
+    void batchHaltResetsEveryTurn() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseBatch({ member("c1", "left_click", { { "coordinate", QJsonArray{ 9000, 9000 } } }) }) },
+                        { 200, toolUseBatch({ member("c2", "screenshot") }) },
+                        { 200, text("fine") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("go");
+        QVERIFY(ready.wait(8000));
+        // The failure of turn 1 must not leak into turn 2.
+        QCOMPARE(bp->toolSteps().at(0).toMap().value("status").toString(), QStringLiteral("error"));
+        QCOMPARE(bp->toolSteps().at(1).toMap().value("status").toString(), QStringLiteral("done"));
+    }
+
+    void holdKeyOfASystemKeyAsksAfterTheScreenWasRead() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseBatch({ member("s", "screenshot"), member("h", "hold_key", { { "text", "super" }, { "duration", 1 } }) }) },
+                        { 200, text("asked") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("go");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        QCOMPARE(bp->pendingApproval().value("rule").toString(), QStringLiteral("ask:screen-tainted"));
+        bp->resolveApproval(false);
+        QVERIFY(ready.wait(8000));
+    }
+
+    void toolVersionErrorsStepDownTheLadder() {
+        useSimulatedComputer();
+        fake->queue = {
+            { 400, apiError("tools.1: Input tag 'computer_toolset_20260801' found using 'type' does not match any of the expected tags") },
+            { 400, apiError("tool type computer_20251124 is not available for this model") },
+            { 400, apiError("Unexpected value(s) `computer-use-2025-01-24` for the `anthropic-beta` header") },
+            { 200, text("ok via the look-alike") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 4);
+        QCOMPARE(computerTool(fake->requests.at(0)).value("type").toString(), QStringLiteral("computer_toolset_20260801"));
+        QCOMPARE(computerTool(fake->requests.at(1)).value("type").toString(), QStringLiteral("computer_20251124"));
+        QVERIFY(fake->headers.at(1).contains("anthropic-beta: computer-use-2025-11-24"));
+        QCOMPARE(computerTool(fake->requests.at(2)).value("type").toString(), QStringLiteral("computer_20250124"));
+        QVERIFY(fake->headers.at(2).contains("anthropic-beta: computer-use-2025-01-24"));
+        QVERIFY(computerTool(fake->requests.at(3)).contains("input_schema"));
+        QVERIFY(!fake->headers.at(3).contains("anthropic-beta"));
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("custom"));
+        // Sticky for the rest of the session ...
+        fake->queue = { { 200, text("again") } };
+        QSignalSpy ready2(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi again");
+        QVERIFY(ready2.wait(5000));
+        QVERIFY(computerTool(fake->requests.last()).contains("input_schema"));
+        // ... until the model changes.
+        bp->setModel("claude-other");
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("toolset"));
+    }
+
+    void unrelatedBadRequestsDoNotStepDown() {
+        useSimulatedComputer();
+        fake->queue = { { 400, apiError("messages: roles must alternate between \"user\" and \"assistant\"") } };
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("hi");
+        QTRY_COMPARE_WITH_TIMEOUT(err.size(), 1, 5000);
+        QCOMPARE(fake->requests.size(), 1);
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("toolset"));
+    }
+
+    void fallbackNeverRewritesHistoryHoldingToolsetCalls() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        fake->queue = { { 200, toolUseBatch({ member("s", "screenshot") }) },
+                        { 400, apiError("computer tool: something about the toolset") } };
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("look");
+        QTRY_COMPARE_WITH_TIMEOUT(err.size(), 1, 8000);
+        QCOMPARE(fake->requests.size(), 2);   // no silent re-send in a different tool format
+        QCOMPARE(bp->computerToolMode(), QStringLiteral("toolset"));
+    }
+
+    void streamedToolsetMemberKeepsItsToolsetName() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        QList<QByteArray> sse;
+        sse << sseEvent("message_start", { { "type", "message_start" }, { "message", QJsonObject{
+                  { "id", "msg_t" }, { "type", "message" }, { "role", "assistant" }, { "content", QJsonArray() },
+                  { "usage", QJsonObject{ { "input_tokens", 20 } } } } } })
+            << sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 0 },
+                  { "content_block", QJsonObject{ { "type", "tool_use" }, { "id", "s1" }, { "name", "screenshot" },
+                                                  { "toolset_name", "computer" }, { "input", QJsonObject() } } } })
+            << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+                  { "delta", QJsonObject{ { "type", "input_json_delta" }, { "partial_json", "{}" } } } })
+            << sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 0 } })
+            << sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", "tool_use" } } },
+                                           { "usage", QJsonObject{ { "output_tokens", 4 } } } })
+            << sseEvent("message_stop", { { "type", "message_stop" } });
+        fake->queue = { Reply{ 200, {}, sse, 20 }, { 200, text("saw it") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(lastToolResults(fake->requests).first().toObject().value("toolset_name").toString(), QStringLiteral("computer"));
+        QVERIFY(!lastToolResults(fake->requests).first().toObject().value("is_error").toBool());
+    }
+
+    void legacyComputerCallsStillWorkInToolsetMode() {
+        // A gateway or an older conversation may still send {name: "computer", input: {action}}.
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        fake->queue = { { 200, toolUseNamed("s1", "computer", QJsonObject{ { "action", "screenshot" } }) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look");
+        QVERIFY(ready.wait(8000));
+        const QJsonObject r = lastToolResults(fake->requests).first().toObject();
+        QVERIFY(!r.contains("toolset_name"));   // only toolset members echo it
+        QVERIFY(!r.value("is_error").toBool());
+    }
+
+    void defaultStepLimitIsFortyAndConfigurable() {
+        QCOMPARE(bp->maxSteps(), 40);
+        bp->setMaxSteps(1);
+        QCOMPARE(bp->maxSteps(), 4);
+        bp->setMaxSteps(1000);
+        QCOMPARE(bp->maxSteps(), 100);
+        bp->setMaxSteps(40);
+    }
+
+    void moreThanTwelveRoundsNowComplete() {
+        for (int i = 0; i < 15; ++i)
+            fake->queue.append({ 200, toolUse(QStringLiteral("r%1").arg(i), QStringLiteral("echo round%1").arg(i)) });
+        fake->queue.append({ 200, text("all done") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("long task");
+        QVERIFY(ready.wait(30000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("all done"));
+        QCOMPARE(fake->requests.size(), 16);
+    }
+
+    void stepLimitStopsTheRunAndSaysSo() {
+        bp->setMaxSteps(5);
+        for (int i = 0; i < 8; ++i)
+            fake->queue.append({ 200, toolUse(QStringLiteral("r%1").arg(i), QStringLiteral("echo round%1").arg(i)) });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("endless");
+        QVERIFY(ready.wait(15000));
+        QVERIFY2(ready.first().first().toString().contains("Stopped after 5 tool rounds"), qPrintable(ready.first().first().toString()));
+        QCOMPARE(fake->requests.size(), 6);
+        QCOMPARE(bp->responseMeta().value("maxSteps").toInt(), 5);
     }
 
     void cancelDuringApprovalStopsRun() {

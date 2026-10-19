@@ -1257,7 +1257,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
                         QStringLiteral("Plan mode cannot click or type on your screen."));
         static const QStringList known{
             "mouse_move", "left_click", "right_click", "middle_click", "double_click", "triple_click",
-            "left_click_drag", "scroll", "type", "key" };
+            "left_click_drag", "scroll", "type", "key", "left_mouse_down", "left_mouse_up", "hold_key" };
         if (!known.contains(action.trimmed().toLower()))
             return deny(QStringLiteral("deny:computer-action"),
                         QStringLiteral("Unknown computer action '%1'.").arg(action.left(40)));
@@ -1277,7 +1277,8 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
                                "reg\\s+(add|delete)|schtasks|net\\s+user|set-mppreference)\\b)"
                                "|(-enc(odedcommand)?\\s)|(\\|\\s*(sh|bash|iex)\\b)|(rm\\s+-rf)|(del\\s+/[sfq])|(format\\s+[a-z]:)"),
                 QRegularExpression::CaseInsensitiveOption);
-            const bool riskyKey = action == QLatin1String("key") && riskyKeys.contains(t.simplified().remove(QLatin1Char(' ')));
+            const bool riskyKey = (action == QLatin1String("key") || action == QLatin1String("hold_key"))
+                && riskyKeys.contains(t.simplified().remove(QLatin1Char(' ')));
             const bool shellText = action == QLatin1String("type") && shellRx.match(text).hasMatch();
             if (riskyKey || shellText)
                 return ask(QStringLiteral("ask:screen-tainted"),
