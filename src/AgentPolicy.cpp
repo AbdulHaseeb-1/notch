@@ -1362,7 +1362,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
     }
 
     // Sandboxed or read-only tools.
-    if (tool == QLatin1String("memory") || tool == QLatin1String("todo_write")
+    if (tool == QLatin1String("memory") || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
             || tool == QLatin1String("tool_search") || tool.startsWith(QLatin1String("tool_search_tool"))
             || tool == QLatin1String("advisor") || tool.startsWith(QLatin1String("advisor_")))
         return allow(QStringLiteral("safe-tool"));

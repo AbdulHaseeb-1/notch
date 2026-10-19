@@ -19,6 +19,7 @@
 #include "AgentPolicy.h"
 #include "ComputerUse.h"
 #include "StreamAccumulator.h"
+#include "UserQuestions.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
 // Anthropic Agent SDK / Computer Use multi-turn tool loop across all providers:
@@ -70,6 +71,8 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowToolSearch READ allowToolSearch WRITE setAllowToolSearch NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowAdvisor READ allowAdvisor WRITE setAllowAdvisor NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowTodoTask READ allowTodoTask WRITE setAllowTodoTask NOTIFY agentConfigChanged)
+    // Clarifying questions: Buddy may pause to ask a multiple-choice question.
+    Q_PROPERTY(bool allowAskUser READ allowAskUser WRITE setAllowAskUser NOTIFY agentConfigChanged)
 
     // Live tool-execution telemetry & Anthropic Agent SDK response metadata for the UI
     // Permission mode: "default" | "acceptEdits" | "plan" | "bypass".
@@ -106,6 +109,9 @@ class BuddyProvider : public QObject
     // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
     // badge, icon, title, detail, reason, rule, secondsLeft }.
     Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
+    // Non-empty while Buddy waits for answers: { id, stepIndex, title, secondsLeft,
+    // questions: [{ question, header, multiSelect, options: [{ label, description }] }] }.
+    Q_PROPERTY(QVariantMap pendingQuestion READ pendingQuestion NOTIFY pendingQuestionChanged)
 
     Q_PROPERTY(QVariantList toolSteps READ toolSteps NOTIFY toolStepsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
@@ -155,6 +161,8 @@ public:
     void setAllowAdvisor(bool on);
     bool allowTodoTask() const { return m_allowTodoTask; }
     void setAllowTodoTask(bool on);
+    bool allowAskUser() const { return m_allowAskUser; }
+    void setAllowAskUser(bool on);
 
     QString permissionMode() const { return m_permissionMode; }
     void setPermissionMode(const QString &m);
@@ -197,6 +205,7 @@ public:
     static const QList<AgentProfile> &agentProfiles();
     static const AgentProfile *profileFor(const QString &id);
     QVariantMap pendingApproval() const { return m_pendingApproval; }
+    QVariantMap pendingQuestion() const { return m_pendingQuestion; }
 
     QVariantList toolSteps() const { return m_toolSteps; }
     QString activeTool() const { return m_activeTool; }
@@ -219,6 +228,13 @@ public:
     // Answer the pending approval: approve (once, or for the rest of the
     // session with always=true) or reject; a reject tells the model why.
     Q_INVOKABLE void resolveApproval(bool approve, bool always = false);
+    // Answer the pending question: one { selected: [option index, ...], other: "text" }
+    // per question. Ignored until every question has an answer.
+    Q_INVOKABLE void answerQuestion(const QVariantList &answers);
+    // "Skip": the model is told to carry on with its best assumption.
+    Q_INVOKABLE void skipQuestion();
+    // How long a question waits before it is skipped (tests shorten it).
+    void setQuestionTimeoutSeconds(int seconds) { m_questionTimeoutSec = qMax(1, seconds); }
     Q_INVOKABLE QString tracesPath() const;
     Q_INVOKABLE QString effectiveWorkspace() const;
     void syncPrivatePaths();
@@ -241,6 +257,7 @@ signals:
     void responseMetaChanged();
     void agentTodosChanged();
     void pendingApprovalChanged();
+    void pendingQuestionChanged();
     void streamTextChanged();
     void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
@@ -291,6 +308,7 @@ private:
     bool m_allowToolSearch = true;
     bool m_allowAdvisor = true;
     bool m_allowTodoTask = true;
+    bool m_allowAskUser = true;
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
@@ -301,6 +319,13 @@ private:
     QVariantMap m_pendingApproval;
     QTimer m_approvalTimer;      // 1 s ticks for the countdown, auto-deny at 0
     int m_approvalSecondsLeft = 0;
+    // The question being asked (ask_user_question) and its countdown.
+    QVariantMap m_pendingQuestion;
+    QList<uq::Question> m_questions;
+    PendingToolCall m_questionCall;
+    QTimer m_questionTimer;
+    int m_questionSecondsLeft = 0;
+    int m_questionTimeoutSec = 300;
     QTimer m_retryTimer;         // backoff before re-sending a failed model call
     int m_retryCount = 0;
     QHash<QString, int> m_callRepeats;  // name+input fingerprint -> count in this run
@@ -396,7 +421,10 @@ private:
     void gateAndExecute(const PendingToolCall &call);
     void setStepFields(int stepIndex, const QVariantMap &fields);
     void clearPendingApproval();
+    void clearPendingQuestion();
     void onApprovalTick();
+    void onQuestionTick();
+    void executeAskUserTool(const PendingToolCall &call);
     int compactContext();
     bool scheduleRetry(int status, QNetworkReply::NetworkError err, const QByteArray &retryAfter);
     QString guardToolOutput(const PendingToolCall &call, const QString &output, bool *flagged) const;

@@ -367,6 +367,8 @@ BuddyProvider::BuddyProvider(QObject *parent)
 
     m_approvalTimer.setInterval(1000);
     connect(&m_approvalTimer, &QTimer::timeout, this, &BuddyProvider::onApprovalTick);
+    m_questionTimer.setInterval(1000);
+    connect(&m_questionTimer, &QTimer::timeout, this, &BuddyProvider::onQuestionTick);
     m_streamEmitTimer.setSingleShot(true);
     m_streamEmitTimer.setInterval(40);
     connect(&m_streamEmitTimer, &QTimer::timeout, this, [this] { emit streamTextChanged(); });
@@ -567,14 +569,14 @@ const QList<BuddyProvider::AgentProfile> &BuddyProvider::agentProfiles()
           QString() },
         { QStringLiteral("research"), QStringLiteral("Research specialist"), QStringLiteral("globe"),
           { QStringLiteral("web_search"), QStringLiteral("web_fetch"), QStringLiteral("memory"),
-            QStringLiteral("todo_write"), QStringLiteral("advisor") },
+            QStringLiteral("todo_write"), QStringLiteral("advisor"), QStringLiteral("ask_user_question") },
           QStringLiteral("Questions that need current information from the web, comparing sources, or a cited summary."),
           QStringLiteral("You are Noch's research specialist. Search first, open the two or three most relevant sources, "
                          "cross-check claims, and answer with short inline citations (site names). Say when sources "
                          "disagree or are thin. You cannot run commands, edit files or control the computer.") },
         { QStringLiteral("code"), QStringLiteral("Code specialist"), QStringLiteral("code-search"),
           { QStringLiteral("glob_grep"), QStringLiteral("str_replace_editor"), QStringLiteral("bash"),
-            QStringLiteral("todo_write"), QStringLiteral("memory") },
+            QStringLiteral("todo_write"), QStringLiteral("memory"), QStringLiteral("ask_user_question") },
           QStringLiteral("Reading, searching, editing or building code and project files."),
           QStringLiteral("You are Noch's code specialist. Locate code with glob_grep before reading, view files before "
                          "editing, make the smallest correct change with exact str_replace edits, and verify with a "
@@ -839,6 +841,113 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
     setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("denied") } });
 }
 
+// ---- clarifying questions -------------------------------------------------------
+// ask_user_question pauses the run like an approval does, but it is not a
+// permission: nothing is allowed or denied, the user simply answers.
+
+void BuddyProvider::clearPendingQuestion()
+{
+    m_questionTimer.stop();
+    m_questionSecondsLeft = 0;
+    m_questions.clear();
+    if (m_pendingQuestion.isEmpty())
+        return;
+    m_pendingQuestion.clear();
+    emit pendingQuestionChanged();
+}
+
+void BuddyProvider::executeAskUserTool(const PendingToolCall &call)
+{
+    const uq::Parsed parsed = uq::parse(call.input);
+    if (!parsed.valid()) {
+        finishCurrentToolCall(call, QStringLiteral("Error: %1 Fix the call and ask again, or make a reasonable assumption.")
+                                        .arg(parsed.error), QString(), true);
+        return;
+    }
+    m_questionCall = call;
+    m_questions = parsed.questions;
+    m_questionSecondsLeft = m_questionTimeoutSec;
+    // What is shown is masked for secrets; the answers refer to options by index.
+    QVariantList shown = uq::toVariant(parsed.questions);
+    for (QVariant &qv : shown) {
+        QVariantMap q = qv.toMap();
+        q[QStringLiteral("question")] = redact(q.value(QStringLiteral("question")).toString());
+        QVariantList opts = q.value(QStringLiteral("options")).toList();
+        for (QVariant &ov : opts) {
+            QVariantMap o = ov.toMap();
+            o[QStringLiteral("label")] = redact(o.value(QStringLiteral("label")).toString());
+            o[QStringLiteral("description")] = redact(o.value(QStringLiteral("description")).toString());
+            ov = o;
+        }
+        q[QStringLiteral("options")] = opts;
+        qv = q;
+    }
+    m_pendingQuestion = QVariantMap{
+        { QStringLiteral("id"), call.id },
+        { QStringLiteral("stepIndex"), call.stepIndex },
+        { QStringLiteral("title"), redact(uq::summary(parsed.questions)) },
+        { QStringLiteral("secondsLeft"), m_questionSecondsLeft },
+        { QStringLiteral("questions"), shown },
+    };
+    setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("pending") },
+                                    { QStringLiteral("policyNote"), tr("Waiting for your answer") } });
+    setActiveToolState(call.name, tr("Waiting for your answer…"));
+    m_questionTimer.start();
+    emit pendingQuestionChanged();
+}
+
+void BuddyProvider::onQuestionTick()
+{
+    if (m_pendingQuestion.isEmpty()) {
+        m_questionTimer.stop();
+        return;
+    }
+    if (--m_questionSecondsLeft <= 0) {
+        const PendingToolCall call = m_questionCall;
+        clearPendingQuestion();
+        addSpan(QJsonObject{ { "type", "question" }, { "decision", "timeout" } });
+        setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("No answer — skipped") } });
+        m_stepStatusOverride = QStringLiteral("skipped");
+        finishCurrentToolCall(call,
+            QStringLiteral("The user did not answer in time. Continue with your best assumption and say what you "
+                           "assumed, or finish without it."), QString(), false);
+        return;
+    }
+    m_pendingQuestion[QStringLiteral("secondsLeft")] = m_questionSecondsLeft;
+    emit pendingQuestionChanged();
+}
+
+void BuddyProvider::answerQuestion(const QVariantList &answers)
+{
+    if (m_pendingQuestion.isEmpty())
+        return;
+    const QList<uq::Answer> normalized = uq::normalizeAnswers(m_questions, answers);
+    if (!uq::complete(normalized))
+        return;   // the card keeps Send disabled until every question has an answer
+    const PendingToolCall call = m_questionCall;
+    const QString text = uq::formatAnswers(m_questions, normalized);
+    const int count = int(m_questions.size());
+    clearPendingQuestion();
+    addSpan(QJsonObject{ { "type", "question" }, { "decision", "answered" }, { "questions", count } });
+    setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("You answered") } });
+    setActiveToolState(call.name, tr("Got your answer…"));
+    finishCurrentToolCall(call, text, QString(), false);
+}
+
+void BuddyProvider::skipQuestion()
+{
+    if (m_pendingQuestion.isEmpty())
+        return;
+    const PendingToolCall call = m_questionCall;
+    clearPendingQuestion();
+    addSpan(QJsonObject{ { "type", "question" }, { "decision", "skipped" } });
+    setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("You skipped this") } });
+    m_stepStatusOverride = QStringLiteral("skipped");
+    finishCurrentToolCall(call,
+        QStringLiteral("The user skipped the question. Continue with your best assumption and say what you assumed, "
+                       "or finish without it. Do not ask the same question again."), QString(), false);
+}
+
 // ---- tracing ----------------------------------------------------------------
 // One JSON file per run, modelled on OpenAI Agents SDK traces: a trace holds
 // spans for every model call, tool call, approval and guardrail decision.
@@ -1028,6 +1137,14 @@ void BuddyProvider::setAllowTodoTask(bool on)
     emit agentConfigChanged();
 }
 
+void BuddyProvider::setAllowAskUser(bool on)
+{
+    if (m_allowAskUser == on)
+        return;
+    m_allowAskUser = on;
+    emit agentConfigChanged();
+}
+
 QString BuddyProvider::memoriesPath() const
 {
     QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -1062,6 +1179,7 @@ void BuddyProvider::clearToolSteps()
     m_cachedTokens = 0;
     m_deniedCalls = 0;
     clearPendingApproval();
+    clearPendingQuestion();
     if (hadData) {
         emit toolStepsChanged();
         emit responseMetaChanged();
@@ -1141,7 +1259,7 @@ bool BuddyProvider::hasAnyToolEnabled() const
     return m_agentMode && !m_toolsDisabledForTurn
            && (m_allowBash || m_allowComputer || m_allowEditor || m_allowCodeSearch
                || m_allowMemory || m_allowWebSearch || m_allowToolSearch
-               || m_allowAdvisor || m_allowTodoTask);
+               || m_allowAdvisor || m_allowTodoTask || m_allowAskUser);
 }
 
 bool BuddyProvider::needsApiKey() const
@@ -1233,6 +1351,11 @@ QString BuddyProvider::systemPrompt() const
         caps << QStringLiteral("- `advisor`: Anthropic Advisor tool (`task`, `question`, `focus`: `\"architecture\"` | `\"debugging\"` | `\"security\"` | `\"verification\"` | `\"planning\"`, `draft_plan`). Consult the high-reasoning Advisor strategy before complex multi-step actions or to verify a solution.");
     if (m_allowTodoTask)
         caps << QStringLiteral("- `todo_write`: Anthropic Task & Desktop Context tool (`action`: `\"todos\"` to create/update a live multi-step checklist in the UI, `\"clipboard_read\"` / `\"clipboard_write\"` to access the Windows clipboard, or `\"system_info\"` to inspect OS/CPU/RAM/processes).");
+
+    if (m_allowAskUser)
+        caps << QStringLiteral("- `ask_user_question`: Ask the user 1-4 quick multiple-choice questions (2-4 options each; they can always type their own answer). "
+                               "Use it when a request is ambiguous or the choice is theirs (which file, which format, which of several approaches) and you cannot find out with the other tools. "
+                               "Do not ask what you can look up, do not ask more than you need, and carry on once they answer.");
 
     QString safety = QStringLiteral(
         "\n\nSafety rules (enforced by Noch, not optional):\n"
@@ -1701,6 +1824,15 @@ QJsonArray BuddyProvider::buildToolsArray() const
             QStringLiteral("todo_write"),
             QStringLiteral("Anthropic Agent SDK TodoWrite & Desktop Context tool: manage a live structured task checklist, read/write the Windows clipboard, or inspect system info."),
             schema));
+    }
+
+    if (m_allowAskUser) {
+        tools.append(wrapSchema(
+            QStringLiteral("ask_user_question"),
+            QStringLiteral("Ask the user one to four multiple-choice questions when the request is ambiguous or the decision is theirs. "
+                           "They tap an option or type their own answer; their choices come back as the result. Do not use it for "
+                           "things you can find out with other tools, and do not ask more than you need."),
+            uq::inputSchema()));
     }
 
     return tools;
@@ -2277,6 +2409,7 @@ void BuddyProvider::cancel()
     m_retryTimer.stop();
     m_policy.setTainted(false);
     clearPendingApproval();
+    clearPendingQuestion();
     m_streamConsumed = false;
     m_continuedText.clear();
     setStreamText(QString(), false);
@@ -2343,6 +2476,8 @@ QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input
             return QStringLiteral("keyboard");
         return QStringLiteral("computer");
     }
+    if (name == QLatin1String("ask_user_question"))
+        return QStringLiteral("chat");
     if (name == QLatin1String("str_replace_editor"))
         return QStringLiteral("doc");
     if (name == QLatin1String("glob_grep"))
@@ -2377,6 +2512,8 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
         return QStringLiteral("SHELL");
     if (name == QLatin1String("computer"))
         return QStringLiteral("COMPUTER");
+    if (name == QLatin1String("ask_user_question"))
+        return QStringLiteral("QUESTION");
     if (name == QLatin1String("str_replace_editor"))
         return QStringLiteral("EDITOR");
     if (name == QLatin1String("glob_grep")) {
@@ -2467,6 +2604,8 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
             return QStringLiteral("Wait %1s").arg(input.value(QStringLiteral("duration")).toDouble(1.0), 0, 'f', 1);
         return act;
     }
+    if (name == QLatin1String("ask_user_question"))
+        return uq::summary(uq::parse(input).questions);
     if (name == QLatin1String("str_replace_editor")) {
         const QString cmd = input.value(QStringLiteral("command")).toString();
         const QString path = QFileInfo(input.value(QStringLiteral("path")).toString()).fileName();
@@ -2549,6 +2688,16 @@ QString BuddyProvider::detailForToolCall(const QString &name, const QJsonObject 
         if (c.size() >= 2)
             return QStringLiteral("action: %1  coord: [%2, %3]").arg(act).arg(c.at(0).toInt()).arg(c.at(1).toInt());
         return QStringLiteral("action: %1").arg(act);
+    }
+    if (name == QLatin1String("ask_user_question")) {
+        QStringList lines;
+        for (const uq::Question &q : uq::parse(input).questions) {
+            QStringList labels;
+            for (const uq::Option &o : q.options)
+                labels << o.label;
+            lines << QStringLiteral("%1 [%2]").arg(q.question, labels.join(QStringLiteral(" | ")));
+        }
+        return lines.join(QLatin1Char('\n'));
     }
     if (name == QLatin1String("str_replace_editor"))
         return QStringLiteral("%1  path: %2").arg(input.value(QStringLiteral("command")).toString(),
@@ -3253,6 +3402,12 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
             return;
         }
         executeTodoTaskTool(call);
+    } else if (call.name == QLatin1String("ask_user_question")) {
+        if (!m_allowAskUser) {
+            finishCurrentToolCall(call, QStringLiteral("Error: asking questions is disabled in Settings > Buddy. Make a reasonable assumption and say so."), QString(), true);
+            return;
+        }
+        executeAskUserTool(call);
     } else {
         finishCurrentToolCall(call, QStringLiteral("Error: unknown tool '%1'.").arg(call.name), QString(), true);
     }
@@ -3260,6 +3415,13 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
 
 QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QString &output, bool *flagged) const
 {
+    // What the user typed or tapped is theirs: no fence, no injection check
+    // (they may well write "ignore the previous option"). Only secrets are masked.
+    if (call.name == QLatin1String("ask_user_question")) {
+        if (flagged)
+            *flagged = false;
+        return redact(output);
+    }
     bool invisible = false;
     QString out = AgentPolicy::stripInvisible(output, &invisible);
     out = redact(out);

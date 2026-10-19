@@ -286,6 +286,19 @@ private slots:
         QCOMPARE(AgentPolicy::modeToString(AgentPolicy::Mode::Plan), QString("plan"));
     }
 
+    void askingTheUserIsAlwaysAllowed()
+    {
+        // A question changes nothing on the machine, so no mode blocks it and none needs to ask first.
+        AgentPolicy p;
+        for (auto mode : { AgentPolicy::Mode::Default, AgentPolicy::Mode::AcceptEdits,
+                           AgentPolicy::Mode::Plan, AgentPolicy::Mode::Bypass }) {
+            p.setMode(mode);
+            QCOMPARE(p.evaluate("ask_user_question", QJsonObject{}).verdict, V::Allow);
+        }
+        p.setTainted(true);   // even after a possible prompt injection: it only ever shows the user a card
+        QCOMPARE(p.evaluate("ask_user_question", QJsonObject{}).verdict, V::Allow);
+    }
+
     void computerUseGating()
     {
         AgentPolicy p;
