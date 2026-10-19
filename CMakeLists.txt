@@ -193,10 +193,23 @@ set(NOCH_QML_FILES
     qml/panels/settings/SettingsGroupCard.qml
     qml/panels/settings/SettingsIconButton.qml
     qml/panels/settings/SettingsLabeledSlider.qml
+    qml/panels/settings/SettingsNotice.qml
+    qml/panels/settings/SettingsOptionTile.qml
+    qml/panels/settings/SettingsPage.qml
     qml/panels/settings/SettingsPillButton.qml
     qml/panels/settings/SettingsRingSwatch.qml
     qml/panels/settings/SettingsSectionHeader.qml
+    qml/panels/settings/SettingsSidebarItem.qml
     qml/panels/settings/SettingsToggleRow.qml
+
+    qml/panels/settings/pages/AgentPage.qml
+    qml/panels/settings/pages/AppsPage.qml
+    qml/panels/settings/pages/BuddyPage.qml
+    qml/panels/settings/pages/GeneralPage.qml
+    qml/panels/settings/pages/LookPage.qml
+    qml/panels/settings/pages/ModelPage.qml
+    qml/panels/settings/pages/SafetyPage.qml
+    qml/panels/settings/pages/VoicePage.qml
 
     qml/flyouts/HubFlyout.qml
     qml/flyouts/MusicFlyout.qml
@@ -219,6 +232,13 @@ set(NOCH_QML_FILES
     qml/buddy/components/BuddyMicButton.qml
     qml/buddy/components/BuddySendButton.qml
     qml/buddy/components/BuddyShot.qml
+
+    qml/buddy/fx/BuddyArcRing.qml
+    qml/buddy/fx/BuddyBlob.qml
+    qml/buddy/fx/BuddyGlow.qml
+    qml/buddy/fx/BuddyListenFx.qml
+    qml/buddy/fx/BuddyRing.qml
+    qml/buddy/fx/BuddySpeakFx.qml
 
     qml/agent/AgentControlOverlay.qml
     qml/agent/AgentCursor.qml

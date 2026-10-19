@@ -139,7 +139,7 @@ QtObject {
 
     // Panel widths: generous, but always clamped to the screen by the caller.
     readonly property int screenMargin: 24
-    readonly property int settingsWidth: 880
+    readonly property int settingsWidth: 960
     readonly property int hubWidth: 460
     readonly property int paletteWidth: 600
     readonly property int musicWidth: 400

@@ -38,6 +38,14 @@ Window {
         property bool suppressInFullscreen: true
         property bool buddyEnabled: true
         property bool buddySolidRing: true
+        // ---- Look & glow --------------------------------------------------------
+        property string buddyRingStyle: "neon"
+        property real buddyRingThickness: 1.0
+        property real buddyRingSpeed: 1.0
+        property real buddyGlowStrength: 0.6
+        property string buddyGlowMode: "bloom"
+        property bool buddyGlowAlways: false
+        property string buddyVoiceFx: "full"
         property real buddyX: -1
         property real buddyY: -1
         property string buddyPlan: ""
@@ -61,6 +69,7 @@ Window {
         property bool buddyCuShowCursor: true
         property bool buddyCuShowGlow: true
         property real buddyCuGlowIntensity: 0.6
+        property string buddyCuGlowStyle: "soft"
         property bool buddyAllowEditor: true
         property bool buddyAllowCodeSearch: true
         property bool buddyAllowMemory: true
@@ -120,7 +129,7 @@ Window {
         cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
         cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
         cfg.buddyApiBase, cfg.buddyModel, cfg.buddyTemperature,
-        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyAllowEditor,
+        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyCuGlowStyle, cfg.buddyRingStyle, cfg.buddyRingThickness, cfg.buddyRingSpeed, cfg.buddyGlowStrength, cfg.buddyGlowMode, cfg.buddyGlowAlways, cfg.buddyVoiceFx, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
         cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots,
@@ -1080,10 +1089,22 @@ Window {
         buddy.neonBurst(true)
     }
 
+    function previewBuddyFx(kind) {
+        if (cfg.buddyEnabled)
+            buddy.previewFx(kind)
+    }
+
     Buddy {
         id: buddy
         visible: cfg.buddyEnabled
         solidRing: cfg.buddySolidRing
+        ringStyle: cfg.buddyRingStyle
+        ringThickness: cfg.buddyRingThickness
+        ringSpeed: cfg.buddyRingSpeed
+        glowStrength: cfg.buddyGlowStrength
+        glowMode: cfg.buddyGlowMode
+        glowAlways: cfg.buddyGlowAlways
+        voiceFx: cfg.buddyVoiceFx
         motionPaused: root.fullscreenGuard || !visible
         s: root.s
         desktop: root.contentItem
@@ -1121,6 +1142,7 @@ Window {
     Binding { target: AgentControl; property: "showCursor"; value: cfg.buddyCuShowCursor }
     Binding { target: AgentControl; property: "showGlow"; value: cfg.buddyCuShowGlow }
     Binding { target: AgentControl; property: "glowIntensity"; value: cfg.buddyCuGlowIntensity }
+    Binding { target: AgentControl; property: "glowStyle"; value: cfg.buddyCuGlowStyle }
 
     // Buddy's cursor, the screen-edge glow and the control HUD while the
     // agent uses the computer. The HUD sits just under the notch.

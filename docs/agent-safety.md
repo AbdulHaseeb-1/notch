@@ -31,7 +31,7 @@ Modelled on the Claude Agent SDK permission flow
    Opaque commands (`bash -c`, `python -c`, encoded PowerShell, a variable as
    the program) always ask, even in Trusted mode, because the gate cannot see
    what they will run.
-5. **Permission mode** (Settings › Buddy › Safety & permissions):
+5. **Permission mode** (Settings › Safety):
 
    | Mode | Shell with side effects | File edits | Computer control |
    |---|---|---|---|
@@ -46,6 +46,14 @@ Modelled on the Claude Agent SDK permission flow
    `file://` and other schemes are denied. After a prompt-injection flag in
    the same run, Trusted mode and session grants stop auto-approving side
    effects until the next message.
+
+   **Auto-approve all permission requests** (Settings › Safety › Approvals) is the
+   one-switch way to get Trusted mode for every chat: it asks you to confirm
+   once, sets the mode to Trusted, and switching it off puts back the mode you
+   had before. It changes nothing else: the hard-deny rules above, opaque
+   commands, secrets files, private network addresses and the
+   prompt-injection pause all still ask or refuse, because they guard against
+   things no amount of trust in the model can cover.
 6. **Session grants.** *Always allow* on an approval card trusts that tool for
    the rest of the app session. Changing the mode clears every grant.
 7. **Unknown tools are denied.**

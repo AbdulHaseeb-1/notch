@@ -53,6 +53,15 @@ your apps, tucks itself away and drops back down when you need it.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
   focused). Esc or clicking elsewhere closes it. **Blur behind (beta)** blurs the desktop behind the
   glass (see below); it is off by default.
+  Settings has a sidebar of categories (General, Apps, Buddy, Look & glow,
+  Voice, AI model, Agent & tools, Safety) with a search box that narrows them
+  by what they contain (Ctrl + F), and Ctrl + Tab or Ctrl + 1..8 to move between them.
+- **Look & glow** - Buddy's ring comes in eight styles (Neon, Aurora, Comet, Orbit,
+  Beads, Pulse, Prism, Halo) with thickness, speed and colour, plus a coloured
+  glow or a pool of light under it. It shows when it is listening (a ribbon of
+  waves that follows your voice, rings of sound drawing in) and when it speaks (a
+  crown of bars and rings going out). The edge glow shown while Buddy controls the
+  computer has five styles. Everything is in Settings, Look & glow.
 - **Launch at startup** - the Settings page can add Noch to the Windows start-up
   list; it starts tucked, showing the sliver until you hover it.
 
@@ -157,7 +166,8 @@ imports and type names stay unchanged. `CMakeLists.txt` sets this up with
 | Area | Key entry points |
 | --- | --- |
 | Notch shell | `qml/Main.qml`, `qml/components/{Glass,Flyout,DockItem,StatusBlock}.qml` |
-| Settings | `qml/panels/SettingsPanel.qml`, `qml/panels/settings/*`, `qml/flyouts/SettingsFlyout.qml` |
+| Settings | `qml/panels/SettingsPanel.qml` (sidebar shell), `qml/panels/settings/*` (controls), `qml/panels/settings/pages/*` (one file per page), `qml/flyouts/SettingsFlyout.qml` |
+| Buddy ring, glow, listening and speaking | `qml/buddy/fx/*` |
 | Hub | `qml/panels/{HubPanel,FocusTimer,TimerView,TimerPill,ClipboardView}.qml` |
 | Music | `qml/panels/{MusicPanel,NowPlaying}.qml`, `qml/flyouts/MusicFlyout.qml` |
 | Palette | `qml/panels/PaletteCard.qml`, `qml/flyouts/PaletteFlyout.qml` |

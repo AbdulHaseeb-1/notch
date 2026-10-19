@@ -244,6 +244,8 @@ class ComputerUse : public QObject
     Q_PROPERTY(bool showCursor READ showCursor WRITE setShowCursor NOTIFY settingsChanged)
     Q_PROPERTY(bool showGlow READ showGlow WRITE setShowGlow NOTIFY settingsChanged)
     Q_PROPERTY(qreal glowIntensity READ glowIntensity WRITE setGlowIntensity NOTIFY settingsChanged)
+    // How the screen edge glows: soft | prism | pulse | chase | aurora
+    Q_PROPERTY(QString glowStyle READ glowStyle WRITE setGlowStyle NOTIFY settingsChanged)
 
 public:
     struct Result {
@@ -293,6 +295,8 @@ public:
     void setShowGlow(bool on);
     qreal glowIntensity() const { return m_glowIntensity; }
     void setGlowIntensity(qreal v);
+    QString glowStyle() const { return m_glowStyle; }
+    void setGlowStyle(const QString &style);
 
     // Agent session: begin() when the first action of a run starts, end()
     // when the run stops. end() drops anything still in flight.
@@ -369,4 +373,5 @@ private:
     bool m_showCursor = true;
     bool m_showGlow = true;
     qreal m_glowIntensity = 0.6;
+    QString m_glowStyle = QStringLiteral("soft");
 };

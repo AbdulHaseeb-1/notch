@@ -2,3 +2,10 @@ buddy/BuddyQuestionCard
 agent/ToolTraceBar
 panels/FocusTimer
 buddy/components/BuddyShot
+buddy/BuddyNeonRing
+buddy/fx/BuddyArcRing
+buddy/fx/BuddyBlob
+buddy/fx/BuddyGlow
+buddy/fx/BuddyRing
+buddy/fx/BuddyListenFx
+buddy/fx/BuddySpeakFx

@@ -6,6 +6,8 @@ Column {
     property string label: ""
     property real value: 0
     property int decimals: 2
+    // What to show on the right instead of the 0-1 value ("1.2x", "60%").
+    property string display: ""
     signal moved(real value)
     width: parent ? parent.width : 200
     spacing: 6
@@ -25,7 +27,7 @@ Column {
         Text {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: Number(ls.value).toFixed(ls.decimals)
+            text: ls.display.length > 0 ? ls.display : Number(ls.value).toFixed(ls.decimals)
             color: Theme.ink
             font.family: Theme.font
             font.pixelSize: Theme.fontSm

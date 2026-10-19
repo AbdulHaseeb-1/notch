@@ -100,6 +100,17 @@ void ComputerUse::setGlowIntensity(qreal v)
     emit settingsChanged();
 }
 
+void ComputerUse::setGlowStyle(const QString &style)
+{
+    static const QStringList known{ QStringLiteral("soft"), QStringLiteral("prism"), QStringLiteral("pulse"),
+                                    QStringLiteral("chase"), QStringLiteral("aurora") };
+    const QString v = known.contains(style) ? style : QStringLiteral("soft");
+    if (v == m_glowStyle)
+        return;
+    m_glowStyle = v;
+    emit settingsChanged();
+}
+
 void ComputerUse::begin()
 {
     if (m_active)
