@@ -5,8 +5,8 @@
 #include <QFile>
 #include <QTemporaryDir>
 
-#include "../src/AgentPolicy.h"
-#include "../src/RunJournal.h"
+#include "AgentPolicy.h"
+#include "RunJournal.h"
 
 namespace {
 

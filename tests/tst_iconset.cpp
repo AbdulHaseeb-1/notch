@@ -1,7 +1,7 @@
 // Every shipped SVG icon must parse into Shape path data.
 #include <QtTest>
 #include <QDir>
-#include "../src/IconSet.h"
+#include "IconSet.h"
 
 class TestIconSet : public QObject
 {

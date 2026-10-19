@@ -12,10 +12,10 @@
 #include <QPointer>
 #include <QTimer>
 
-#include "../src/BuddyProvider.h"
-#include "../src/ChatSessions.h"
-#include "../src/SessionLink.h"
-#include "../src/ComputerUse.h"
+#include "BuddyProvider.h"
+#include "ChatSessions.h"
+#include "SessionLink.h"
+#include "ComputerUse.h"
 
 namespace {
 

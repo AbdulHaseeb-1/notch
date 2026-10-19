@@ -1,12 +1,41 @@
+# Build trees
 build/
-build-verify/
-_backup_*/
+build-*/
+cmake-build-*/
+.artifacts/
+CMakeUserPresets.json
+
+# IDE / editor state
+.vs/
+.vscode/
+.idea/
 *.user
 *.autosave
 .qmake.stash
 Makefile
-CMakeUserPresets.json
+
+# Compiled artefacts
 *.o
 *.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.log
+
+# Local runtime output
+buddy-out.txt
+buddy-err.txt
+rt.txt
+ro.txt
+
+# Python tooling
 __pycache__/
 *.pyc
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini

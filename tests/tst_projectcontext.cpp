@@ -4,7 +4,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 
-#include "../src/ProjectContext.h"
+#include "ProjectContext.h"
 
 namespace {
 

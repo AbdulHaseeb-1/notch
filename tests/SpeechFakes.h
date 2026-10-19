@@ -9,8 +9,8 @@
 #include <QTimer>
 #include <QtMath>
 
-#include "../src/VoiceAudio.h"
-#include "../src/VoiceInput.h"
+#include "VoiceAudio.h"
+#include "VoiceInput.h"
 
 namespace {
 

@@ -19,91 +19,214 @@ qt_standard_project_setup()
 qt_policy(SET QTP0001 NEW)
 qt_policy(SET QTP0004 NEW)
 
-qt_add_executable(noch
+# Source folders are grouped by responsibility. Keep this list explicit so a
+# new file is a deliberate addition and stale files do not silently compile.
+set(NOCH_SOURCES
     src/main.cpp
-    src/OverlayController.cpp
-    src/OverlayController.h
-    src/DockController.cpp
-    src/DockController.h
-    src/AppIconProvider.cpp
-    src/AppIconProvider.h
-    src/MusicPlayer.cpp
-    src/MusicPlayer.h
-    src/GlassBackdrop.cpp
-    src/GlassBackdrop.h
-    src/RunningApps.cpp
-    src/RunningApps.h
-    src/Appearance.cpp
-    src/Appearance.h
-    src/AgentPolicy.cpp
-    src/StreamAccumulator.cpp
-    src/StreamAccumulator.h
-    src/AgentPolicy.h
-    src/IconSet.cpp
-    src/IconSet.h
-    src/QmlSingletons.h
-    src/BuddyProvider.cpp
-    src/BuddyProvider.h
-    src/UserQuestions.cpp
-    src/UserQuestions.h
-    src/RunJournal.cpp
-    src/RunJournal.h
-    src/SavedRules.cpp
-    src/SavedRules.h
-    src/ProjectContext.cpp
-    src/ProjectContext.h
-    src/ChatSessions.cpp
-    src/ChatSessions.h
-    src/SessionLink.cpp
-    src/SessionLink.h
-    src/SessionFormat.h
-    src/VoiceAudio.cpp
-    src/VoiceAudio.h
-    src/VoiceInput.cpp
-    src/VoiceInput.h
-    src/WakeWord.cpp
-    src/WakeWord.h
-    src/SpeechOut.cpp
-    src/SpeechOut.h
-    src/PushToTalkKey.cpp
-    src/PushToTalkKey.h
-    src/ComputerUse.cpp
-    src/ComputerUse.h
-    src/ComputerUseWin.cpp
-    src/BuddySfx.cpp
-    src/BuddySfx.h
-    src/ClipboardHistory.cpp
-    src/ClipboardHistory.h
-    src/WinRtAbi.h
-    src/SmtcMedia.cpp
-    src/SmtcMedia.h
-    src/MediaHub.cpp
-    src/MediaHub.h
-    src/AudioDevices.cpp
-    src/AudioDevices.h
-    src/Radios.cpp
-    src/Radios.h
-    src/NightLight.cpp
-    src/NightLight.h
-    src/PowerActions.cpp
-    src/PowerActions.h
-    src/FullscreenWatcher.cpp
-    src/FullscreenWatcher.h
-    src/GlobalHotkey.cpp
-    src/GlobalHotkey.h
-    src/Calc.h
-    src/AppSearch.cpp
-    src/AppSearch.h
-    src/ImageAlpha.h
-    src/ShapeRegion.h
+
+    src/agent/AgentPolicy.cpp
+    src/agent/AgentPolicyEvaluate.cpp
+    src/agent/AgentPolicy.h
+    src/agent/AgentPolicyInternal.h
+    src/agent/AgentPolicyRules.cpp
+    src/agent/AgentPolicySafety.cpp
+    src/agent/AgentPolicyShell.cpp
+    src/agent/BuddyProvider.cpp
+    src/agent/BuddyProviderConfig.cpp
+    src/agent/BuddyProvider.h
+    src/agent/BuddyProviderInternal.h
+    src/agent/BuddyProviderPrompts.cpp
+    src/agent/BuddyProviderProtocol.cpp
+    src/agent/BuddyProviderRun.cpp
+    src/agent/BuddyProviderStorage.cpp
+    src/agent/BuddyProviderTools.cpp
+    src/agent/BuddyProviderWeb.cpp
+    src/agent/ComputerUse.cpp
+    src/agent/ComputerUse.h
+    src/agent/ComputerUseActions.cpp
+    src/agent/ComputerUseCoordinates.cpp
+    src/agent/ComputerUseWin.cpp
+    src/agent/ProjectContext.cpp
+    src/agent/ProjectContext.h
+    src/agent/RunJournal.cpp
+    src/agent/RunJournal.h
+    src/agent/SavedRules.cpp
+    src/agent/SavedRules.h
+    src/agent/SessionLink.cpp
+    src/agent/SessionLink.h
+    src/agent/StreamAccumulator.cpp
+    src/agent/StreamAccumulator.h
+    src/agent/UserQuestions.cpp
+    src/agent/UserQuestions.h
+
+    src/app/QmlSingletons.h
+
+    src/chat/ChatSessions.cpp
+    src/chat/ChatSessions.h
+    src/chat/SessionFormat.h
+
+    src/common/ImageAlpha.h
+    src/common/ShapeRegion.h
+
+    src/desktop/AppIconProvider.cpp
+    src/desktop/AppIconProvider.h
+    src/desktop/AppSearch.cpp
+    src/desktop/AppSearch.h
+    src/desktop/Calc.h
+    src/desktop/ClipboardHistory.cpp
+    src/desktop/ClipboardHistory.h
+    src/desktop/DockController.cpp
+    src/desktop/DockController.h
+    src/desktop/IconSet.cpp
+    src/desktop/IconSet.h
+    src/desktop/RunningApps.cpp
+    src/desktop/RunningApps.h
+
+    src/media/AudioDevices.cpp
+    src/media/AudioDevices.h
+    src/media/MediaHub.cpp
+    src/media/MediaHub.h
+    src/media/MusicPlayer.cpp
+    src/media/MusicPlayer.h
+    src/media/Radios.cpp
+    src/media/Radios.h
+    src/media/SmtcMedia.cpp
+    src/media/SmtcMedia.h
+
+    src/platform/Appearance.cpp
+    src/platform/Appearance.h
+    src/platform/FullscreenWatcher.cpp
+    src/platform/FullscreenWatcher.h
+    src/platform/GlassBackdrop.cpp
+    src/platform/GlassBackdrop.h
+    src/platform/GlobalHotkey.cpp
+    src/platform/GlobalHotkey.h
+    src/platform/NightLight.cpp
+    src/platform/NightLight.h
+    src/platform/OverlayController.cpp
+    src/platform/OverlayController.h
+    src/platform/PowerActions.cpp
+    src/platform/PowerActions.h
+    src/platform/WinRtAbi.h
+
+    src/voice/BuddySfx.cpp
+    src/voice/BuddySfx.h
+    src/voice/PushToTalkKey.cpp
+    src/voice/PushToTalkKey.h
+    src/voice/SpeechOut.cpp
+    src/voice/SpeechOut.h
+    src/voice/VoiceAudio.cpp
+    src/voice/VoiceAudio.h
+    src/voice/VoiceInput.cpp
+    src/voice/VoiceInput.h
+    src/voice/WakeWord.cpp
+    src/voice/WakeWord.h
 )
+qt_add_executable(noch ${NOCH_SOURCES})
+
+set(NOCH_SOURCE_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/agent
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/chat
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/desktop
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/media
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/voice
+)
+add_library(noch_includes INTERFACE)
+target_include_directories(noch_includes INTERFACE ${NOCH_SOURCE_INCLUDE_DIRS})
 
 target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
 
 # The QML files are compiled into the executable's resources, so the built
 # noch.exe is self-contained - no qml/ folder needed beside it at run time.
+# Sources live in subsystem folders, while the resource aliases keep the QML
+# module flat (Main.qml, Buddy.qml, ...) so imports stay unchanged.
+set(NOCH_QML_FILES
+    qml/Main.qml
+
+    qml/theme/Theme.qml
+
+    qml/components/AppContextMenu.qml
+    qml/components/DockItem.qml
+    qml/components/Flyout.qml
+    qml/components/Glass.qml
+    qml/components/Glyph.qml
+    qml/components/MenuRow.qml
+    qml/components/MoreButton.qml
+    qml/components/PeekDash.qml
+    qml/components/ResizeGrip.qml
+    qml/components/Segmented.qml
+    qml/components/SizeSlider.qml
+    qml/components/StatusBlock.qml
+    qml/components/Toggle.qml
+    qml/components/TooltipToast.qml
+    qml/components/WindowPreview.qml
+
+    qml/panels/ClipboardView.qml
+    qml/panels/FocusTimer.qml
+    qml/panels/HubPanel.qml
+    qml/panels/MusicIconHit.qml
+    qml/panels/MusicPanel.qml
+    qml/panels/NowPlaying.qml
+    qml/panels/PaletteCard.qml
+    qml/panels/SettingsPanel.qml
+    qml/panels/TimerPill.qml
+    qml/panels/TimerView.qml
+
+    qml/panels/settings/SettingsCardDivider.qml
+    qml/panels/settings/SettingsChip.qml
+    qml/panels/settings/SettingsFieldBox.qml
+    qml/panels/settings/SettingsGroupCard.qml
+    qml/panels/settings/SettingsIconButton.qml
+    qml/panels/settings/SettingsLabeledSlider.qml
+    qml/panels/settings/SettingsPillButton.qml
+    qml/panels/settings/SettingsRingSwatch.qml
+    qml/panels/settings/SettingsSectionHeader.qml
+    qml/panels/settings/SettingsToggleRow.qml
+
+    qml/flyouts/HubFlyout.qml
+    qml/flyouts/MusicFlyout.qml
+    qml/flyouts/PaletteFlyout.qml
+    qml/flyouts/SettingsFlyout.qml
+
+    qml/buddy/Buddy.qml
+    qml/buddy/BuddyBubble.qml
+    qml/buddy/BuddyChartCard.qml
+    qml/buddy/BuddyHelpCard.qml
+    qml/buddy/BuddyNeonRing.qml
+    qml/buddy/BuddyPanel.qml
+    qml/buddy/BuddyQuestionCard.qml
+    qml/buddy/BuddyResearchCard.qml
+    qml/buddy/BuddyRouter.qml
+    qml/buddy/BuddyTasksCard.qml
+
+    qml/buddy/components/BuddyAskField.qml
+    qml/buddy/components/BuddyIconButton.qml
+    qml/buddy/components/BuddyMicButton.qml
+    qml/buddy/components/BuddySendButton.qml
+
+    qml/agent/AgentControlOverlay.qml
+    qml/agent/AgentCursor.qml
+    qml/agent/AgentGlow.qml
+    qml/agent/AgentHud.qml
+    qml/agent/ToolApprovalCard.qml
+    qml/agent/ToolStatusIcon.qml
+    qml/agent/ToolStepCard.qml
+    qml/agent/ToolStepRow.qml
+    qml/agent/ToolTraceBar.qml
+)
+
+# Keep every type at the module root, regardless of its source folder.
+foreach(qml_file IN LISTS NOCH_QML_FILES)
+    get_filename_component(qml_name "${qml_file}" NAME)
+    set_source_files_properties("${qml_file}" PROPERTIES QT_RESOURCE_ALIAS "${qml_name}")
+endforeach()
 # The one dark stone theme: colours, type, spacing, shared by every file.
-set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+set_source_files_properties(qml/theme/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 # The SVG icon set (qml/icons/*.svg, regenerated by tools/build_icons.py).
 # IconSet.cpp reads them from :/qt/qml/noch/qml/icons at start-up.
 file(GLOB NOCH_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/icons/*.svg)
@@ -112,61 +235,12 @@ qt_add_qml_module(noch
     URI noch
     VERSION 1.0
     DEPENDENCIES QtQuick
-    QML_FILES
-        qml/Main.qml
-        qml/Theme.qml
-        qml/PeekDash.qml
-        qml/ResizeGrip.qml
-        qml/TooltipToast.qml
-        qml/AppContextMenu.qml
-        qml/SettingsFlyout.qml
-        qml/MusicFlyout.qml
-        qml/HubFlyout.qml
-        qml/PaletteFlyout.qml
-        qml/DockItem.qml
-        qml/MoreButton.qml
-        qml/SettingsPanel.qml
-        qml/Toggle.qml
-        qml/Segmented.qml
-        qml/SizeSlider.qml
-        qml/MenuRow.qml
-        qml/Glyph.qml
-        qml/StatusBlock.qml
-        qml/NowPlaying.qml
-        qml/MusicPanel.qml
-        qml/Glass.qml
-        qml/WindowPreview.qml
-        qml/Flyout.qml
-        qml/HubPanel.qml
-        qml/FocusTimer.qml
-        qml/TimerView.qml
-        qml/TimerPill.qml
-        qml/ClipboardView.qml
-        qml/PaletteCard.qml
-        qml/Buddy.qml
-        qml/BuddyRouter.qml
-        qml/BuddyBubble.qml
-        qml/BuddyPanel.qml
-        qml/BuddyChartCard.qml
-        qml/BuddyResearchCard.qml
-        qml/BuddyTasksCard.qml
-        qml/BuddyHelpCard.qml
-        qml/BuddyQuestionCard.qml
-        qml/ToolStatusIcon.qml
-        qml/ToolStepRow.qml
-        qml/ToolStepCard.qml
-        qml/ToolTraceBar.qml
-        qml/ToolApprovalCard.qml
-        qml/AgentCursor.qml
-        qml/AgentGlow.qml
-        qml/AgentHud.qml
-        qml/AgentControlOverlay.qml
-    RESOURCES
-        ${NOCH_ICONS}
+    QML_FILES ${NOCH_QML_FILES}
+    RESOURCES ${NOCH_ICONS}
 )
 
-# Lets the generated QML type registration find src/QmlSingletons.h.
-target_include_directories(noch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Lets the generated QML type registration find src/app/QmlSingletons.h.
+target_include_directories(noch PRIVATE ${NOCH_SOURCE_INCLUDE_DIRS})
 
 target_link_libraries(noch PRIVATE
     Qt6::Core
@@ -189,109 +263,5 @@ set_target_properties(noch PROPERTIES
 option(NOCH_BUILD_TESTS "Build unit tests" OFF)
 if(NOCH_BUILD_TESTS)
     enable_testing()
-
-    # How a test runs. The headless "offscreen" Qt platform plugin is not part of
-    # every Qt install (the Windows installers ship only "windows"), and asking for
-    # a plugin that is missing makes the test fail at start-up with "no Qt platform
-    # plugin could be initialized". So it is requested only where it exists; on
-    # Windows the normal platform is used (the tests open no windows). Tests never
-    # play sound.
-    function(noch_test_env target)
-        set(env "NOCH_NO_AUDIO=1")
-        if(NOT WIN32)
-            list(APPEND env "QT_QPA_PLATFORM=offscreen")
-        endif()
-        set_tests_properties(${target} PROPERTIES ENVIRONMENT "${env}")
-    endfunction()
-    find_package(Qt6 REQUIRED COMPONENTS Test)
-    find_package(Qt6 REQUIRED COMPONENTS Network)
-    qt_add_executable(tst_agentpolicy tests/tst_agentpolicy.cpp src/AgentPolicy.cpp src/AgentPolicy.h)
-    target_link_libraries(tst_agentpolicy PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-    add_test(NAME tst_agentpolicy COMMAND tst_agentpolicy)
-    qt_add_executable(tst_iconset tests/tst_iconset.cpp src/IconSet.cpp src/IconSet.h)
-    target_link_libraries(tst_iconset PRIVATE Qt6::Core Qt6::Test)
-    target_compile_definitions(tst_iconset PRIVATE NOCH_ICON_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml/icons")
-    add_test(NAME tst_iconset COMMAND tst_iconset)
-    qt_add_executable(tst_stream tests/tst_stream.cpp src/StreamAccumulator.cpp src/StreamAccumulator.h)
-    target_link_libraries(tst_stream PRIVATE Qt6::Core Qt6::Test)
-    add_test(NAME tst_stream COMMAND tst_stream)
-    find_package(Qt6 REQUIRED COMPONENTS Multimedia)
-    qt_add_executable(tst_buddysfx tests/tst_buddysfx.cpp src/BuddySfx.cpp src/BuddySfx.h)
-    target_link_libraries(tst_buddysfx PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Test)
-    add_test(NAME tst_buddysfx COMMAND tst_buddysfx)
-    noch_test_env(tst_buddysfx)
-    find_package(Qt6 REQUIRED COMPONENTS Network)
-    qt_add_executable(tst_userquestions tests/tst_userquestions.cpp
-        src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
-    target_link_libraries(tst_userquestions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-    add_test(NAME tst_userquestions COMMAND tst_userquestions)
-    qt_add_executable(tst_voice tests/tst_voice.cpp
-        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h
-        src/PushToTalkKey.cpp src/PushToTalkKey.h)
-    target_link_libraries(tst_voice PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
-    if(WIN32)
-        target_link_libraries(tst_voice PRIVATE user32)
-    endif()
-    add_test(NAME tst_voice COMMAND tst_voice)
-    noch_test_env(tst_voice)
-    qt_add_executable(tst_wakeword tests/tst_wakeword.cpp
-        src/WakeWord.cpp src/WakeWord.h src/SpeechOut.cpp src/SpeechOut.h
-        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h)
-    target_link_libraries(tst_wakeword PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
-    add_test(NAME tst_wakeword COMMAND tst_wakeword)
-    noch_test_env(tst_wakeword)
-    qt_add_executable(tst_speechout tests/tst_speechout.cpp
-        src/SpeechOut.cpp src/SpeechOut.h src/WakeWord.cpp src/WakeWord.h
-        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h)
-    target_link_libraries(tst_speechout PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
-    add_test(NAME tst_speechout COMMAND tst_speechout)
-    noch_test_env(tst_speechout)
-    qt_add_executable(tst_chatsessions tests/tst_chatsessions.cpp
-        src/ChatSessions.cpp src/ChatSessions.h src/SessionFormat.h src/AgentPolicy.cpp src/AgentPolicy.h)
-    target_link_libraries(tst_chatsessions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-    add_test(NAME tst_chatsessions COMMAND tst_chatsessions)
-    qt_add_executable(tst_projectcontext tests/tst_projectcontext.cpp
-        src/ProjectContext.cpp src/ProjectContext.h src/AgentPolicy.cpp src/AgentPolicy.h)
-    target_link_libraries(tst_projectcontext PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-    add_test(NAME tst_projectcontext COMMAND tst_projectcontext)
-    qt_add_executable(tst_savedrules tests/tst_savedrules.cpp
-        src/SavedRules.cpp src/SavedRules.h src/AgentPolicy.cpp src/AgentPolicy.h)
-    target_link_libraries(tst_savedrules PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-    add_test(NAME tst_savedrules COMMAND tst_savedrules)
-    qt_add_executable(tst_runjournal tests/tst_runjournal.cpp
-        src/RunJournal.cpp src/RunJournal.h src/AgentPolicy.cpp src/AgentPolicy.h)
-    target_link_libraries(tst_runjournal PRIVATE Qt6::Core Qt6::Network Qt6::Test)
-    add_test(NAME tst_runjournal COMMAND tst_runjournal)
-    qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
-        src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
-        src/UserQuestions.cpp src/UserQuestions.h src/RunJournal.cpp src/RunJournal.h
-        src/SavedRules.cpp src/SavedRules.h src/ProjectContext.cpp src/ProjectContext.h
-        src/ChatSessions.cpp src/ChatSessions.h src/SessionLink.cpp src/SessionLink.h src/SessionFormat.h
-        src/StreamAccumulator.cpp src/StreamAccumulator.h
-        src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
-    target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
-    if(WIN32)
-        target_link_libraries(tst_buddyagent PRIVATE user32)
-    endif()
-    add_test(NAME tst_buddyagent COMMAND tst_buddyagent)
-    qt_add_executable(tst_computeruse tests/tst_computeruse.cpp
-        src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
-    target_link_libraries(tst_computeruse PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
-    if(WIN32)
-        target_link_libraries(tst_computeruse PRIVATE user32)
-    endif()
-    add_test(NAME tst_computeruse COMMAND tst_computeruse)
-    noch_test_env(tst_computeruse)
-    noch_test_env(tst_buddyagent)
-
-    # QML component tests (tests/qml): run with Qt's qmltestrunner when it is installed.
-    find_program(NOCH_QMLTESTRUNNER NAMES qmltestrunner qmltestrunner-qt6
-                 HINTS "${Qt6_DIR}/../../../bin" "${QT6_INSTALL_PREFIX}/bin" /usr/lib/qt6/bin)
-    if(NOCH_QMLTESTRUNNER AND NOT WIN32)
-        add_test(NAME tst_qml
-                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/run_qml_tests.sh
-                         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/qmltests ${NOCH_QMLTESTRUNNER})
-    else()
-        message(STATUS "qmltestrunner not found (or Windows): QML tests are not registered")
-    endif()
+    add_subdirectory(tests)
 endif()

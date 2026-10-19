@@ -3,7 +3,7 @@
 #include <QtTest>
 #include <cmath>
 
-#include "../src/BuddySfx.h"
+#include "BuddySfx.h"
 
 class TstBuddySfx : public QObject
 {

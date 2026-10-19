@@ -8,9 +8,9 @@
 #include <QTimer>
 #include <QtMath>
 
-#include "../src/PushToTalkKey.h"
-#include "../src/VoiceAudio.h"
-#include "../src/VoiceInput.h"
+#include "PushToTalkKey.h"
+#include "VoiceAudio.h"
+#include "VoiceInput.h"
 #include "SpeechFakes.h"
 
 namespace {

@@ -58,30 +58,32 @@ your apps, tucks itself away and drops back down when you need it.
 
 ## Glass and motion
 
-The notch, its pills and its flyouts share one glass surface (`qml/Glass.qml`):
-a soft shadow, a single tinted body, light across the top and a 1px rim that is
-lit from above. There is one theme, **dark stone**: every colour, radius,
-spacing step, font size and panel width is a token in `qml/Theme.qml` (a QML
-singleton), so no component carries its own hex codes. Panels size themselves
-with `Theme.fit(preferred, available)` and keep `Theme.screenMargin` clear of
-the screen edges, so they stay wide on big monitors and fit on small or
-high-DPI ones.
+The notch, its pills and its flyouts share one glass surface
+(`qml/components/Glass.qml`): a soft shadow, a single tinted body, light across
+the top and a 1px rim that is lit from above. There is one theme, **dark
+stone**: every colour, radius, spacing step, font size and panel width is a
+token in `qml/theme/Theme.qml` (a QML singleton), so no component carries its
+own hex codes. Panels size themselves with `Theme.fit(preferred, available)` and
+keep `Theme.screenMargin` clear of the screen edges, so they stay wide on big
+monitors and fit on small or high-DPI ones.
 
 **Icons** are SVG files in `qml/icons/` (24×24, `currentColor`, 1.6 stroke,
 derived from Lucide, ISC licence in `qml/icons/LICENSE-lucide.txt`).
-`src/IconSet` loads their path data once and `qml/Glyph.qml` draws them with
-`Shape`, so they stay sharp at any scale and take any tint. To add one, put it
-in the map in `tools/build_icons.py`, regenerate, and reconfigure CMake (the
-folder is globbed).
+`src/desktop/IconSet` loads their path data once and
+`qml/components/Glyph.qml` draws them with `Shape`, so they stay sharp at any
+scale and take any tint. To add one, put it in the map in
+`tools/build_icons.py`, regenerate, and reconfigure CMake (the folder is
+globbed).
 
 **Buddy agent safety.** Tool calls pass through a permission policy with
 approval cards, guardrails, context compaction, retries and local traces. See
 [`docs/agent-safety.md`](docs/agent-safety.md).
 
 Motion is spring-driven. The notch drops in with a little overshoot and tucks
-away firmly, flyouts spring out of the notch (`qml/Flyout.qml`), dock icons
-swell toward the pointer and settle, and toggles, tabs and pills have springy
-overshoots. Only the glass changes shape, so nothing is re-laid-out per frame.
+away firmly, flyouts spring out of the notch (`qml/components/Flyout.qml`), dock
+icons swell toward the pointer and settle, and toggles, tabs and pills have
+springy overshoots. Only the glass changes shape, so nothing is re-laid-out per
+frame.
 
 **About the blur.** Noch's window is a transparent overlay as wide as the
 screen. The system acrylic material blurs the *whole* window, so earlier builds
@@ -107,56 +109,73 @@ cmake --build build
 .\build\noch.exe
 ```
 
+`CMakePresets.json` also provides `release` and `tests` presets. Set `QTDIR` to
+the Qt kit (for example `C:\Qt\6.12.0\mingw_64`) before using them:
+
+```powershell
+$env:QTDIR = "C:\Qt\6.12.0\mingw_64"
+cmake --preset release
+cmake --build --preset release
+```
+
 ## Layout
 
-| File | What it does |
+Code is grouped by responsibility. C++ services live under `src/<domain>/`;
+QML types live under `qml/<area>/` and are still exposed at the module root.
+
+```text
+src/
+  main.cpp            application entry point
+  agent/              Buddy model client, tool loop, safety policy, computer use
+  app/                QML singleton registration
+  chat/               saved chats and session serialization
+  common/             small header-only helpers
+  desktop/            dock, app search/icons, clipboard, running windows
+  media/              music player, Windows media sessions, audio, radios
+  platform/           Win32 integration: overlay, blur, hotkeys, power, appearance
+  voice/              microphone input, wake word, speech output, buddy SFX
+qml/
+  Main.qml            window shell: notch, reveal, resize, input mask
+  theme/Theme.qml     design tokens (singleton)
+  components/         shared glass, controls and small UI primitives
+  panels/             notch pages and extracted settings controls
+  flyouts/            spring-animated flyout wrappers
+  buddy/              buddy character, bubble, panel and result cards
+  agent/              agent HUD, cursor, tool trace and approval cards
+  icons/              SVG icon set
+tests/                 unit tests and QML component tests
+cmake/                 shared CMake helpers
+docs/                  architecture and safety documentation
+tools/                 icon generator and diagnostic scripts
+```
+
+QML sources are compiled into the executable's resources under a flat module
+namespace: `qml/buddy/BuddyBubble.qml` is registered as `BuddyBubble`, so
+imports and type names stay unchanged. `CMakeLists.txt` sets this up with
+`QT_RESOURCE_ALIAS`; new QML files must be added to `NOCH_QML_FILES`.
+
+| Area | Key entry points |
 | --- | --- |
-| `qml/Main.qml` | Window, notch, reveal/auto-hide, resize, tooltip, context menu, click-through mask |
-| `qml/SettingsPanel.qml` | Settings flyout (General / Apps / Buddy tabs; scrolls on short screens) |
-| `qml/Flyout.qml` | The spring-animated glass card every flyout and menu sits in |
-| `qml/HubPanel.qml` | The hub card: tab strip and the Timer / Clipboard pages |
-| `qml/FocusTimer.qml`, `qml/TimerView.qml`, `qml/TimerPill.qml` | Focus timer: logic, panel page and the live pill |
-| `qml/ClipboardView.qml` | Clipboard page |
-| `qml/MusicPanel.qml`, `qml/NowPlaying.qml` | Music player and the compact control in the notch |
-| `qml/PaletteCard.qml` | Command palette card: search, calculator, web, commands |
-| `qml/StatusBlock.qml` | Clock block in the notch |
-| `qml/DockItem.qml` | One app icon: magnification, launch bounce, running dot |
-| `qml/Theme.qml` | The dark stone theme singleton: colours, glass, status, type, spacing, radii, widths |
-| `qml/icons/*.svg`, `src/IconSet.*`, `tools/build_icons.py` | SVG icon set, its loader, and the generator |
-| `qml/ToolStepRow.qml`, `ToolStepCard.qml`, `ToolTraceBar.qml`, `ToolStatusIcon.qml`, `ToolApprovalCard.qml` | Agent tool-call UI: live rows, trace cards, trace header, approval card |
-| `qml/BuddyBubble.qml`, `qml/BuddyPanel.qml`, `qml/Buddy.qml` | Desktop buddy: speech bubble (chat, trace, history), expanded panel, the character |
-| `src/BuddyProvider.*` | Buddy's model client and agent tool loop (streaming, handoffs, session memory) |
-| `src/ComputerUse.*`, `src/ComputerUseWin.cpp` | Computer-use actions and screenshot scaling (Claude's computer toolset), Windows `SendInput` backend |
-| `src/ChatSessions.*`, `src/SessionLink.*`, `src/SessionFormat.h` | Saved chats: turns on disk, rolling summaries, resume and branch |
-| `src/UserQuestions.*` | Validation and formatting for Buddy's multiple-choice questions |
-| `src/RunJournal.*` | Per-run file journal behind Undo |
-| `src/SavedRules.*` | Saved "always allow" rules |
-| `src/ProjectContext.*` | `NOCH.md` instruction files and slash-command templates |
-| `src/VoiceInput.*`, `src/VoiceAudio.*`, `src/PushToTalkKey.*` | Push-to-talk voice: microphone, speech-to-text request, global hold-to-talk key |
-| `src/WakeWord.*`, `src/SpeechOut.*` | Wake word ("hey buddy"): utterance detector, phrase matching, consent and rate limits; reading reports aloud |
-| `src/StreamAccumulator.*` | SSE parser that rebuilds a streamed reply into the buffered response JSON |
-| `src/QmlSingletons.h` | Registers the backend objects as typed QML singletons (`Media`, `BuddyAgent`, `Dock`, …) |
-| `src/AgentPolicy.*` | Tool permission policy, secret redaction, injection heuristics (see `docs/agent-safety.md`) |
-| `qml/Toggle.qml`, `Segmented.qml`, `SizeSlider.qml`, `MenuRow.qml`, `MoreButton.qml`, `Glyph.qml` | Controls |
-| `src/DockController.*` | Pinned apps: discovery, persistence, launching, running detection, start-up entry |
-| `src/MusicPlayer.*` | Local playback queue, metadata, cover art |
-| `src/AppIconProvider.*` | `image://appicon/...` - extracts real app icons, renders them black and white |
-| `src/OverlayController.*` | Limits mouse input to the visible shapes so the rest clicks through |
-| `src/RunningApps.*` | Programs with open windows, window previews, bringing a window forward |
-| `src/MediaHub.*`, `src/SmtcMedia.*` | Now playing: Noch's player and Windows media sessions, unified |
-| `src/AppSearch.*`, `src/Calc.h` | Palette backend: app index, fuzzy matching, inline calculator |
-| `src/GlobalHotkey.*` | The palette shortcut (Ctrl + Alt + Space, with fallbacks) |
-| `src/AudioDevices.*` | Default sound output and microphone mute |
-| `src/Radios.*` | Wi-Fi and Bluetooth radios |
-| `src/NightLight.*` | Night light, through Windows' own state blob |
-| `src/PowerActions.*`, `src/FullscreenWatcher.*` | Lock / sleep, and the full-screen guard |
-| `src/WinRtAbi.h` | Hand-written WinRT ABI the media / radio backends ride on |
-| `src/GlassBackdrop.*` | Optional blur behind the visible glass shapes (Windows) |
-| `src/ClipboardHistory.*` | In-memory clipboard history (text only, private copies skipped) |
-| `src/ShapeRegion.h` | Builds a region from the rounded shapes QML reports |
-| `src/Appearance.*` | System appearance hints (reduced motion) |
-| `qml/Glass.qml` | The shared glass surface |
-| `qml/WindowPreview.qml` | Window hover preview for running apps |
+| Notch shell | `qml/Main.qml`, `qml/components/{Glass,Flyout,DockItem,StatusBlock}.qml` |
+| Settings | `qml/panels/SettingsPanel.qml`, `qml/panels/settings/*`, `qml/flyouts/SettingsFlyout.qml` |
+| Hub | `qml/panels/{HubPanel,FocusTimer,TimerView,TimerPill,ClipboardView}.qml` |
+| Music | `qml/panels/{MusicPanel,NowPlaying}.qml`, `qml/flyouts/MusicFlyout.qml` |
+| Palette | `qml/panels/PaletteCard.qml`, `qml/flyouts/PaletteFlyout.qml` |
+| Buddy | `qml/buddy/*`, `src/agent/{BuddyProvider,AgentPolicy,ComputerUse}*` |
+| Voice | `src/voice/*` |
+| Agent trace | `qml/agent/*` |
+| Platform | `src/platform/*` |
+
+The largest implementation units are split by responsibility. `AgentPolicy`
+is separated into core path/query code, shell rules, saved-rule matching,
+evaluation and output safety. `BuddyProvider` is separated into configuration,
+prompts, protocol, run loop, storage/approvals, tools and web/catalog helpers.
+`ComputerUse` is separated into action parsing, coordinate mapping and the
+controller/Windows backend. Shared private headers stay next to them in
+`src/agent/`.
+
+See [`docs/architecture.md`](docs/architecture.md) for dependency direction,
+the split-unit map and the rules for adding files.
 
 Settings live in the registry under `HKCU\Software\noch\noch`.
 
@@ -164,8 +183,13 @@ Settings live in the registry under `HKCU\Software\noch\noch`.
 
 ```sh
 cmake -S . -B build-tests -G Ninja -DNOCH_BUILD_TESTS=ON
-cmake --build build-tests && ctest --test-dir build-tests
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
 ```
+
+The tests are registered by `tests/CMakeLists.txt` through the helper in
+`cmake/NochTest.cmake`. Shared source lists keep split units (for example
+`AgentPolicy` and `ComputerUse`) in sync across every test that needs them.
 
 `tst_agentpolicy` covers the permission policy, redaction and injection checks.
 `tst_iconset` checks that every SVG icon parses into usable path data.

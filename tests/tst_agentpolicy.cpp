@@ -3,7 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
-#include "../src/AgentPolicy.h"
+#include "AgentPolicy.h"
 
 class TestAgentPolicy : public QObject
 {

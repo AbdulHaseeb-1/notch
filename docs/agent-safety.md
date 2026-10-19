@@ -2,10 +2,13 @@
 
 Noch's Buddy can run a multi-turn tool loop (shell, file editor, computer use,
 web, memory, …). Every tool call the model makes passes through a small safety
-layer before anything runs. Code: `src/AgentPolicy.{h,cpp}` (pure, unit-tested
-in `tests/tst_agentpolicy.cpp`) and the gate in `src/BuddyProvider.cpp`
-(`gateAndExecute`, `resolveApproval`, `guardToolOutput`, `compactContext`,
-`scheduleRetry`, `finishTrace`).
+layer before anything runs. Code: `src/agent/AgentPolicy.{h,cpp}` with the
+implementation split across `AgentPolicyShell.cpp`, `AgentPolicyRules.cpp`,
+`AgentPolicyEvaluate.cpp` and `AgentPolicySafety.cpp` (pure, unit-tested in
+`tests/tst_agentpolicy.cpp`). The gate lives in the `src/agent/BuddyProvider*`
+units: `gateAndExecute`, `guardToolOutput`, `compactContext` and
+`scheduleRetry` in `BuddyProviderRun.cpp`, and `resolveApproval` and
+`finishTrace` in `BuddyProviderStorage.cpp`.
 
 ## Evaluation order
 

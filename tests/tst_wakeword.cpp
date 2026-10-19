@@ -3,8 +3,8 @@
 #include <QtTest>
 #include <QSignalSpy>
 
-#include "../src/SpeechOut.h"
-#include "../src/WakeWord.h"
+#include "SpeechOut.h"
+#include "WakeWord.h"
 #include "SpeechFakes.h"
 
 namespace {

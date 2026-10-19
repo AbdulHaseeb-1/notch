@@ -4,7 +4,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 
-#include "../src/StreamAccumulator.h"
+#include "StreamAccumulator.h"
 
 static QByteArray anthropicStream()
 {

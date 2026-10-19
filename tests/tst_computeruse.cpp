@@ -6,7 +6,7 @@
 #include <QJsonObject>
 #include <QSignalSpy>
 
-#include "../src/ComputerUse.h"
+#include "ComputerUse.h"
 
 using cu::Action;
 

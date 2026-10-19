@@ -8,7 +8,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-#include "../src/SavedRules.h"
+#include "SavedRules.h"
 
 namespace {
 

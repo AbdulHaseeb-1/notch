@@ -7,7 +7,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-#include "../src/ChatSessions.h"
+#include "ChatSessions.h"
 
 namespace {
 

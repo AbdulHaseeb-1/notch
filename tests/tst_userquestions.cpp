@@ -4,7 +4,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
-#include "../src/UserQuestions.h"
+#include "UserQuestions.h"
 
 namespace {
 

@@ -4,7 +4,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
-#include "../src/SpeechOut.h"
+#include "SpeechOut.h"
 
 class TstSpeechOut : public QObject
 {

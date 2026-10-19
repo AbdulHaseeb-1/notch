@@ -541,61 +541,6 @@ Window {
 
     Component.onCompleted: updateMask()
 
-    // TEMP-BUDDY-DEMO-BEGIN (verification only; removed after testing)
-    Timer {
-        id: buddyDemo
-        property int step: 0
-        property var bub: null
-        property var sp: null
-        property var saved: null
-        readonly property string out: "C:/Users/ASIFCO~1/AppData/Local/Temp/claude/C--Users-Asif-Computer-Desktop-noch/cf5eb338-20af-4e33-8338-7aa4de60352f/scratchpad/shots2/"
-        running: Qt.application.arguments.indexOf("--buddy-demo") >= 0
-        interval: 1500
-        function grab(name) {
-            console.log("DEMO", name, Math.round(buddy.x), Math.round(buddy.y))
-            root.contentItem.grabToImage(function(r) { r.saveToFile(out + name + ".png") })
-        }
-        function find(item, pred) {
-            if (!item) return null
-            if (pred(item)) return item
-            const kids = item.children || []
-            for (let i = 0; i < kids.length; ++i) { const f = find(kids[i], pred); if (f) return f }
-            return null
-        }
-        function next(ms) { interval = ms; restart() }
-        onTriggered: {
-            if (!bub) bub = find(buddy, function(o) { return o.objectName === "buddyBubble" })
-            switch (step++) {
-            case 0:
-                saved = { h: cfg.buddyHistory }
-                const now = Date.now()
-                cfg.buddyHistory = JSON.stringify([
-                    { q: "How do I stay focused in the afternoon?", kind: "chat", title: "", a: "Try a **25-minute** focus block, a short walk, and water before coffee.", t: now - 120000 },
-                    { q: "chart btc", kind: "chart", title: "BTC sample chart", a: "", t: now - 3 * 3600000 },
-                    { q: "plan my day", kind: "tasks", title: "Today's plan", a: "", t: now - 26 * 3600000 },
-                    { q: "What's a good name for a cat?", kind: "chat", title: "", a: "Miso, Pixel or Biscuit - all short and friendly.", t: now - 5 * 86400000 }
-                ])
-                buddy.openInput(); next(900); break
-            case 1: grab("h0_input"); bub.showHistory(); next(160); break
-            case 2: grab("h1_hist_anim"); next(800); break
-            case 3: grab("h2_hist"); bub.pickHistory(0); next(1600); break
-            case 4: grab("h3_replay"); buddy.dismiss(); next(700); break
-            case 5: buddy.openInput(); next(900); break
-            case 6: grab("t1_input"); buddy.dismiss(); buddy.setMood("happy", 5000); next(600); break
-            case 7: grab("t2_ring"); root.toggleSettings(); next(900); break
-            case 8: sp = find(root.contentItem, function(o) { return o.appFilter !== undefined && o.tab !== undefined }); grab("s1_general"); next(100); break
-            case 9: { const f = find(sp, function(o) { return o.contentHeight !== undefined && o.visible && o.contentHeight > o.height }); if (f) f.contentY = f.contentHeight - f.height; next(500); break }
-            case 10: grab("s1b_general_scrolled"); sp.tab = 2; next(600); break
-            case 11: grab("s2_buddy"); next(700); break
-            case 12: next(100); break
-            case 13:
-                cfg.buddyHistory = saved.h
-                root.toggleSettings(); console.log("DEMO restored"); break
-            }
-        }
-    }
-    // TEMP-BUDDY-DEMO-END
-
     // ------------------------------------------------------------ peek dash
     // While tucked away, only this centered dash at the screen edge catches
     // the pointer (and file drags) to pull the notch out.
