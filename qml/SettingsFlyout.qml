@@ -42,6 +42,7 @@ Flyout {
         onUnpinRequested: (i) => Dock.unpin(i)
         onMoveRequested: (from, to) => Dock.move(from, to)
         onStartupToggled: (on) => Dock.launchAtStartup = on
+        onRingPreviewRequested: panelItem.root.previewBuddyRing()
         onResetBuddyPosRequested: {
             panelItem.root.settingsStore.buddyX = -1
             panelItem.root.settingsStore.buddyY = -1
