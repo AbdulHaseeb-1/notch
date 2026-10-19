@@ -57,6 +57,10 @@ Window {
         property bool buddyAllowBash: true
         // Computer use (mouse/keyboard control) is off until the user opts in.
         property bool buddyAllowComputer: false
+        // How computer use looks while Buddy is in control.
+        property bool buddyCuShowCursor: true
+        property bool buddyCuShowGlow: true
+        property real buddyCuGlowIntensity: 0.6
         property bool buddyAllowEditor: true
         property bool buddyAllowCodeSearch: true
         property bool buddyAllowMemory: true
@@ -86,7 +90,7 @@ Window {
         cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
         cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
         cfg.buddyApiBase, cfg.buddyModel, cfg.buddyTemperature,
-        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyAllowEditor,
+        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyHandoffs,
@@ -1124,6 +1128,18 @@ Window {
     Binding { target: BuddyAgent; property: "agentMode"; value: cfg.buddyAgentMode }
     Binding { target: BuddyAgent; property: "allowBash"; value: cfg.buddyAllowBash }
     Binding { target: BuddyAgent; property: "allowComputer"; value: cfg.buddyAllowComputer }
+    Binding { target: AgentControl; property: "showCursor"; value: cfg.buddyCuShowCursor }
+    Binding { target: AgentControl; property: "showGlow"; value: cfg.buddyCuShowGlow }
+    Binding { target: AgentControl; property: "glowIntensity"; value: cfg.buddyCuGlowIntensity }
+
+    // Buddy's cursor, the screen-edge glow and the control HUD while the
+    // agent uses the computer. The HUD sits just under the notch.
+    AgentControlOverlay {
+        id: agentOverlay
+        hudScreen: root.screen
+        hudCenterX: root.x + root.width / 2
+        hudTop: root.y + root.shownY + root.pillH + 10
+    }
     Binding { target: BuddyAgent; property: "allowEditor"; value: cfg.buddyAllowEditor }
     Binding { target: BuddyAgent; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
     Binding { target: BuddyAgent; property: "allowMemory"; value: cfg.buddyAllowMemory }

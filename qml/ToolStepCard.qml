@@ -23,6 +23,9 @@ Rectangle {
     readonly property string policyNote: String(step.policyNote || "")
     readonly property bool isPending: status === "pending"
     readonly property bool isFlagged: String(step.flag || "") === "injection"
+    // Computer-use steps carry a small JPEG data URL of the screen around
+    // the action (a ring marks the target), so the trace shows what happened.
+    readonly property string thumbnail: String(step.thumbnail || "")
 
     implicitHeight: inner.implicitHeight + 18
     height: implicitHeight
@@ -146,6 +149,30 @@ Rectangle {
                 font.family: Theme.font
                 font.pixelSize: Theme.fontXs
                 elide: Text.ElideRight
+            }
+        }
+
+        Rectangle {
+            visible: card.thumbnail.length > 0
+            x: 28
+            width: Math.min(parent.width - 28, 240)
+            height: visible ? thumb.paintedHeight + 2 : 0
+            radius: Theme.radiusSm
+            color: Theme.glassDeep
+            border.width: 1
+            border.color: Theme.glassBorder
+            clip: true
+
+            Image {
+                id: thumb
+                x: 1
+                y: 1
+                width: parent.width - 2
+                source: card.thumbnail
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                smooth: true
+                Accessible.name: qsTr("Screen at this step")
             }
         }
 

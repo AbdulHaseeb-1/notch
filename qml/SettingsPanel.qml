@@ -1868,9 +1868,37 @@ Item {
                         ToggleRow {
                             visible: panel.prefs.buddyAgentMode
                             label: qsTr("Computer use (screen, mouse & keyboard)")
-                            sub: qsTr("Anthropic Computer Use API: capture 1280×800 screenshots, move/click cursor, scroll, and synthesize keyboard input.")
+                            sub: qsTr("Claude-style computer use: screenshots and zoom scaled to your display, mouse moves, clicks, drags, scrolling and typing. Clicks and typing ask first; never types into password fields. Ctrl+Alt+Esc or holding Esc stops it, and touching the mouse or keyboard pauses it.")
                             checked: panel.prefs.buddyAllowComputer
                             onToggled: (c) => panel.prefs.buddyAllowComputer = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
+                            label: qsTr("Show Buddy's cursor")
+                            sub: qsTr("Draw Buddy's own pointer gliding to each target, with click ripples, drag trails and a typing indicator. It never takes focus or blocks your own pointer.")
+                            checked: panel.prefs.buddyCuShowCursor
+                            onToggled: (c) => panel.prefs.buddyCuShowCursor = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
+                            label: qsTr("Glow around the screen while in control")
+                            sub: qsTr("A soft pulsing edge on every screen so it's always clear when Buddy is driving.")
+                            checked: panel.prefs.buddyCuShowGlow
+                            onToggled: (c) => panel.prefs.buddyCuShowGlow = c
+                        }
+
+                        LabeledSlider {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer && panel.prefs.buddyCuShowGlow
+                            label: qsTr("Glow intensity")
+                            decimals: 2
+                            value: panel.prefs.buddyCuGlowIntensity
+                            onMoved: (v) => panel.prefs.buddyCuGlowIntensity = Math.max(0.1, Math.round(v * 100) / 100)
                         }
 
                         CardDivider { visible: panel.prefs.buddyAgentMode }
