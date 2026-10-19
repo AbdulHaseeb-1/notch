@@ -126,6 +126,13 @@ cmake --build build
 | `qml/ToolStepRow.qml`, `ToolStepCard.qml`, `ToolTraceBar.qml`, `ToolStatusIcon.qml`, `ToolApprovalCard.qml` | Agent tool-call UI: live rows, trace cards, trace header, approval card |
 | `qml/BuddyBubble.qml`, `qml/BuddyPanel.qml`, `qml/Buddy.qml` | Desktop buddy: speech bubble (chat, trace, history), expanded panel, the character |
 | `src/BuddyProvider.*` | Buddy's model client and agent tool loop (streaming, handoffs, session memory) |
+| `src/ComputerUse.*`, `src/ComputerUseWin.cpp` | Computer-use actions and screenshot scaling (Claude's computer toolset), Windows `SendInput` backend |
+| `src/ChatSessions.*`, `src/SessionLink.*`, `src/SessionFormat.h` | Saved chats: turns on disk, rolling summaries, resume and branch |
+| `src/UserQuestions.*` | Validation and formatting for Buddy's multiple-choice questions |
+| `src/RunJournal.*` | Per-run file journal behind Undo |
+| `src/SavedRules.*` | Saved "always allow" rules |
+| `src/ProjectContext.*` | `NOCH.md` instruction files and slash-command templates |
+| `src/VoiceInput.*`, `src/VoiceAudio.*`, `src/PushToTalkKey.*` | Push-to-talk voice: microphone, speech-to-text request, global hold-to-talk key |
 | `src/StreamAccumulator.*` | SSE parser that rebuilds a streamed reply into the buffered response JSON |
 | `src/QmlSingletons.h` | Registers the backend objects as typed QML singletons (`Media`, `BuddyAgent`, `Dock`, …) |
 | `src/AgentPolicy.*` | Tool permission policy, secret redaction, injection heuristics (see `docs/agent-safety.md`) |
@@ -168,5 +175,14 @@ server: deny, approve, reject, plan/bypass modes, 529 retry, redaction,
 compaction, loop guard, cancel during an approval, streamed text and tool
 calls, cancel mid-stream, stream error and truncation retries, specialist
 handoffs and their toolsets, session memory, and the per-run memory index.
+`tst_computeruse` covers the computer-use actions, screenshot scaling, held keys
+and the simulated backend. `tst_userquestions`, `tst_runjournal`,
+`tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
+the question, undo, saved-rule, instruction/slash-command, chat-session and voice
+modules (the last one with a fake microphone and a fake speech server).
+`tst_buddyagent` also drives the official computer toolset and its fallbacks,
+batch trimming and cache markers, questions, undo, saved rules and session
+summaries. `tst_qml` (needs `qmltestrunner`; skipped otherwise) runs the QML
+component tests in `tests/qml` against the real `Theme.qml`.
 `tst_buddysfx` checks the synthesized buddy cues (no NaN, headroom, silent
 edges, no pops), resampling, pacing, the speak-run cap, mute and volume.

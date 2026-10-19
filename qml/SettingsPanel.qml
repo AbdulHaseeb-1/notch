@@ -2160,7 +2160,7 @@ Item {
                         ToggleRow {
                             visible: panel.prefs.buddyAgentMode
                             label: qsTr("Ask me questions")
-                            sub: qsTr("When a request is unclear, Buddy can show a few choices to tap instead of guessing. Unanswered questions are skipped after a couple of minutes.")
+                            sub: qsTr("When a request is unclear, Buddy can show a few choices to tap instead of guessing. An unanswered question is skipped after five minutes.")
                             checked: panel.prefs.buddyAllowAskUser
                             onToggled: (c) => panel.prefs.buddyAllowAskUser = c
                         }
@@ -2362,7 +2362,7 @@ Item {
 
                         ToggleRow {
                             visible: panel.prefs.buddyVoiceEnabled
-                            label: qsTr("Shortcut: hold %1").arg(TalkKey.shortcut.length > 0 ? TalkKey.shortcut : "Ctrl+Alt+Space")
+                            label: qsTr("Shortcut: hold %1").arg(TalkKey.shortcut.length > 0 ? TalkKey.shortcut : "Ctrl+Alt+V")
                             sub: TalkKey.registered || !panel.prefs.buddyVoiceHotkey
                                  ? qsTr("Talk without clicking, from any app.")
                                  : qsTr("Another app is using this shortcut, or this system does not support it. The microphone button still works.")
