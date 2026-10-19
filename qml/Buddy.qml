@@ -104,7 +104,8 @@ Item {
             q: lastRequest,
             kind: kind,
             title: String(title || ""),
-            a: kind === "chat" && payload && payload.response ? String(payload.response).slice(0, 6000) : "",
+            // Long answers stay whole when reopened (was cut at 6000 chars).
+            a: kind === "chat" && payload && payload.response ? historyAnswer(payload.response) : "",
             t: Date.now()
         }
         // Asking the same thing again moves it to the top instead of piling up.
@@ -115,9 +116,16 @@ Item {
     function clearHistory() {
         historySaved("[]")
     }
+    readonly property int historyAnswerChars: 24000
+    function historyAnswer(text) {
+        const s = String(text || "")
+        return s.length <= historyAnswerChars ? s : s.slice(0, historyAnswerChars) + " …"
+    }
     function rememberTurn(question, answer) {
+        // The whole answer goes along: BuddyAgent shortens long turns itself,
+        // keeping their ending, instead of a blind 4000-char cut here.
         const c = conversation.concat([{ role: "user", content: question },
-                                       { role: "assistant", content: String(answer).slice(0, 4000) }])
+                                       { role: "assistant", content: String(answer) }])
         conversation = c.slice(-8)
     }
     // Reopen a past answer. Chat answers come straight from the record;

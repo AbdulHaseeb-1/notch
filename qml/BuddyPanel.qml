@@ -963,7 +963,7 @@ Item {
                     // Buddy response bubble card
                     Rectangle {
                         width: parent.width
-                        height: chatText.implicitHeight + actionRow.height + 30
+                        height: chatText.implicitHeight + lengthNote.h + actionRow.height + 30
                         radius: 14
                         color: Theme.raised
                         border.width: 1
@@ -1001,11 +1001,35 @@ Item {
                             }
                         }
 
+                        // Long answers: a quiet note when the reply needed
+                        // "continue" requests, or was still cut off after them.
+                        Text {
+                            id: lengthNote
+                            readonly property var meta: panel.responseMeta || {}
+                            readonly property bool cut: !!meta.truncated
+                            readonly property int parts: Number(meta.continuations || 0)
+                            readonly property bool shown: panel.kind === "chat" && !panel.isStreaming
+                                                          && panel.phase === "ready" && (cut || parts > 0)
+                            readonly property real h: shown ? implicitHeight + 6 : 0
+                            x: 14
+                            y: chatText.y + chatText.implicitHeight + 6
+                            width: parent.width - 28
+                            visible: shown
+                            text: cut ? qsTr("Reply hit the length limit and may be cut off. Ask me to continue.")
+                                      : qsTr("Long reply, continued %n time(s)", "", parts)
+                            color: cut ? Theme.warning : Theme.textFaint
+                            font.family: Theme.font
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Accessible.role: Accessible.StaticText
+                            Accessible.name: text
+                        }
+
                         // Action pills row (Copy, Regenerate, Love reaction)
                         Row {
                             id: actionRow
                             x: 12
-                            y: chatText.y + chatText.implicitHeight + 10
+                            y: chatText.y + chatText.implicitHeight + lengthNote.h + 10
                             height: 26
                             spacing: 6
                             opacity: panel.isStreaming ? 0.45 : 1.0

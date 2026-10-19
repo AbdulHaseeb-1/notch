@@ -1850,6 +1850,24 @@ Item {
                             }
                         }
 
+                        // Long answers: a quiet note when the reply needed
+                        // "continue" requests, or was still cut off after them.
+                        Text {
+                            readonly property var meta: tb.responseMeta || {}
+                            readonly property bool cut: !!meta.truncated
+                            readonly property int parts: Number(meta.continuations || 0)
+                            width: chatBodyCol.width
+                            visible: !tb.simulated && !tb.revealing && (cut || parts > 0)
+                            text: cut ? qsTr("Reply hit the length limit and may be cut off. Ask me to continue.")
+                                      : qsTr("Long reply, continued %n time(s)", "", parts)
+                            color: cut ? Theme.warning : Theme.textFaint
+                            font.family: Theme.font
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Accessible.role: Accessible.StaticText
+                            Accessible.name: text
+                        }
+
                         // Anthropic Agent SDK Telemetry Footer Pill
                         Row {
                             visible: tb.hasSdkTelemetry && !tb.revealing
