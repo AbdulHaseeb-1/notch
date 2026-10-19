@@ -2386,7 +2386,7 @@ Item {
                             label: qsTr("Speech service address")
                             placeholder: "https://api.openai.com/v1"
                             hint: Voice.addressProblem().length > 0 ? Voice.addressProblem()
-                                  : qsTr("Any service with an OpenAI-style /audio/transcriptions endpoint, including one running on this computer.")
+                                  : qsTr("Any OpenAI-style transcription service, or one on this computer.")
                             mono: true
                             text: panel.prefs.buddyVoiceBase
                             onEdited: (v) => panel.prefs.buddyVoiceBase = v
@@ -2396,7 +2396,7 @@ Item {
                             visible: panel.prefs.buddyVoiceEnabled
                             width: parent.width
                             label: qsTr("Speech service key")
-                            placeholder: qsTr("Needed unless the service runs on this computer")
+                            placeholder: qsTr("Not needed for a local service")
                             hint: qsTr("Kept only for this service. Your chat key is never sent to it.")
                             secret: true
                             mono: true
@@ -2419,10 +2419,62 @@ Item {
                             width: parent.width
                             label: qsTr("Language (optional)")
                             placeholder: qsTr("Detect automatically")
-                            hint: qsTr("A two-letter code such as en or de makes recognition faster and steadier.")
+                            hint: qsTr("A code like en or de makes recognition faster.")
                             mono: true
                             text: panel.prefs.buddyVoiceLanguage
                             onEdited: (v) => panel.prefs.buddyVoiceLanguage = v
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyVoiceEnabled }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            label: qsTr("Wake word")
+                            sub: qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is checked against the phrase by your speech service, then forgotten.")
+                            checked: panel.prefs.buddyWakeEnabled
+                            onToggled: (c) => panel.prefs.buddyWakeEnabled = c
+                        }
+
+                        FieldBox {
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled
+                            width: parent.width
+                            label: qsTr("Wake phrase")
+                            placeholder: "hey buddy"
+                            hint: qsTr("Two or more syllables work best; used at the start of a sentence.")
+                            text: panel.prefs.buddyWakePhrase
+                            onEdited: (v) => panel.prefs.buddyWakePhrase = v
+                        }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && !Voice.localService()
+                            label: qsTr("Allow sending everything it hears")
+                            sub: qsTr("Your speech service is on the internet, so every sentence spoken near the microphone is sent there to check for the phrase. Nothing is kept by Noch, but your service may keep it. A speech service on this computer avoids this. Capped at 12 checks a minute.")
+                            checked: panel.prefs.buddyWakeCloudOk
+                            onToggled: (c) => panel.prefs.buddyWakeCloudOk = c
+                        }
+
+                        Text {
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled
+                            width: parent.width
+                            text: Wake.blocked.length > 0 ? Wake.blocked
+                                  : Wake.error.length > 0 ? Wake.error
+                                  : Wake.state === "listening" ? qsTr("Listening for “%1”.").arg(panel.prefs.buddyWakePhrase)
+                                  : Wake.state === "awaiting" ? qsTr("Heard it. Listening for your request…")
+                                  : Wake.state === "paused" ? qsTr("Paused for a moment.") : ""
+                            color: Wake.blocked.length > 0 || Wake.error.length > 0 ? Theme.warning : Theme.textDim
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontSm
+                            wrapMode: Text.WordWrap
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyVoiceEnabled && Speech.available }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyVoiceEnabled && Speech.available
+                            label: qsTr("Read reports aloud")
+                            sub: qsTr("When a request started by voice finishes, needs your approval or fails, Buddy says a short summary out loud. Never code or links.")
+                            checked: panel.prefs.buddySpeakReports
+                            onToggled: (c) => panel.prefs.buddySpeakReports = c
                         }
                     }
 

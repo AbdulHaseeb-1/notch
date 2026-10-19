@@ -300,6 +300,52 @@ Guardrails:
 - Each action shows in the trace with a small thumbnail of the screen around
   the target.
 
+## Wake word
+
+*Wake word* (Settings, Buddy, Voice input; off by default, and it needs Voice
+input set up first) lets you say "hey buddy" (or a phrase you choose) instead of
+clicking. Say it alone and Buddy listens for your request; or add the request in
+the same breath: "hey buddy, open notepad". Buddy then does the work like any
+typed request and reports back: the answer pops up as usual, and with *Read
+reports aloud* a short summary is also spoken when the run finishes, needs your
+approval, asks a question or fails. (Spoken reports are Windows' built-in voice,
+or espeak-ng elsewhere; never code, links or Markdown, at most about 280
+characters.)
+
+This is the one feature with an open microphone, so it is built to hold less than
+it could:
+
+- **Why it needs consent.** There is no local keyword model; each utterance is
+  transcribed by your speech-to-text service to look for the phrase. With a
+  service on the internet that means *everything said near the microphone* is
+  sent there, so Noch refuses to run until you tick *Allow sending everything it
+  hears*. A speech service on this computer needs no consent: nothing leaves it.
+  Taking the consent back closes the microphone at once.
+- **What leaves the computer.** Only utterances: a small local detector cuts the
+  audio into sentences and learns the room's noise level, so silence, fans and
+  clicks are never sent. At most 12 utterances a minute are checked, one at a
+  time; the rest are dropped, not queued. A service that fails closes the
+  microphone and backs off (10 s, doubling to 5 min); a refused key stops it
+  until the key is changed.
+- **What is kept.** Nothing. A transcript is compared with the phrase and
+  dropped, and is not stored, logged or exposed to the UI unless the phrase
+  started it, and then only the request after the phrase is used. Audio stays in
+  memory.
+- **False wake-ups.** The phrase only counts at the very start of an utterance
+  (after at most one "hey", "ok", ...), so the word inside ordinary conversation
+  does nothing. Phrases under four letters are refused. A second wake within 1.5 s
+  is ignored. Say it and nothing more, and Buddy gives up after 7 s.
+- **Always visible.** A small microphone badge sits on the orb whenever the
+  microphone is open for this (it turns red once the phrase was heard), and the OS
+  shows its own microphone indicator.
+- **It pauses** while push-to-talk is in use and while Buddy is speaking (so it
+  cannot wake itself), and when Buddy is busy a new request is not started.
+- **No new powers.** What it hears becomes an ordinary request: every tool still
+  goes through the permission gate and its approvals, and "Always allow" rules,
+  hard stops and the instruction-file protection apply unchanged. Because sound
+  from speakers or a video could say the phrase too, keep the permission mode on
+  *Ask* if you leave the wake word on in a room with other audio.
+
 ## Traces
 
 When *Keep run traces* is on, each run writes

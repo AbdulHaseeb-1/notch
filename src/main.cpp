@@ -39,7 +39,9 @@
 #include "RunningApps.h"
 #include "SessionLink.h"
 #include "SmtcMedia.h"
+#include "SpeechOut.h"
 #include "VoiceInput.h"
+#include "WakeWord.h"
 
 namespace {
 
@@ -138,6 +140,12 @@ int main(int argc, char *argv[])
     // Hold the key: the microphone is open; let go: what was said is transcribed.
     QObject::connect(talkKey, &PushToTalkKey::pressed, voiceInput, [voiceInput] { voiceInput->beginListening(); });
     QObject::connect(talkKey, &PushToTalkKey::released, voiceInput, &VoiceInput::endListening);
+    // "Hey buddy": listens for the phrase through the same speech service, and
+    // stays quiet while Buddy talks (so it never wakes itself up).
+    auto *wakeWord = new WakeWord(voiceInput, &app);
+    auto *speechOut = new SpeechOut(&app);
+    QObject::connect(speechOut, &SpeechOut::speakingChanged, wakeWord,
+                     [wakeWord, speechOut] { wakeWord->setPaused(speechOut->speaking()); });
     auto *glass = new GlassBackdrop(&app);
     auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
@@ -192,6 +200,8 @@ int main(int argc, char *argv[])
     SessionsSingleton::s_singletonInstance = chatSessions;
     VoiceSingleton::s_singletonInstance = voiceInput;
     TalkKeySingleton::s_singletonInstance = talkKey;
+    WakeSingleton::s_singletonInstance = wakeWord;
+    SpeechSingleton::s_singletonInstance = speechOut;
     BackdropSingleton::s_singletonInstance = glass;
     OpenAppsSingleton::s_singletonInstance = openApps;
     ClipboardSingleton::s_singletonInstance = clipboard;

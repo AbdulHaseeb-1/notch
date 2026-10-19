@@ -339,7 +339,7 @@ void VoiceInput::cancel()
     setState(State::Idle);
 }
 
-void VoiceInput::send(const QByteArray &wav)
+QNetworkReply *VoiceInput::post(const QByteArray &wav)
 {
     QNetworkRequest request{ QUrl(transcriptionUrl()) };
     request.setTransferTimeout(60000);
@@ -367,8 +367,52 @@ void VoiceInput::send(const QByteArray &wav)
     file.setBody(wav);
     multi->append(file);
 
-    m_reply = m_nam.post(request, multi);
-    multi->setParent(m_reply);   // deleted with the reply
+    QNetworkReply *reply = m_nam.post(request, multi);
+    multi->setParent(reply);   // deleted with the reply
+    return reply;
+}
+
+VoiceInput::Transcription VoiceInput::parse(QNetworkReply *reply)
+{
+    Transcription out;
+    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    out.status = status;
+    const QByteArray body = reply->isOpen() ? reply->readAll() : QByteArray();   // an abandoned request is closed
+    const bool transportOk = reply->error() == QNetworkReply::NoError;
+
+    if (!transportOk || status < 200 || status >= 300) {
+        const QJsonObject o = QJsonDocument::fromJson(body).object();
+        QString msg = o.value(QStringLiteral("error")).isObject()
+            ? o.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString()
+            : o.value(QStringLiteral("error")).toString();
+        if (status == 401 || status == 403)
+            msg = tr("The speech-to-text key was refused.");
+        else if (status == 429)
+            msg = tr("The speech-to-text service is busy or out of quota. Try again in a moment.");
+        else if (msg.isEmpty())
+            msg = status > 0 ? tr("The speech-to-text service answered HTTP %1.").arg(status)
+                             : tr("Could not reach the speech-to-text service.");
+        out.error = msg.left(300);
+        return out;
+    }
+    // {"text": "..."} (json); some servers answer plain text.
+    QString text = QJsonDocument::fromJson(body).object().value(QStringLiteral("text")).toString();
+    if (text.isEmpty() && !body.trimmed().startsWith('{'))
+        text = QString::fromUtf8(body);
+    text = text.simplified();
+    if (text.isEmpty()) {
+        out.error = tr("I could not make out any words.");
+        out.empty = true;
+        return out;
+    }
+    out.ok = true;
+    out.text = text;
+    return out;
+}
+
+void VoiceInput::send(const QByteArray &wav)
+{
+    m_reply = post(wav);
     const quint64 gen = m_generation;
     connect(m_reply, &QNetworkReply::finished, this, [this, gen] {
         if (gen == m_generation)
@@ -383,35 +427,28 @@ void VoiceInput::onReply()
     if (!reply)
         return;
     reply->deleteLater();
-    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    const QByteArray body = reply->readAll();
-    const bool transportOk = reply->error() == QNetworkReply::NoError;
+    const Transcription t = parse(reply);
     setState(State::Idle);
-
-    if (!transportOk || status < 200 || status >= 300) {
-        const QJsonObject o = QJsonDocument::fromJson(body).object();
-        QString msg = o.value(QStringLiteral("error")).isObject()
-            ? o.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString()
-            : o.value(QStringLiteral("error")).toString();
-        if (status == 401 || status == 403)
-            msg = tr("The speech-to-text key was refused.");
-        else if (status == 429)
-            msg = tr("The speech-to-text service is busy or out of quota. Try again in a moment.");
-        else if (msg.isEmpty())
-            msg = status > 0 ? tr("The speech-to-text service answered HTTP %1.").arg(status)
-                             : tr("Could not reach the speech-to-text service.");
-        fail(msg.left(300));
-        return;
-    }
-    // {"text": "..."} (json); some servers answer plain text.
-    QString text = QJsonDocument::fromJson(body).object().value(QStringLiteral("text")).toString();
-    if (text.isEmpty() && !body.trimmed().startsWith('{'))
-        text = QString::fromUtf8(body);
-    text = text.simplified();
-    if (text.isEmpty()) {
-        fail(tr("I could not make out any words."));
+    if (!t.ok) {
+        fail(t.error);
         return;
     }
     clearError();
-    emit transcript(text);
+    emit transcript(t.text);
+}
+
+QPointer<QNetworkReply> VoiceInput::transcribe(const QByteArray &wav, QObject *context,
+                                               std::function<void(const Transcription &)> done)
+{
+    QNetworkReply *reply = post(wav);
+    connect(reply, &QNetworkReply::finished, context, [reply, done = std::move(done)] {
+        reply->deleteLater();
+        done(parse(reply));
+    });
+    return reply;
+}
+
+bool VoiceInput::localService() const
+{
+    return isLocalAddress(m_apiBase);
 }
