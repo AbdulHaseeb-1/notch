@@ -1,6 +1,6 @@
 import QtQuick
 
-// Thin X-style slider: grey track, white fill, white knob that grows on hover.
+// Thin slider: recessed stone track, light-stone fill and a knob that grows on hover.
 Item {
     id: slider
     property real from: 0
@@ -8,7 +8,6 @@ Item {
     property real value: 0
     signal moved(real value)
 
-    Theme { id: t }
 
     implicitWidth: 200
     implicitHeight: 24
@@ -28,7 +27,7 @@ Item {
         width: parent.width
         height: 4
         radius: 2
-        color: t.border
+        color: Theme.stone650
     }
 
     Rectangle {
@@ -36,7 +35,7 @@ Item {
         width: knob.x + knob.width / 2
         height: 4
         radius: 2
-        color: t.accent
+        color: Theme.accent
     }
 
     Rectangle {
@@ -46,9 +45,9 @@ Item {
         radius: width / 2
         anchors.verticalCenter: parent.verticalCenter
         x: slider.ratio * (slider.width - width)
-        color: t.accent
+        color: Theme.accent
         border.width: hit.pressed ? 3 : 0
-        border.color: t.hairline
+        border.color: Theme.hairline
         Behavior on width { NumberAnimation { duration: 130; easing.type: Easing.OutCubic } }
     }
 

@@ -1,5 +1,5 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Shapes
 
 // The buddy's thought bubble. It pops out of the orb as a trail of little
 // thought dots followed by the bubble itself, then morphs through every step
@@ -38,13 +38,24 @@ Item {
     property var history: []              // [{ q, kind, title, a, t }], newest first
 
     // Live Anthropic Agent SDK tool & response telemetry state
-    readonly property var toolSteps: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.toolSteps : []
-    readonly property string activeTool: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeTool : ""
-    readonly property string activeToolBadge: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeToolBadge : ""
-    readonly property string activeToolSummary: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.activeToolSummary : ""
-    readonly property var responseMeta: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.responseMeta : ({})
-    readonly property var agentTodos: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.agentTodos : []
-    readonly property var citations: (typeof buddyProvider !== "undefined" && buddyProvider) ? buddyProvider.citations : []
+    readonly property var toolSteps: (BuddyAgent) ? BuddyAgent.toolSteps : []
+    readonly property string activeTool: (BuddyAgent) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolBadge: (BuddyAgent) ? BuddyAgent.activeToolBadge : ""
+    readonly property string activeToolSummary: (BuddyAgent) ? BuddyAgent.activeToolSummary : ""
+    readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
+    readonly property var agentTodos: (BuddyAgent) ? BuddyAgent.agentTodos : []
+    readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
+    readonly property var pendingApproval: (BuddyAgent) ? BuddyAgent.pendingApproval : ({})
+    readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    // Specialist currently in charge (handoffs), "" for Buddy itself.
+    readonly property string specialist: (BuddyAgent
+                                          && BuddyAgent.activeAgent !== "buddy")
+                                         ? String(BuddyAgent.activeAgentTitle).replace(" specialist", "") : ""
+    // Live streamed answer text while the model is still writing.
+    readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
+                                       ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
+    readonly property bool hasLive: liveText.length > 0 && phase === "thinking"
+    readonly property real liveH: hasLive ? Math.min(liveBody.implicitHeight, 168) + 22 : 0
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
     readonly property bool hasAdvisor: !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
@@ -77,12 +88,7 @@ Item {
         return "spark"
     }
 
-    function formatDuration(ms) {
-        const n = Number(ms || 0)
-        if (n <= 0) return ""
-        if (n < 1000) return n + "ms"
-        return (n / 1000).toFixed(1) + "s"
-    }
+    function formatDuration(ms) { return Theme.formatDuration(ms) }
 
     property bool closing: false
     readonly property string fullResponse: payload && payload.response ? String(payload.response) : ""
@@ -112,11 +118,10 @@ Item {
     signal historyCleared()
     signal historyOpened()
 
-    Theme { id: t }
-    readonly property color buddySurface: Qt.darker(t.surface, 1.22)
-    readonly property color buddyField: Qt.darker(t.field, 1.22)
-    readonly property color buddyRaised: Qt.darker(t.raised, 1.12)
-    FontMetrics { id: bodyMetrics; font.family: t.font; font.pixelSize: 13 }
+    readonly property color buddySurface: Qt.darker(Theme.surface, 1.22)
+    readonly property color buddyField: Qt.darker(Theme.field, 1.22)
+    readonly property color buddyRaised: Qt.darker(Theme.raised, 1.12)
+    FontMetrics { id: bodyMetrics; font.family: Theme.font; font.pixelSize: 13 }
     FontMetrics { id: codeMetrics; font.family: "Consolas"; font.pixelSize: 12 }
 
     visible: bp > 0.001 || d1 > 0.001
@@ -260,32 +265,35 @@ Item {
     // ---- sizes ----------------------------------------------------------------
     readonly property real rowH: 44
     readonly property real pad: 14
-    readonly property real inputW: 344
-    readonly property real chatW: 396
-    readonly property real cardW: 440
+    readonly property real inputW: 400
+    readonly property real chatW: 460
+    readonly property real cardW: 480
     readonly property real footH: 32
     readonly property real maxH: Math.max(150, bounds.height - 16)
 
     readonly property real toolDrawerH: hasTools && toolsExpanded
-        ? Math.min(168, toolDrawerCol.implicitHeight + 14)
+        ? Math.min(Math.max(120, maxH * 0.42), toolDrawerCol.implicitHeight)
         : 0
-    readonly property real chatHeaderH: hasTools ? (34 + (toolsExpanded ? toolDrawerH + 6 : 0)) : 0
+    readonly property real chatHeaderH: hasTools ? (36 + (toolsExpanded ? toolDrawerH + 6 : 0)) : 0
     readonly property real chatContentH: Math.max(22, Math.min(chatBodyCol.implicitHeight,
                                                                Math.min(310, maxH - 64 - chatHeaderH)))
     readonly property real cardBodyH: Math.min(maxH - 48,
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: (hasTools || activeToolSummary.length > 0)
-                                 ? 368
+    readonly property real thinkW: (awaitingApproval || hasLive || (hasTools && specialist.length > 0)) ? 460
+                                 : (hasTools || activeToolSummary.length > 0)
+                                 ? 420
                                  : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
-    readonly property real thinkH: hasTools
-                                 ? (rowH + Math.min(toolSteps.length, 4) * 30 + 12)
-                                 : rowH
+    readonly property real thinkH: (hasTools
+                                 ? (rowH + Math.min(toolSteps.length, 4) * 31 + 10)
+                                 : rowH)
+                                 + (awaitingApproval ? approvalCard.implicitHeight + 10 : 0)
+                                 + (hasLive ? liveH + 6 : 0)
     readonly property real noteW: 46 + noteLabel.implicitWidth + 18
     readonly property real errorH: 16 + errText.implicitHeight + 12 + 28 + 14
-    readonly property real histW: 360
-    readonly property real histRowH: 50
+    readonly property real histW: 420
+    readonly property real histRowH: 54
     readonly property real histH: 46 + (history.length > 0
                                         ? Math.min(history.length, 6) * histRowH + 8
                                         : 74)
@@ -559,8 +567,8 @@ Item {
                 ++next
             tb.revealed = next
             tb.speakingTick(n > 0 ? next / n : 1)
-            if (typeof buddySfx !== "undefined" && buddySfx && Math.random() < 0.26)
-                buddySfx.play("speak")
+            if (BuddySound && Math.random() < 0.26)
+                BuddySound.play("speak")
             tb.followReveal()
         }
     }
@@ -699,9 +707,8 @@ Item {
     // its own Theme and talks to the bubble through signals only.)
     component IconButton: Item {
         id: ib
-        Theme { id: th }
         property string icon: "close"
-        property color tint: th.textDim
+        property color tint: Theme.textDim
         property bool active: false
         property bool filledIcon: false
         property string tip: ""
@@ -713,7 +720,7 @@ Item {
             width: 26
             height: 26
             radius: 13
-            color: ibHit.pressed ? th.press : (ibHit.containsMouse ? th.hover : "transparent")
+            color: ibHit.pressed ? Theme.press : (ibHit.containsMouse ? Theme.hover : "transparent")
             Behavior on color { ColorAnimation { duration: 120 } }
         }
         Glyph {
@@ -722,7 +729,7 @@ Item {
             size: 14
             stroke: 1.7
             filled: ib.filledIcon
-            color: ib.active ? ib.tint : (ibHit.containsMouse ? th.ink : ib.tint)
+            color: ib.active ? ib.tint : (ibHit.containsMouse ? Theme.ink : ib.tint)
             scale: ibHit.pressed ? 0.86 : 1
             Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutBack } }
         }
@@ -739,7 +746,6 @@ Item {
 
     component SendButton: Item {
         id: sb
-        Theme { id: sendTheme }
         property bool active: false
         property string tip: qsTr("Send request")
         signal clicked()
@@ -752,22 +758,17 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: 9
-            color: sendHit.pressed || sendHit.containsMouse ? sendTheme.accentHover
-                 : sb.active ? sendTheme.accent : Qt.darker(sendTheme.field, 1.18)
+            color: sendHit.pressed || sendHit.containsMouse ? Theme.accentHover
+                 : sb.active ? Theme.accent : Qt.darker(Theme.field, 1.18)
             antialiasing: true
             Behavior on color { ColorAnimation { duration: 120 } }
         }
 
-        Image {
+        Glyph {
             anchors.centerIn: parent
-            width: 15
-            height: 15
-            source: Qt.resolvedUrl("assets/send.svg")
-            sourceSize.width: 24
-            sourceSize.height: 24
-            fillMode: Image.PreserveAspectFit
-            smooth: true
-            opacity: sb.active ? 1 : 0.76
+            name: "send"
+            size: 15
+            color: sb.active ? Theme.inverse : Theme.textDim
         }
 
         MouseArea {
@@ -783,13 +784,12 @@ Item {
 
     component AskField: Rectangle {
         id: af
-        Theme { id: th }
         property alias input: afInput
         property string hint: qsTr("Ask more…")
         signal sent(string text)
         signal escaped()
         radius: height / 2
-        color: Qt.darker(th.field, 1.22)
+        color: Qt.darker(Theme.field, 1.22)
         border.width: 0
 
         function send() {
@@ -805,10 +805,10 @@ Item {
             anchors.right: afSendBtn.left
             anchors.rightMargin: 4
             anchors.verticalCenter: parent.verticalCenter
-            color: th.ink
-            selectionColor: th.accent
-            selectedTextColor: th.inverse
-            font.family: th.font
+            color: Theme.ink
+            selectionColor: Theme.accent
+            selectedTextColor: Theme.inverse
+            font.family: Theme.font
             font.pixelSize: 12
             font.weight: Font.Medium
             clip: true
@@ -824,7 +824,7 @@ Item {
                 visible: afInput.text.length === 0
                 verticalAlignment: Text.AlignVCenter
                 text: af.hint
-                color: th.textFaint
+                color: Theme.textFaint
                 font: afInput.font
                 elide: Text.ElideRight
             }
@@ -866,8 +866,8 @@ Item {
             color: tb.buddySurface
             border.width: 1
             border.color: tb.phase === "thinking"
-                          ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.35 + 0.5 * pulse)
-                          : t.borderStrong
+                          ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35 + 0.5 * pulse)
+                          : Theme.borderStrong
             antialiasing: true
         }
     }
@@ -903,11 +903,11 @@ Item {
             color: tb.buddySurface
             border.width: tb.phase === "input" ? 0 : 1
             border.color: tb.phase === "thinking"
-                          ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.30 + 0.30 * Math.sin(tb.breathT * 2 * Math.PI) * tb.mo)
-                          : (tb.phase === "error" ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.55)
-                          : (tb.revealing ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.45)
+                          ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.30 + 0.30 * Math.sin(tb.breathT * 2 * Math.PI) * tb.mo)
+                          : (tb.phase === "error" ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.55)
+                          : (tb.revealing ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.45)
                           : (field.activeFocus && tb.phase === "input"
-                             ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.55) : t.border)))
+                             ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55) : Theme.border)))
             Behavior on border.color { ColorAnimation { duration: 220 } }
             antialiasing: true
         }
@@ -952,7 +952,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     name: "spark"
                     size: 15
-                    color: field.activeFocus ? t.accent : t.textFaint
+                    color: field.activeFocus ? Theme.accent : Theme.textFaint
                     Behavior on color { ColorAnimation { duration: 160 } }
                 }
 
@@ -963,10 +963,10 @@ Item {
                     anchors.right: histBtn.left
                     anchors.rightMargin: 2
                     anchors.verticalCenter: parent.verticalCenter
-                    color: t.ink
-                    selectionColor: t.accent
-                    selectedTextColor: t.inverse
-                    font.family: t.font
+                    color: Theme.ink
+                    selectionColor: Theme.accent
+                    selectedTextColor: Theme.inverse
+                    font.family: Theme.font
                     font.pixelSize: 13
                     font.weight: Font.Medium
                     clip: true
@@ -997,7 +997,7 @@ Item {
                         visible: field.text.length === 0
                         verticalAlignment: Text.AlignVCenter
                         text: qsTr("What should I help with?")
-                        color: t.textFaint
+                        color: Theme.textFaint
                         font: field.font
                         elide: Text.ElideRight
                     }
@@ -1010,7 +1010,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     icon: "history"
                     tip: qsTr("History")
-                    tint: t.textFaint
+                    tint: Theme.textFaint
                     onClicked: tb.showHistory()
                 }
                 SendButton {
@@ -1029,7 +1029,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     icon: "close"
                     tip: qsTr("Dismiss")
-                    tint: t.textFaint
+                    tint: Theme.textFaint
                     onClicked: { tb.close(); tb.dismissed() }
                 }
             }
@@ -1058,25 +1058,36 @@ Item {
                         tip: qsTr("Back")
                         onClicked: tb.backToInput()
                     }
-                    Glyph {
-                        id: histGlyph
-                        anchors.left: histBack.right
-                        anchors.leftMargin: 2
-                        anchors.verticalCenter: parent.verticalCenter
-                        name: "history"
-                        size: 14
-                        stroke: 1.7
-                        color: t.accent
-                    }
                     Text {
-                        anchors.left: histGlyph.right
-                        anchors.leftMargin: 7
+                        id: histTitle
+                        anchors.left: histBack.right
+                        anchors.leftMargin: 4
                         anchors.verticalCenter: parent.verticalCenter
-                        text: tb.history.length > 0 ? qsTr("History · %1").arg(tb.history.length) : qsTr("History")
-                        color: t.ink
-                        font.family: t.font
-                        font.pixelSize: 13
+                        text: qsTr("History")
+                        color: Theme.ink
+                        font.family: Theme.font
+                        font.pixelSize: Theme.fontMd
                         font.weight: Font.DemiBold
+                    }
+                    Rectangle {
+                        anchors.left: histTitle.right
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: tb.history.length > 0
+                        width: histCount.implicitWidth + 12
+                        height: 18
+                        radius: 9
+                        color: Theme.glassFill
+                        border.width: 1
+                        border.color: Theme.glassBorder
+                        Text {
+                            id: histCount
+                            anchors.centerIn: parent
+                            text: tb.history.length
+                            color: Theme.textDim
+                            font.family: Theme.monoFont
+                            font.pixelSize: Theme.fontXs
+                        }
                     }
                     Rectangle {
                         anchors.right: parent.right
@@ -1086,10 +1097,10 @@ Item {
                         width: clearRow.implicitWidth + 18
                         height: 26
                         radius: 13
-                        color: tb.clearArmed ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.16)
-                                             : (clearHit.containsMouse ? t.hover : "transparent")
+                        color: tb.clearArmed ? Theme.dangerSoft
+                                             : (clearHit.containsMouse ? Theme.glassFillHover : "transparent")
                         border.width: 1
-                        border.color: tb.clearArmed ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.6) : t.borderSoft
+                        border.color: tb.clearArmed ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.5) : Theme.glassBorder
                         Behavior on color { ColorAnimation { duration: 140 } }
                         Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         Row {
@@ -1101,13 +1112,13 @@ Item {
                                 name: "trash"
                                 size: 12
                                 stroke: 1.7
-                                color: tb.clearArmed ? t.danger : t.textDim
+                                color: tb.clearArmed ? Theme.danger : Theme.textDim
                             }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: tb.clearArmed ? qsTr("Clear all?") : qsTr("Clear")
-                                color: tb.clearArmed ? t.danger : t.textDim
-                                font.family: t.font
+                                color: tb.clearArmed ? Theme.danger : Theme.textDim
+                                font.family: Theme.font
                                 font.pixelSize: 11
                                 font.weight: Font.DemiBold
                             }
@@ -1135,7 +1146,7 @@ Item {
                         x: 12
                         width: parent.width - 24
                         height: 1
-                        color: t.borderSoft
+                        color: Theme.glassBorder
                     }
                 }
 
@@ -1167,67 +1178,80 @@ Item {
                         opacity: enter
                         transform: Translate { x: (1 - hrow.enter) * 12 * tb.side * tb.mo }
 
+                        readonly property bool lit: hrow.current || rowHit.containsMouse
                         Rectangle {
                             anchors.fill: parent
                             anchors.margins: 2
-                            radius: 12
-                            color: hrow.current || rowHit.containsMouse ? t.hover : "transparent"
-                            Behavior on color { ColorAnimation { duration: 120 } }
+                            radius: Theme.radiusMd
+                            color: hrow.lit ? Theme.glassFillHover : "transparent"
+                            border.width: hrow.lit ? 1 : 0
+                            border.color: Theme.glassBorder
                         }
                         Rectangle {
                             id: kindTile
                             x: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 30
-                            height: 30
-                            radius: 10
-                            color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, hrow.current || rowHit.containsMouse ? 0.20 : 0.11)
+                            width: 32
+                            height: 32
+                            radius: Theme.radiusMd
+                            color: hrow.lit ? Theme.glassFillActive : Theme.glassFill
+                            border.width: 1
+                            border.color: Theme.glassBorder
                             Glyph {
                                 anchors.centerIn: parent
                                 name: tb.kindIcon(hrow.modelData.kind)
-                                size: 14
-                                stroke: 1.7
-                                color: t.accent
+                                size: 15
+                                color: hrow.lit ? Theme.ink : Theme.textDim
                             }
                         }
                         Text {
                             id: when
                             anchors.right: parent.right
                             anchors.rightMargin: 12
-                            y: 9
+                            y: 10
                             text: tb.timeAgo(hrow.modelData.t)
-                            color: t.textFaint
-                            font.family: t.font
-                            font.pixelSize: 10
+                            color: Theme.textFaint
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontXs
                         }
                         Text {
                             anchors.left: kindTile.right
-                            anchors.leftMargin: 10
+                            anchors.leftMargin: 11
                             anchors.right: when.left
-                            anchors.rightMargin: 8
-                            y: 7
+                            anchors.rightMargin: 10
+                            y: 9
                             text: String(hrow.modelData.q || "")
-                            color: t.ink
-                            font.family: t.font
-                            font.pixelSize: 12
+                            color: Theme.ink
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
                             maximumLineCount: 1
                         }
                         Text {
                             anchors.left: kindTile.right
-                            anchors.leftMargin: 10
-                            anchors.right: parent.right
-                            anchors.rightMargin: 12
-                            y: 26
+                            anchors.leftMargin: 11
+                            anchors.right: openHint.left
+                            anchors.rightMargin: 8
+                            y: 28
                             text: hrow.modelData.kind === "chat"
                                   ? String(hrow.modelData.a || "").replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim()
                                   : String(hrow.modelData.title || "")
-                            color: t.textDim
-                            font.family: t.font
-                            font.pixelSize: 11
+                            color: Theme.textDim
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontSm
                             elide: Text.ElideRight
                             maximumLineCount: 1
+                        }
+                        Glyph {
+                            id: openHint
+                            anchors.right: parent.right
+                            anchors.rightMargin: 12
+                            y: 29
+                            name: "right"
+                            size: 12
+                            color: Theme.textFaint
+                            opacity: hrow.lit ? 1 : 0
                         }
                         MouseArea {
                             id: rowHit
@@ -1251,15 +1275,15 @@ Item {
                     opacity: tb.histIn
                     Glyph {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        name: "spark"
-                        size: 18
-                        color: t.accent
+                        name: "history"
+                        size: 20
+                        color: Theme.textFaint
                     }
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: qsTr("Nothing here yet — ask me something!")
-                        color: t.textDim
-                        font.family: t.font
+                        color: Theme.textDim
+                        font.family: Theme.font
                         font.pixelSize: 12
                     }
                 }
@@ -1293,7 +1317,7 @@ Item {
                                 width: 6.5
                                 height: 6.5
                                 radius: 3.25
-                                color: t.accent
+                                color: Theme.accent
                                 opacity: 0.32 + 0.68 * lift
                                 scale: 0.82 + 0.22 * lift
                                 transform: Translate { y: -3.0 * tb.mo * tdot.lift }
@@ -1302,94 +1326,95 @@ Item {
                         }
                     }
 
-                    // Active Agent SDK tool header while thinking
+                    // Active agent tool while thinking: icon · BADGE · summary · #n
                     Item {
                         x: 64
                         width: parent.width - 78
                         height: parent.height
                         visible: tb.hasTools || tb.activeToolSummary.length > 0
 
-                        Rectangle {
-                            id: activeToolIconBox
-                            x: 0
+                        Glyph {
+                            id: activeToolIcon
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 22
-                            height: 22
-                            radius: 7
-                            color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.16)
-                            border.width: 1
-                            border.color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.42)
-
-                            Glyph {
-                                anchors.centerIn: parent
-                                name: tb.toolIcon(tb.activeTool)
-                                size: 11.5
-                                stroke: 1.75
-                                color: t.accent
-                            }
-                        }
-
-                        Rectangle {
-                            id: activeBadgePill
-                            visible: tb.activeToolBadge.length > 0
-                            anchors.left: activeToolIconBox.right
-                            anchors.leftMargin: 6
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: activeBadgeText.implicitWidth + 10
-                            height: 17
-                            radius: 5
-                            color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.14)
-                            border.width: 1
-                            border.color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.28)
-
-                            Text {
-                                id: activeBadgeText
-                                anchors.centerIn: parent
-                                text: tb.activeToolBadge
-                                color: t.accent
-                                font.family: t.font
-                                font.pixelSize: 9
-                                font.weight: Font.Bold
-                                font.letterSpacing: 0.5
-                            }
+                            name: tb.toolIcon(tb.activeTool)
+                            size: 15
+                            color: Theme.ink
                         }
 
                         Text {
-                            anchors.left: activeBadgePill.visible ? activeBadgePill.right : activeToolIconBox.right
-                            anchors.leftMargin: 7
-                            anchors.right: stepCountBadge.visible ? stepCountBadge.left : parent.right
-                            anchors.rightMargin: 6
+                            id: activeBadgeText
+                            anchors.left: activeToolIcon.right
+                            anchors.leftMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: tb.activeToolBadge.length > 0
+                            text: tb.activeToolBadge
+                            color: Theme.textFaint
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontXs - 1
+                            font.weight: Font.Bold
+                            font.letterSpacing: 0.6
+                        }
+
+                        Text {
+                            anchors.left: activeBadgeText.visible ? activeBadgeText.right : activeToolIcon.right
+                            anchors.leftMargin: 8
+                            anchors.right: stepCountText.visible ? stepCountText.left : parent.right
+                            anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
                             text: tb.activeToolSummary.length > 0
                                   ? tb.activeToolSummary
-                                  : qsTr("Running Agent SDK tools…")
-                            color: t.ink
-                            font.family: t.font
-                            font.pixelSize: 12
+                                  : qsTr("Working with tools…")
+                            color: Theme.ink
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
                         }
 
-                        Rectangle {
-                            id: stepCountBadge
-                            visible: tb.hasTools
+                        Row {
+                            id: stepCountText
+                            visible: tb.hasTools || tb.specialist.length > 0
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            width: stepCountText.implicitWidth + 10
-                            height: 18
-                            radius: 9
-                            color: t.tile
-                            border.width: 1
-                            border.color: t.borderSoft
+                            spacing: 8
 
+                            // Which specialist owns the run after a handoff.
+                            Rectangle {
+                                visible: tb.specialist.length > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: specialistRow.implicitWidth + 14
+                                height: 20
+                                radius: 10
+                                color: Theme.tile
+                                border.width: 1
+                                border.color: Theme.border
+                                Row {
+                                    id: specialistRow
+                                    anchors.centerIn: parent
+                                    spacing: 4
+                                    Glyph {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        name: "handoff"
+                                        size: 11
+                                        color: Theme.accent
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: tb.specialist
+                                        color: Theme.ink
+                                        font.family: Theme.font
+                                        font.pixelSize: Theme.fontXs
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
                             Text {
-                                id: stepCountText
-                                anchors.centerIn: parent
-                                text: qsTr("#%1").arg(tb.toolSteps.length)
-                                color: t.textDim
-                                font.family: "Consolas"
-                                font.pixelSize: 10
-                                font.weight: Font.Bold
+                                visible: tb.hasTools
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: tb.toolSteps.length === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(tb.toolSteps.length)
+                                color: Theme.textFaint
+                                font.family: Theme.monoFont
+                                font.pixelSize: Theme.fontXs
                             }
                         }
                     }
@@ -1406,8 +1431,8 @@ Item {
                             id: thinkLabel
                             anchors.verticalCenter: parent.verticalCenter
                             text: tb.thinkPhrases[tb.thinkStep]
-                            color: t.textDim
-                            font.family: t.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 12
                             font.weight: Font.Medium
                             onTextChanged: phraseFade.restart()
@@ -1420,124 +1445,87 @@ Item {
                     }
                 }
 
-                // Subtle separator above live tool timeline
+                // Hairline above the live tool timeline
                 Rectangle {
                     visible: tb.hasTools
                     x: 14
                     y: tb.rowH - 2
                     width: parent.width - 28
                     height: 1
-                    color: t.borderSoft
+                    color: Theme.glassBorder
                 }
 
-                // Live Agent SDK tool timeline during execution
+                // Live tool timeline (last four steps)
                 Column {
-                    x: 12
+                    id: liveTimeline
+                    x: 10
                     y: tb.rowH + 4
-                    width: parent.width - 24
-                    spacing: 4
+                    width: parent.width - 20
+                    spacing: 3
                     visible: tb.hasTools
 
                     Repeater {
                         model: tb.hasTools ? tb.toolSteps.slice(-4) : []
-
-                        Rectangle {
+                        ToolStepRow {
                             required property var modelData
-                            readonly property bool isRunning: modelData.status === "running"
-                            readonly property bool isError: modelData.status === "error"
-                            readonly property color statusColor: isError ? t.danger : (isRunning ? t.accent : t.success)
                             width: parent.width
-                            height: 26
-                            radius: 8
-                            color: isRunning
-                                   ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.11)
-                                   : (isError ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.09) : t.tile)
-                            border.width: 1
-                            border.color: isRunning
-                                          ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.36)
-                                          : (isError ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.35) : t.borderSoft)
-
-                            // Status icon indicator (pulsing dot when running, check when done, x when error)
-                            Rectangle {
-                                id: liveNode
-                                x: 7
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 16
-                                height: 16
-                                radius: 5
-                                color: Qt.rgba(parent.statusColor.r, parent.statusColor.g, parent.statusColor.b, 0.16)
-
-                                Rectangle {
-                                    visible: parent.parent.isRunning
-                                    anchors.centerIn: parent
-                                    width: 6
-                                    height: 6
-                                    radius: 3
-                                    color: t.accent
-                                    opacity: 0.45 + 0.55 * Math.sin(tb.thinkT * 2 * Math.PI)
-                                }
-
-                                Glyph {
-                                    visible: !parent.parent.isRunning
-                                    anchors.centerIn: parent
-                                    name: parent.parent.isError ? "close" : "check"
-                                    size: 9.5
-                                    stroke: 2.1
-                                    color: parent.parent.statusColor
-                                }
-                            }
-
-                            // Tool category badge
-                            Rectangle {
-                                id: liveCatBadge
-                                anchors.left: liveNode.right
-                                anchors.leftMargin: 6
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: liveCatText.implicitWidth + 8
-                                height: 15
-                                radius: 4
-                                color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.06)
-
-                                Text {
-                                    id: liveCatText
-                                    anchors.centerIn: parent
-                                    text: String(modelData.badge || "TOOL")
-                                    color: parent.parent.isRunning ? t.accent : t.textDim
-                                    font.family: t.font
-                                    font.pixelSize: 9
-                                    font.weight: Font.Bold
-                                    font.letterSpacing: 0.4
-                                }
-                            }
-
-                            Text {
-                                anchors.left: liveCatBadge.right
-                                anchors.leftMargin: 6
-                                anchors.right: liveMetaRight.left
-                                anchors.rightMargin: 6
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: String(modelData.title || "")
-                                color: parent.isRunning ? t.ink : t.inkSoft
-                                font.family: t.font
-                                font.pixelSize: 11
-                                font.weight: parent.isRunning ? Font.DemiBold : Font.Medium
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                id: liveMetaRight
-                                anchors.right: parent.right
-                                anchors.rightMargin: 8
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: parent.isRunning ? qsTr("LIVE")
-                                    : (parent.isError ? qsTr("ERR")
-                                    : (tb.formatDuration(modelData.durationMs) || qsTr("DONE")))
-                                color: parent.isRunning ? t.accent : (parent.isError ? t.danger : t.textFaint)
-                                font.family: "Consolas"
-                                font.pixelSize: 10
-                                font.weight: Font.Bold
-                            }
+                            step: modelData
                         }
+                    }
+                }
+
+                // Live answer: streamed text in a transparent well that keeps
+                // the newest line in view, with a soft caret.
+                Rectangle {
+                    id: liveWell
+                    visible: tb.hasLive
+                    x: 10
+                    y: tb.thinkH - tb.liveH - 8
+                    width: parent.width - 20
+                    height: tb.liveH
+                    radius: Theme.radiusMd
+                    color: Theme.glassFill
+                    border.width: 1
+                    border.color: Theme.glassBorder
+                    clip: true
+
+                    Text {
+                        id: liveBody
+                        x: 12
+                        width: parent.width - 24
+                        // Pin to the bottom once the text outgrows the well.
+                        y: Math.min(11, parent.height - 11 - implicitHeight)
+                        text: tb.liveText + " \u258F"
+                        textFormat: Text.PlainText
+                        color: Theme.text
+                        font.family: Theme.font
+                        font.pixelSize: Theme.fontBase + 1
+                        lineHeight: 1.18
+                        wrapMode: Text.Wrap
+                    }
+                    // Fade the clipped top edge into the glass.
+                    Rectangle {
+                        visible: liveBody.y < 0
+                        width: parent.width
+                        height: 22
+                        gradient: Gradient {
+                            GradientStop { position: 0; color: Theme.surface }
+                            GradientStop { position: 1; color: "transparent" }
+                        }
+                    }
+                }
+
+                // Human-in-the-loop: the agent is paused on a tool call.
+                ToolApprovalCard {
+                    id: approvalCard
+                    x: 10
+                    y: tb.hasTools ? tb.rowH + 4 + Math.min(tb.toolSteps.length, 4) * 31 + 4 : tb.rowH
+                    width: parent.width - 20
+                    visible: tb.awaitingApproval && tb.phase === "thinking"
+                    request: tb.pendingApproval
+                    onDecided: (approve, always) => {
+                        if (BuddyAgent)
+                            BuddyAgent.resolveApproval(approve, always)
                     }
                 }
             }
@@ -1562,301 +1550,43 @@ Item {
                     height: tb.chatHeaderH
                     visible: tb.hasTools
 
-                    Rectangle {
+                    ToolTraceBar {
                         id: toolSummaryBar
                         width: parent.width
-                        height: 28
-                        radius: 9
-                        color: toolBarHit.containsMouse
-                               ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.16)
-                               : Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.09)
-                        border.width: 1
-                        border.color: tb.toolsExpanded
-                                      ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.45)
-                                      : Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.28)
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                        Behavior on border.color { ColorAnimation { duration: 120 } }
-
-                        Row {
-                            id: summaryLeftRow
-                            x: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 6
-
-                            // Stacked distinct tool icons
-                            Row {
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: -4
-                                Repeater {
-                                    model: tb.distinctToolIcons
-                                    Rectangle {
-                                        required property var modelData
-                                        width: 18
-                                        height: 18
-                                        radius: 6
-                                        color: tb.buddyRaised
-                                        border.width: 1
-                                        border.color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.42)
-                                        Glyph {
-                                            anchors.centerIn: parent
-                                            name: String(modelData)
-                                            size: 10
-                                            stroke: 1.75
-                                            color: t.accent
-                                        }
-                                    }
-                                }
-                            }
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: qsTr("Agent SDK · %n step(s)", "", tb.toolSteps.length)
-                                color: t.ink
-                                font.family: t.font
-                                font.pixelSize: 11
-                                font.weight: Font.DemiBold
-                            }
-
-                            Rectangle {
-                                visible: tb.responseMeta && Number(tb.responseMeta.durationMs || 0) > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: durChipText.implicitWidth + 8
-                                height: 16
-                                radius: 5
-                                color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.06)
-
-                                Text {
-                                    id: durChipText
-                                    anchors.centerIn: parent
-                                    text: tb.formatDuration(tb.responseMeta ? tb.responseMeta.durationMs : 0)
-                                    color: t.textDim
-                                    font.family: "Consolas"
-                                    font.pixelSize: 10
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 6
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: traceToggleLabel.implicitWidth + 12
-                            height: 18
-                            radius: 6
-                            color: tb.toolsExpanded
-                                   ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.20)
-                                   : "transparent"
-
-                            Text {
-                                id: traceToggleLabel
-                                anchors.centerIn: parent
-                                text: tb.toolsExpanded ? qsTr("Hide trace ▴") : qsTr("Inspect trace ▾")
-                                color: t.accent
-                                font.family: t.font
-                                font.pixelSize: 10
-                                font.weight: Font.DemiBold
-                            }
-                        }
-
-                        MouseArea {
-                            id: toolBarHit
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: tb.toolsExpanded = !tb.toolsExpanded
-                        }
+                        steps: tb.toolSteps
+                        icons: tb.distinctToolIcons
+                        durationMs: tb.responseMeta ? Number(tb.responseMeta.durationMs || 0) : 0
+                        expanded: tb.toolsExpanded
+                        onToggled: tb.toolsExpanded = !tb.toolsExpanded
                     }
 
-                    Rectangle {
+                    Item {
                         id: toolDrawer
-                        y: 32
+                        y: 34
                         width: parent.width
                         height: tb.toolDrawerH
-                        radius: 10
-                        color: t.tile
-                        border.width: 1
-                        border.color: t.borderSoft
                         visible: tb.hasTools && tb.toolsExpanded
                         clip: true
 
                         Flickable {
                             anchors.fill: parent
-                            anchors.margins: 7
                             contentWidth: width
                             contentHeight: toolDrawerCol.implicitHeight
                             boundsBehavior: Flickable.StopAtBounds
+                            interactive: contentHeight > height + 1
                             clip: true
 
                             Column {
                                 id: toolDrawerCol
                                 width: parent.width
-                                spacing: 6
+                                spacing: 5
 
                                 Repeater {
                                     model: tb.toolSteps
-
-                                    Rectangle {
+                                    ToolStepCard {
                                         required property var modelData
-                                        readonly property bool isError: modelData.status === "error"
-                                        readonly property color stepAccent: isError ? t.danger : t.success
                                         width: toolDrawerCol.width
-                                        height: stepInnerCol.implicitHeight + 12
-                                        radius: 8
-                                        color: tb.buddySurface
-                                        border.width: 1
-                                        border.color: isError
-                                                      ? Qt.rgba(t.danger.r, t.danger.g, t.danger.b, 0.35)
-                                                      : t.borderSoft
-
-                                        // Left status indicator stripe
-                                        Rectangle {
-                                            x: 0
-                                            y: 6
-                                            width: 2.5
-                                            height: parent.height - 12
-                                            radius: 1.25
-                                            color: parent.stepAccent
-                                            opacity: 0.75
-                                        }
-
-                                        Column {
-                                            id: stepInnerCol
-                                            x: 9
-                                            y: 6
-                                            width: parent.width - 16
-                                            spacing: 4
-
-                                            Item {
-                                                width: parent.width
-                                                height: 18
-
-                                                Rectangle {
-                                                    id: stepIconBadge
-                                                    x: 0
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: 17
-                                                    height: 17
-                                                    radius: 5
-                                                    color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.14)
-
-                                                    Glyph {
-                                                        anchors.centerIn: parent
-                                                        name: String(modelData.icon || "terminal")
-                                                        size: 10
-                                                        stroke: 1.75
-                                                        color: t.accent
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    id: stepCatPill
-                                                    anchors.left: stepIconBadge.right
-                                                    anchors.leftMargin: 5
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: stepCatText.implicitWidth + 8
-                                                    height: 15
-                                                    radius: 4
-                                                    color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.07)
-
-                                                    Text {
-                                                        id: stepCatText
-                                                        anchors.centerIn: parent
-                                                        text: String(modelData.badge || "TOOL")
-                                                        color: t.textDim
-                                                        font.family: t.font
-                                                        font.pixelSize: 9
-                                                        font.weight: Font.Bold
-                                                        font.letterSpacing: 0.4
-                                                    }
-                                                }
-
-                                                Text {
-                                                    anchors.left: stepCatPill.right
-                                                    anchors.leftMargin: 6
-                                                    anchors.right: stepRightMeta.left
-                                                    anchors.rightMargin: 6
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    text: String(modelData.title || "")
-                                                    color: t.ink
-                                                    font.family: t.font
-                                                    font.pixelSize: 11
-                                                    font.weight: Font.DemiBold
-                                                    elide: Text.ElideRight
-                                                }
-
-                                                Row {
-                                                    id: stepRightMeta
-                                                    anchors.right: parent.right
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    spacing: 5
-
-                                                    Text {
-                                                        visible: Number(modelData.durationMs || 0) > 0
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        text: tb.formatDuration(modelData.durationMs)
-                                                        color: t.textFaint
-                                                        font.family: "Consolas"
-                                                        font.pixelSize: 10
-                                                    }
-
-                                                    Rectangle {
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        width: 14
-                                                        height: 14
-                                                        radius: 7
-                                                        color: Qt.rgba(stepInnerCol.parent.stepAccent.r,
-                                                                       stepInnerCol.parent.stepAccent.g,
-                                                                       stepInnerCol.parent.stepAccent.b, 0.16)
-                                                        Glyph {
-                                                            anchors.centerIn: parent
-                                                            name: stepInnerCol.parent.isError ? "close" : "check"
-                                                            size: 8.5
-                                                            stroke: 2.2
-                                                            color: stepInnerCol.parent.stepAccent
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // Clean tool parameter / command line (no fake $ prefix unless bash)
-                                            Text {
-                                                width: parent.width
-                                                visible: String(modelData.detail || "").length > 0
-                                                text: String(modelData.detail || "")
-                                                color: t.accent
-                                                font.family: "Consolas"
-                                                font.pixelSize: 10
-                                                wrapMode: Text.WrapAnywhere
-                                                maximumLineCount: 2
-                                                elide: Text.ElideRight
-                                            }
-
-                                            // Recessed output console box
-                                            Rectangle {
-                                                width: parent.width
-                                                height: stepOutText.implicitHeight + 8
-                                                radius: 5
-                                                color: tb.buddyField
-                                                border.width: 1
-                                                border.color: t.borderSoft
-                                                visible: String(modelData.output || "").length > 0
-
-                                                Text {
-                                                    id: stepOutText
-                                                    x: 6
-                                                    y: 4
-                                                    width: parent.width - 12
-                                                    text: String(modelData.output || "")
-                                                    color: t.textDim
-                                                    font.family: "Consolas"
-                                                    font.pixelSize: 10
-                                                    wrapMode: Text.WrapAnywhere
-                                                    maximumLineCount: 4
-                                                    elide: Text.ElideRight
-                                                }
-                                            }
-                                        }
+                                        step: modelData
                                     }
                                 }
                             }
@@ -1891,9 +1621,9 @@ Item {
                             width: parent.width
                             height: advisorInner.implicitHeight + 14
                             radius: 9
-                            color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.08)
+                            color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.08)
                             border.width: 1
-                            border.color: Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.28)
+                            border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.28)
 
                             Column {
                                 id: advisorInner
@@ -1909,14 +1639,14 @@ Item {
                                         name: "advisor"
                                         size: 11.5
                                         stroke: 1.8
-                                        color: t.accent
+                                        color: Theme.accent
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: qsTr("ADVISOR STRATEGY · %1")
                                               .arg(String(tb.responseMeta && tb.responseMeta.advisorFocus ? tb.responseMeta.advisorFocus : "GENERAL").toUpperCase())
-                                        color: t.accent
-                                        font.family: t.font
+                                        color: Theme.accent
+                                        font.family: Theme.font
                                         font.pixelSize: 10
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
@@ -1927,8 +1657,8 @@ Item {
                                     width: parent.width
                                     text: String(tb.responseMeta && tb.responseMeta.advisorInsight ? tb.responseMeta.advisorInsight : "")
                                           .replace(/[#*`]/g, "").trim()
-                                    color: t.inkSoft
-                                    font.family: t.font
+                                    color: Theme.inkSoft
+                                    font.family: Theme.font
                                     font.pixelSize: 11
                                     wrapMode: Text.WordWrap
                                     maximumLineCount: 3
@@ -1944,9 +1674,9 @@ Item {
                             width: parent.width
                             height: agentTodoCol.implicitHeight + 14
                             radius: 9
-                            color: t.tile
+                            color: Theme.tile
                             border.width: 1
-                            border.color: t.borderSoft
+                            border.color: Theme.borderSoft
 
                             Column {
                                 id: agentTodoCol
@@ -1962,13 +1692,13 @@ Item {
                                         name: "tasks"
                                         size: 11
                                         stroke: 1.8
-                                        color: t.accent
+                                        color: Theme.accent
                                     }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: qsTr("AGENT TASKS (%1)").arg(tb.agentTodos.length)
-                                        color: t.textDim
-                                        font.family: t.font
+                                        color: Theme.textDim
+                                        font.family: Theme.font
                                         font.pixelSize: 10
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
@@ -1978,6 +1708,7 @@ Item {
                                 Repeater {
                                     model: tb.agentTodos
                                     Row {
+                                        id: todoRow
                                         required property var modelData
                                         width: agentTodoCol.width
                                         spacing: 6
@@ -1989,27 +1720,27 @@ Item {
                                             width: 13
                                             height: 13
                                             radius: 4
-                                            color: parent.done ? Qt.rgba(t.success.r, t.success.g, t.success.b, 0.18)
-                                                 : (parent.active ? Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.18) : "transparent")
+                                            color: todoRow.done ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.18)
+                                                 : (todoRow.active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent")
                                             border.width: 1
-                                            border.color: parent.done ? t.success : (parent.active ? t.accent : t.borderStrong)
+                                            border.color: todoRow.done ? Theme.success : (todoRow.active ? Theme.accent : Theme.borderStrong)
 
                                             Glyph {
-                                                visible: parent.parent.done || parent.parent.active
+                                                visible: todoRow.done || todoRow.active
                                                 anchors.centerIn: parent
-                                                name: parent.parent.done ? "check" : "bolt"
+                                                name: todoRow.done ? "check" : "bolt"
                                                 size: 8.5
                                                 stroke: 2.0
-                                                color: parent.parent.done ? t.success : t.accent
+                                                color: todoRow.done ? Theme.success : Theme.accent
                                             }
                                         }
 
                                         Text {
                                             width: parent.width - 20
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: String(modelData.content || "")
-                                            color: parent.done ? t.textDim : t.ink
-                                            font.family: t.font
+                                            text: String(todoRow.modelData.content || "")
+                                            color: parent.done ? Theme.textDim : Theme.ink
+                                            font.family: Theme.font
                                             font.pixelSize: 11
                                             font.strikeout: parent.done
                                             elide: Text.ElideRight
@@ -2045,13 +1776,13 @@ Item {
                                     text: isBreak ? "" : modelData.t
                                     textFormat: Text.PlainText
                                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                                    font.family: modelData.c ? "Consolas" : t.font
+                                    font.family: modelData.c ? "Consolas" : Theme.font
                                     font.pixelSize: modelData.c ? 12 : 13
                                     font.weight: modelData.b ? Font.DemiBold : Font.Normal
                                     // Each word arrives in the accent colour and
                                     // settles into ink: a soft trail of light.
-                                    color: !lit ? t.accent
-                                           : (modelData.m ? t.accent : (modelData.c ? t.inkSoft : t.ink))
+                                    color: !lit ? Theme.accent
+                                           : (modelData.m ? Theme.accent : (modelData.c ? Theme.inkSoft : Theme.ink))
                                     Behavior on color { ColorAnimation { duration: 620; easing.type: Easing.OutCubic } }
                                     opacity: lit ? 1 : 0
                                     Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
@@ -2073,13 +1804,14 @@ Item {
                                 model: tb.citations ? tb.citations.slice(0, 4) : []
 
                                 Rectangle {
+                                    id: citeChip
                                     required property var modelData
                                     width: Math.min(chatBodyCol.width, citeRow.implicitWidth + 12)
                                     height: 20
                                     radius: 10
-                                    color: citeHit.containsMouse ? t.hover : t.tile
+                                    color: citeHit.containsMouse ? Theme.hover : Theme.tile
                                     border.width: 1
-                                    border.color: citeHit.containsMouse ? t.accent : t.borderSoft
+                                    border.color: citeHit.containsMouse ? Theme.accent : Theme.borderSoft
 
                                     Row {
                                         id: citeRow
@@ -2092,15 +1824,15 @@ Item {
                                             name: "globe"
                                             size: 10
                                             stroke: 1.7
-                                            color: t.accent
+                                            color: Theme.accent
                                         }
 
                                         Text {
                                             width: Math.min(130, implicitWidth)
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: String(modelData.title || modelData.url || "")
-                                            color: t.inkSoft
-                                            font.family: t.font
+                                            text: String(citeChip.modelData.title || citeChip.modelData.url || "")
+                                            color: Theme.inkSoft
+                                            font.family: Theme.font
                                             font.pixelSize: 10
                                             font.weight: Font.Medium
                                             elide: Text.ElideRight
@@ -2112,10 +1844,28 @@ Item {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
-                                        onClicked: if (modelData.url) Qt.openUrlExternally(modelData.url)
+                                        onClicked: if (citeChip.modelData.url) Qt.openUrlExternally(citeChip.modelData.url)
                                     }
                                 }
                             }
+                        }
+
+                        // Long answers: a quiet note when the reply needed
+                        // "continue" requests, or was still cut off after them.
+                        Text {
+                            readonly property var meta: tb.responseMeta || {}
+                            readonly property bool cut: !!meta.truncated
+                            readonly property int parts: Number(meta.continuations || 0)
+                            width: chatBodyCol.width
+                            visible: !tb.simulated && !tb.revealing && (cut || parts > 0)
+                            text: cut ? qsTr("Reply hit the length limit and may be cut off. Ask me to continue.")
+                                      : qsTr("Long reply, continued %n time(s)", "", parts)
+                            color: cut ? Theme.warning : Theme.textFaint
+                            font.family: Theme.font
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                            Accessible.role: Accessible.StaticText
+                            Accessible.name: text
                         }
 
                         // Anthropic Agent SDK Telemetry Footer Pill
@@ -2127,9 +1877,9 @@ Item {
                                 height: 18
                                 width: sdkMetaRow.implicitWidth + 12
                                 radius: 5
-                                color: Qt.rgba(t.ink.r, t.ink.g, t.ink.b, 0.04)
+                                color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.04)
                                 border.width: 1
-                                border.color: t.borderSoft
+                                border.color: Theme.borderSoft
 
                                 Row {
                                     id: sdkMetaRow
@@ -2141,7 +1891,7 @@ Item {
                                         name: "bolt"
                                         size: 9.5
                                         stroke: 1.8
-                                        color: t.accent
+                                        color: Theme.accent
                                     }
 
                                     Text {
@@ -2151,11 +1901,12 @@ Item {
                                             const parts = []
                                             if (m.model) parts.push(String(m.model))
                                             if (Number(m.turns || 0) > 1) parts.push(m.turns + " turns")
+                                            if (Number(m.handoffs || 0) > 0) parts.push(m.handoffs === 1 ? "1 handoff" : m.handoffs + " handoffs")
                                             if (Number(m.totalTokens || 0) > 0) parts.push(m.totalTokens + " tok")
                                             if (Number(m.durationMs || 0) > 0) parts.push(tb.formatDuration(m.durationMs))
                                             return parts.join(" · ")
                                         }
-                                        color: t.textFaint
+                                        color: Theme.textFaint
                                         font.family: "Consolas"
                                         font.pixelSize: 10
                                     }
@@ -2225,7 +1976,7 @@ Item {
                         IconButton {
                             icon: tb.copied ? "check" : "copy"
                             tip: qsTr("Copy answer")
-                            tint: tb.copied ? t.success : t.textDim
+                            tint: tb.copied ? Theme.success : Theme.textDim
                             active: tb.copied
                             onClicked: tb.copyAnswer()
                         }
@@ -2239,7 +1990,7 @@ Item {
                             tip: qsTr("Thank Buddy")
                             filledIcon: tb.lovedIt
                             active: tb.lovedIt
-                            tint: tb.lovedIt ? "#ff6fae" : t.textDim
+                            tint: tb.lovedIt ? Theme.love : Theme.textDim
                             onClicked: { tb.lovedIt = true; tb.loved() }
                         }
                         IconButton {
@@ -2250,7 +2001,7 @@ Item {
                         IconButton {
                             icon: "close"
                             tip: qsTr("Close")
-                            tint: t.textFaint
+                            tint: Theme.textFaint
                             onClicked: { tb.close(); tb.dismissed() }
                         }
                     }
@@ -2298,15 +2049,15 @@ Item {
                         width: sampleLabel.implicitWidth + 16
                         height: 22
                         radius: 11
-                        color: tb.simulated ? t.tile : Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.14)
+                        color: tb.simulated ? Theme.tile : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.14)
                         border.width: 1
-                        border.color: tb.simulated ? t.border : Qt.rgba(t.accent.r, t.accent.g, t.accent.b, 0.4)
+                        border.color: tb.simulated ? Theme.border : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.4)
                         Text {
                             id: sampleLabel
                             anchors.centerIn: parent
                             text: tb.simulated ? qsTr("Sample content") : qsTr("Handled by Noch")
-                            color: tb.simulated ? t.textDim : t.accent
-                            font.family: t.font
+                            color: tb.simulated ? Theme.textDim : Theme.accent
+                            font.family: Theme.font
                             font.pixelSize: 10
                             font.weight: Font.DemiBold
                         }
@@ -2335,7 +2086,7 @@ Item {
                         IconButton {
                             icon: "close"
                             tip: qsTr("Close")
-                            tint: t.textFaint
+                            tint: Theme.textFaint
                             onClicked: { tb.close(); tb.dismissed() }
                         }
                     }
@@ -2358,16 +2109,16 @@ Item {
                     width: 24
                     height: 24
                     radius: 12
-                    color: Qt.rgba(t.success.r, t.success.g, t.success.b, 0.16)
+                    color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.16)
                     border.width: 1
-                    border.color: Qt.rgba(t.success.r, t.success.g, t.success.b, 0.5)
+                    border.color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.5)
                     scale: 0.6 + 0.4 * tb.contentIn
                     Glyph {
                         anchors.centerIn: parent
                         name: tb.noteIcon
                         size: 13
                         stroke: 2
-                        color: t.success
+                        color: Theme.success
                     }
                 }
                 Text {
@@ -2375,8 +2126,8 @@ Item {
                     x: 46
                     anchors.verticalCenter: parent.verticalCenter
                     text: tb.noteText
-                    color: t.ink
-                    font.family: t.font
+                    color: Theme.ink
+                    font.family: Theme.font
                     font.pixelSize: 13
                     font.weight: Font.DemiBold
                 }
@@ -2404,8 +2155,8 @@ Item {
                     y: 16
                     width: parent.width - 32
                     text: tb.errorMessage
-                    color: t.text
-                    font.family: t.font
+                    color: Theme.text
+                    font.family: Theme.font
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                     maximumLineCount: 4
@@ -2421,19 +2172,19 @@ Item {
                         width: retryRow.implicitWidth + 20
                         height: 28
                         radius: 14
-                        color: retryHit.pressed ? t.press : (retryHit.containsMouse ? t.tileActive : t.tile)
+                        color: retryHit.pressed ? Theme.press : (retryHit.containsMouse ? Theme.tileActive : Theme.tile)
                         border.width: 1
-                        border.color: t.border
+                        border.color: Theme.border
                         Row {
                             id: retryRow
                             anchors.centerIn: parent
                             spacing: 6
-                            Glyph { anchors.verticalCenter: parent.verticalCenter; name: "reset"; size: 12; color: t.textDim }
+                            Glyph { anchors.verticalCenter: parent.verticalCenter; name: "reset"; size: 12; color: Theme.textDim }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: qsTr("Try again")
-                                color: t.ink
-                                font.family: t.font
+                                color: Theme.ink
+                                font.family: Theme.font
                                 font.pixelSize: 12
                                 font.weight: Font.DemiBold
                             }
@@ -2450,14 +2201,14 @@ Item {
                         width: 70
                         height: 28
                         radius: 14
-                        color: closeHit.pressed ? t.press : (closeHit.containsMouse ? t.hover : "transparent")
+                        color: closeHit.pressed ? Theme.press : (closeHit.containsMouse ? Theme.hover : "transparent")
                         border.width: 1
-                        border.color: t.borderSoft
+                        border.color: Theme.borderSoft
                         Text {
                             anchors.centerIn: parent
                             text: qsTr("Close")
-                            color: t.textDim
-                            font.family: t.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                         }
@@ -2493,8 +2244,8 @@ Item {
         clip.text = ""
         copied = true
         copiedTimer.restart()
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("pop")
+        if (BuddySound)
+            BuddySound.play("pop")
     }
 
     function trySubmit() {

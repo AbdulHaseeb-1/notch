@@ -7,7 +7,6 @@ Rectangle {
     property var root: null
     property var cfg: null
 
-    Theme { id: t }
 
     readonly property bool showHud: root.hudVisible
     readonly property string label: showHud ? Math.round(cfg.sizeScale * 100) + "%" : root.tipText
@@ -19,9 +18,9 @@ Rectangle {
     width: targetWidth
     height: 26
     radius: 13
-    color: showHud ? t.surface : t.accent
+    color: showHud ? Theme.surface : Theme.accent
     border.width: showHud ? 1 : 0
-    border.color: t.borderStrong
+    border.color: Theme.borderStrong
     x: targetX
     y: root.shownY + root.pillH + 12 + (shown ? 0 : -4)
     opacity: shown ? 1 : 0
@@ -39,8 +38,8 @@ Rectangle {
         width: Math.min(implicitWidth, self.width - 20)
         elide: Text.ElideRight
         text: self.label
-        color: self.showHud ? t.text : t.inverse
-        font.family: t.font
+        color: self.showHud ? Theme.text : Theme.inverse
+        font.family: Theme.font
         font.pixelSize: 12
         font.weight: Font.Bold
     }

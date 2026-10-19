@@ -1,23 +1,45 @@
 import QtQuick
 
-// Pill switch: white track + black knob when on (Grok style).
+// Pill switch: light stone track + dark knob when on, recessed stone when off.
 Item {
     id: toggle
     property bool checked: false
     property bool enabled2: true
     signal toggled(bool checked)
 
-    Theme { id: t }
 
     implicitWidth: 40
     implicitHeight: 22
     opacity: enabled2 ? 1 : 0.4
+    activeFocusOnTab: enabled2
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: qsTr("Toggle")
+    Accessible.checkable: true
+    Accessible.checked: checked
+    Accessible.onToggleAction: if (enabled2) { checked = !checked; toggled(checked) }
+    Keys.onSpacePressed: (event) => {
+        if (!enabled2) return
+        checked = !checked
+        toggled(checked)
+        event.accepted = true
+    }
+    Keys.onReturnPressed: (event) => {
+        if (!enabled2) return
+        checked = !checked
+        toggled(checked)
+        event.accepted = true
+    }
 
     Rectangle {
         id: track
         anchors.fill: parent
         radius: height / 2
-        color: toggle.checked ? t.accent : (hit.containsMouse ? t.press : t.border)
+        color: toggle.checked ? (hit.containsMouse ? Theme.accentHover : Theme.accent)
+                               : (hit.containsMouse ? Theme.stone600 : Theme.stone650)
+        border.width: (toggle.checked && !toggle.activeFocus) ? 0 : 1
+        // Stronger rim so the off state still reads on raised cards; accent when keyed.
+        border.color: toggle.activeFocus ? Theme.accent
+                    : (hit.containsMouse ? Theme.stone400 : Theme.stone500)
         Behavior on color { ColorAnimation { duration: 160 } }
     }
 
@@ -28,7 +50,7 @@ Item {
         radius: width / 2
         y: 3
         x: toggle.checked ? parent.width - width - 3 : 3
-        color: toggle.checked ? t.inverse : t.text
+        color: toggle.checked ? Theme.inverse : Theme.stone300
         scale: hit.pressed ? 0.88 : 1
         Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         Behavior on color { ColorAnimation { duration: 150 } }

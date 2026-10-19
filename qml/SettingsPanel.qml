@@ -1,5 +1,5 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Shapes
 
 // Wide, solid-surface Settings panel under the notch.
 // Organized into three spacious pages:
@@ -14,7 +14,6 @@ Item {
     property var runningList: []
     property bool startupSupported: false
     property bool launchAtStartup: false
-    property bool lightTheme: false
     property bool blurSupported: false
     property bool blurBehind: false
     property real maxPanelWidth: 620
@@ -29,14 +28,23 @@ Item {
     signal unpinRequested(int index)
     signal moveRequested(int from, int to)
     signal startupToggled(bool enabled)
-    signal themeToggled(bool light)
     signal blurToggled(bool on)
     signal resetBuddyPosRequested()
-    signal ringPreviewRequested()
 
-    Theme { id: t }
 
     property int tab: 0
+    focus: true
+    Keys.onPressed: (event) => {
+        if (event.modifiers & Qt.ControlModifier) {
+            if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                tab = (tab + (event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? 2 : 1)) % 3
+                event.accepted = true
+            } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_3) {
+                tab = event.key - Qt.Key_1
+                event.accepted = true
+            }
+        }
+    }
     property string appFilter: ""
     property var availableList: []
 
@@ -74,8 +82,8 @@ Item {
     function chatEndpoint() {
         const p = panel.prefs ? panel.prefs.buddyProvider : "none"
         const base = panel.prefs ? panel.prefs.buddyApiBase : ""
-        if (buddyProvider)
-            return buddyProvider.chatUrl()
+        if (BuddyAgent)
+            return BuddyAgent.chatUrl()
         const b = (String(base).trim() || panel.infoFor(p).base).replace(/\/+$/, "")
         if (p === "ollama")
             return b + "/api/chat"
@@ -141,12 +149,12 @@ Item {
 
     function runTest() {
         panel.testState = "testing"
-        panel.testMessage = qsTr("Checking %1…").arg(buddyProvider.modelsUrl())
-        buddyProvider.probe()
+        panel.testMessage = qsTr("Checking %1…").arg(BuddyAgent.modelsUrl())
+        BuddyAgent.probe()
     }
 
     Connections {
-        target: buddyProvider
+        target: BuddyAgent
         function onTestFinished(ok, message) {
             panel.testState = ok ? "ok" : "failed"
             panel.testMessage = message
@@ -156,10 +164,18 @@ Item {
         }
     }
 
-    readonly property real headerH: 62
-    readonly property real footerH: 48
+    readonly property real headerH: 64
+    readonly property real footerH: 50
 
-    implicitWidth: Math.min(620, maxPanelWidth)
+    // Wide by default, always clamped to the screen. Below ~760 px the
+    // two-column pages fall back to a single column.
+    implicitWidth: Theme.fit(Theme.settingsWidth, maxPanelWidth)
+    readonly property real bodyW: width - 40
+    readonly property bool wide: bodyW >= 720
+    readonly property real colGap: 16
+    readonly property real colW: wide ? Math.floor((bodyW - colGap) / 2) : bodyW
+    // The Apps lists grow with the screen instead of a fixed 322 px.
+    readonly property real appsListH: Math.max(240, Math.min(460, maxBodyHeight - 80))
     implicitHeight: headerH + 1 + content.height + 1 + footerH
 
     readonly property real naturalBodyHeight: tab === 0
@@ -169,11 +185,11 @@ Item {
     readonly property real targetHeight: headerH + 1 + targetBodyHeight + 1 + footerH
 
     function refreshAvailableApps() {
-        const raw = search.availableApps(panel.appFilter)
+        const raw = AppIndex.availableApps(panel.appFilter)
         const filtered = []
         for (let i = 0; i < raw.length; ++i) {
             const item = raw[i]
-            if (!dock.isPinned(item.path || "", item.exe || ""))
+            if (!Dock.isPinned(item.path || "", item.exe || ""))
                 filtered.push(item)
         }
         panel.availableList = filtered
@@ -186,7 +202,7 @@ Item {
     Component.onCompleted: refreshAvailableApps()
 
     Connections {
-        target: search
+        target: AppIndex
         function onIndexReady() {
             if (panel.visible)
                 panel.refreshAvailableApps()
@@ -194,214 +210,6 @@ Item {
     }
 
     // ---------- reusable components -------------------------------------------
-    // ---- colour pickers ------------------------------------------------------
-    // Options come from Appearance, already resolved for light/dark; reading
-    // appearance.colors makes the lists refresh when the mode or accent flips.
-    readonly property var paletteOpts: { appearance.colors; return appearance.paletteOptions() }
-    readonly property var accentOpts: { appearance.colors; return appearance.accentOptions() }
-    readonly property var ringOpts: { appearance.colors; return appearance.ringOptions() }
-    function optionLabel(list, id) {
-        for (let i = 0; i < list.length; ++i)
-            if (list[i].id === id)
-                return list[i].label
-        return ""
-    }
-
-    // A miniature of a surface family: a card with a raised bar and an
-    // accent chip, so the choice is visible before it is made.
-    component PaletteSwatch: Item {
-        id: ps
-        property var option: ({})
-        property bool selected: false
-        signal picked()
-        width: 84
-        height: 64
-
-        Rectangle {
-            id: psCard
-            width: parent.width
-            height: 44
-            radius: 12
-            color: ps.option.surface || "transparent"
-            border.width: ps.selected ? 2 : 1
-            border.color: ps.selected ? t.accent : (ps.option.border || t.border)
-            scale: psHit.pressed ? 0.95 : (psHit.containsMouse ? 1.03 : 1)
-            Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-            Behavior on border.color { ColorAnimation { duration: 160 } }
-
-            Rectangle { x: 9; y: 9; width: parent.width - 18; height: 9; radius: 4.5; color: ps.option.raised || "transparent" }
-            Rectangle { x: 9; y: 25; width: 24; height: 9; radius: 4.5; color: t.accent }
-            Rectangle { x: 37; y: 25; width: 18; height: 9; radius: 4.5; color: ps.option.raised || "transparent" }
-
-            Rectangle {
-                anchors.right: parent.right
-                anchors.rightMargin: -5
-                anchors.top: parent.top
-                anchors.topMargin: -5
-                width: 18
-                height: 18
-                radius: 9
-                color: t.accent
-                border.width: 2
-                border.color: t.raised
-                scale: ps.selected ? 1 : 0
-                Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
-                Glyph { anchors.centerIn: parent; name: "check"; size: 10; stroke: 2.2; color: t.inverse }
-            }
-        }
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 49
-            text: ps.option.label || ""
-            color: ps.selected ? t.ink : t.textDim
-            font.family: t.font
-            font.pixelSize: 11
-            font.weight: ps.selected ? Font.DemiBold : Font.Medium
-        }
-        MouseArea {
-            id: psHit
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            Accessible.role: Accessible.RadioButton
-            Accessible.name: ps.option.label || ""
-            Accessible.checked: ps.selected
-            onClicked: ps.picked()
-        }
-    }
-
-    // A colour dot; the chosen one gets a ring around it.
-    component AccentSwatch: Item {
-        id: acs
-        property var option: ({})
-        property bool selected: false
-        signal picked()
-        width: 30
-        height: 30
-
-        Rectangle {
-            anchors.fill: parent
-            radius: width / 2
-            color: "transparent"
-            border.width: 2
-            border.color: acs.option.color || "transparent"
-            opacity: acs.selected ? 1 : 0
-            scale: acs.selected ? 1 : 0.7
-            Behavior on opacity { NumberAnimation { duration: 160 } }
-            Behavior on scale { NumberAnimation { duration: 220; easing.type: Easing.OutBack } }
-        }
-        Rectangle {
-            anchors.centerIn: parent
-            width: acs.selected ? 20 : (asHit.containsMouse ? 24 : 22)
-            height: width
-            radius: width / 2
-            color: acs.option.color || "transparent"
-            Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        }
-        MouseArea {
-            id: asHit
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            Accessible.role: Accessible.RadioButton
-            Accessible.name: acs.option.label || ""
-            Accessible.checked: acs.selected
-            onClicked: acs.picked()
-        }
-    }
-
-    // A tiny buddy wearing the ring, so each preset is shown on the real thing.
-    component RingSwatch: Item {
-        id: rs
-        property var option: ({})
-        property bool selected: false
-        readonly property var stops: option.colors && option.colors.length === 4
-                                     ? option.colors : ["#ffffff", "#ffffff", "#ffffff", "#ffffff"]
-        signal picked()
-        width: 70
-        height: 74
-
-        Rectangle {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 2
-            width: 52
-            height: 52
-            radius: 26
-            color: rs.selected || rsHit.containsMouse ? t.hover : "transparent"
-            border.width: rs.selected ? 1 : 0
-            border.color: t.borderStrong
-            Behavior on color { ColorAnimation { duration: 140 } }
-        }
-
-        Item {
-            id: rsArt
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 8
-            width: 40
-            height: 40
-            scale: rsHit.pressed ? 0.92 : (rsHit.containsMouse ? 1.06 : 1)
-            Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutBack } }
-
-            Rectangle {
-                anchors.centerIn: parent
-                width: 32
-                height: 32
-                radius: 16
-                color: t.orb
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 5
-                    Repeater {
-                        model: 2
-                        Rectangle { width: 4; height: 9; radius: 2; color: "#ffffff" }
-                    }
-                }
-            }
-            Shape {
-                anchors.fill: parent
-                preferredRendererType: Shape.CurveRenderer
-                rotation: rsHit.containsMouse ? 120 : 0
-                Behavior on rotation { NumberAnimation { duration: 700; easing.type: Easing.OutCubic } }
-                ShapePath {
-                    strokeColor: "transparent"
-                    strokeWidth: -1
-                    fillRule: ShapePath.OddEvenFill
-                    fillGradient: ConicalGradient {
-                        centerX: 20
-                        centerY: 20
-                        angle: 90
-                        GradientStop { position: 0.00; color: rs.stops[0] }
-                        GradientStop { position: 0.27; color: rs.stops[1] }
-                        GradientStop { position: 0.52; color: rs.stops[2] }
-                        GradientStop { position: 0.76; color: rs.stops[3] }
-                        GradientStop { position: 1.00; color: rs.stops[0] }
-                    }
-                    PathAngleArc { centerX: 20; centerY: 20; radiusX: 18.5; radiusY: 18.5; startAngle: 0; sweepAngle: 360 }
-                    PathAngleArc { moveToStart: true; centerX: 20; centerY: 20; radiusX: 15.5; radiusY: 15.5; startAngle: 0; sweepAngle: 360 }
-                }
-            }
-        }
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 58
-            text: rs.option.label || ""
-            color: rs.selected ? t.ink : t.textDim
-            font.family: t.font
-            font.pixelSize: 11
-            font.weight: rs.selected ? Font.DemiBold : Font.Medium
-        }
-        MouseArea {
-            id: rsHit
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            Accessible.role: Accessible.RadioButton
-            Accessible.name: rs.option.label || ""
-            Accessible.checked: rs.selected
-            onClicked: rs.picked()
-        }
-    }
-
     component SectionHeader: Item {
         property string title
         property string rightText: ""
@@ -413,8 +221,8 @@ Item {
             anchors.leftMargin: 2
             anchors.verticalCenter: parent.verticalCenter
             text: parent.title.toUpperCase()
-            color: t.textDim
-            font.family: t.font
+            color: Theme.textDim
+            font.family: Theme.font
             font.pixelSize: 11
             font.weight: Font.Bold
             font.letterSpacing: 0.8
@@ -425,8 +233,8 @@ Item {
             anchors.rightMargin: 2
             anchors.verticalCenter: parent.verticalCenter
             text: parent.rightText
-            color: t.textFaint
-            font.family: t.font
+            color: Theme.textFaint
+            font.family: Theme.font
             font.pixelSize: 11
             font.weight: Font.DemiBold
         }
@@ -437,9 +245,9 @@ Item {
         width: parent ? parent.width : 340
         implicitHeight: innerCol.implicitHeight + 24
         radius: 14
-        color: t.raised
+        color: Theme.raised
         border.width: 1
-        border.color: t.borderSoft
+        border.color: Theme.borderSoft
 
         Column {
             id: innerCol
@@ -453,7 +261,7 @@ Item {
     component CardDivider: Rectangle {
         width: parent ? parent.width : 300
         height: 1
-        color: t.borderSoft
+        color: Theme.borderSoft
     }
 
     component ToggleRow: Item {
@@ -478,8 +286,8 @@ Item {
 
             Text {
                 text: tr.label
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
             }
@@ -487,8 +295,8 @@ Item {
                 visible: tr.sub.length > 0
                 width: parent.width
                 text: tr.sub
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 lineHeight: 1.15
@@ -505,67 +313,6 @@ Item {
         }
     }
 
-    // Compact tile for 2-column grid settings on the wider General tab.
-    component ToggleTile: Rectangle {
-        id: tt
-        property string label
-        property string sub: ""
-        property bool checked
-        property bool enabled2: true
-        signal toggled(bool checked)
-
-        height: 68
-        radius: 12
-        color: t.raised
-        border.width: 1
-        border.color: tileHover.hovered ? t.border : t.borderSoft
-        Behavior on border.color { ColorAnimation { duration: 120 } }
-
-        HoverHandler { id: tileHover }
-
-        Column {
-            anchors.left: parent.left
-            anchors.leftMargin: 14
-            anchors.right: tileSwitch.left
-            anchors.rightMargin: 12
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 3
-            opacity: tt.enabled2 ? 1 : 0.45
-
-            Text {
-                width: parent.width
-                text: tt.label
-                color: t.ink
-                font.family: t.font
-                font.pixelSize: 13
-                font.weight: Font.DemiBold
-                elide: Text.ElideRight
-            }
-            Text {
-                visible: tt.sub.length > 0
-                width: parent.width
-                text: tt.sub
-                color: t.textDim
-                font.family: t.font
-                font.pixelSize: 11
-                wrapMode: Text.WordWrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-                lineHeight: 1.12
-            }
-        }
-
-        Toggle {
-            id: tileSwitch
-            anchors.right: parent.right
-            anchors.rightMargin: 14
-            anchors.verticalCenter: parent.verticalCenter
-            checked: tt.checked
-            enabled2: tt.enabled2
-            onToggled: (c) => tt.toggled(c)
-        }
-    }
-
     component IconButton: Item {
         id: ib
         property string icon
@@ -578,14 +325,14 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: 7
-            color: ibHit.containsMouse ? (ib.danger ? t.dangerSoft : t.tile) : "transparent"
+            color: ibHit.containsMouse ? (ib.danger ? Theme.dangerSoft : Theme.tile) : "transparent"
         }
         Glyph {
             anchors.centerIn: parent
             name: ib.icon
             size: ib.glyphSize
-            color: ib.danger && ibHit.containsMouse ? t.danger
-                 : ibHit.containsMouse ? t.ink : t.textDim
+            color: ib.danger && ibHit.containsMouse ? Theme.danger
+                 : ibHit.containsMouse ? Theme.ink : Theme.textDim
             scale: ibHit.pressed ? 0.86 : 1
             Behavior on scale { NumberAnimation { duration: 100 } }
         }
@@ -612,11 +359,11 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: spb.primary ? (spbHit.containsMouse ? t.accentHover : t.accent)
-                 : spb.danger ? (spbHit.containsMouse ? t.dangerSoft : "transparent")
-                 : (spbHit.containsMouse ? t.tileActive : t.tile)
+            color: spb.primary ? (spbHit.containsMouse ? Theme.accentHover : Theme.accent)
+                 : spb.danger ? (spbHit.containsMouse ? Theme.dangerSoft : "transparent")
+                 : (spbHit.containsMouse ? Theme.tileActive : Theme.tile)
             border.width: spb.primary ? 0 : 1
-            border.color: spb.danger && spbHit.containsMouse ? t.danger : t.border
+            border.color: spb.danger && spbHit.containsMouse ? Theme.danger : Theme.border
             scale: spbHit.pressed ? 0.95 : 1
             Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
         }
@@ -630,13 +377,13 @@ Item {
                 name: spb.icon
                 size: 12
                 stroke: 2.1
-                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.ink)
+                color: spb.primary ? Theme.inverse : (spb.danger ? Theme.danger : Theme.ink)
             }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: spb.label
-                color: spb.primary ? t.inverse : (spb.danger ? t.danger : t.ink)
-                font.family: t.font
+                color: spb.primary ? Theme.inverse : (spb.danger ? Theme.danger : Theme.ink)
+                font.family: Theme.font
                 font.pixelSize: 12
                 font.weight: Font.Bold
             }
@@ -678,8 +425,8 @@ Item {
             width: parent.width
             height: 15
             text: fb.label
-            color: t.textDim
-            font.family: t.font
+            color: Theme.textDim
+            font.family: Theme.font
             font.pixelSize: 11
             font.weight: Font.DemiBold
         }
@@ -691,9 +438,9 @@ Item {
             width: parent.width
             height: 36
             radius: 10
-            color: t.field
+            color: Theme.field
             border.width: 1
-            border.color: fbInput.activeFocus ? t.accent : t.fieldBorder
+            border.color: fbInput.activeFocus ? Theme.accent : Theme.fieldBorder
             Behavior on border.color { ColorAnimation { duration: 130 } }
 
             MouseArea {
@@ -720,7 +467,7 @@ Item {
                     name: "close"
                     size: 10
                     stroke: 2.2
-                    color: fbClearHit.containsMouse ? t.text : t.textFaint
+                    color: fbClearHit.containsMouse ? Theme.text : Theme.textFaint
                 }
                 MouseArea {
                     id: fbClearHit
@@ -746,7 +493,7 @@ Item {
                     name: fb.revealed ? "eye-off" : "eye"
                     size: 13
                     stroke: 1.7
-                    color: fbRevealHit.containsMouse ? t.text : t.textFaint
+                    color: fbRevealHit.containsMouse ? Theme.text : Theme.textFaint
                 }
                 MouseArea {
                     id: fbRevealHit
@@ -769,10 +516,10 @@ Item {
             anchors.verticalCenter: fbBox.verticalCenter
             height: 20
             verticalAlignment: TextInput.AlignVCenter
-            color: t.ink
-            selectionColor: t.accent
-            selectedTextColor: t.inverse
-            font.family: fb.mono ? "Consolas" : t.font
+            color: Theme.ink
+            selectionColor: Theme.accent
+            selectedTextColor: Theme.inverse
+            font.family: fb.mono ? "Consolas" : Theme.font
             font.pixelSize: 13
             clip: true
             selectByMouse: true
@@ -790,7 +537,7 @@ Item {
                 visible: fbInput.text.length === 0
                 verticalAlignment: TextInput.AlignVCenter
                 text: fb.placeholder
-                color: t.textFaint
+                color: Theme.textFaint
                 font: fbInput.font
                 elide: Text.ElideRight
             }
@@ -802,8 +549,8 @@ Item {
             visible: fb.hint.length > 0
             width: parent.width
             text: fb.hint
-            color: t.textFaint
-            font.family: t.font
+            color: Theme.textFaint
+            font.family: Theme.font
             font.pixelSize: 11
             elide: Text.ElideMiddle
         }
@@ -820,10 +567,10 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: chip.selected ? t.accent
-                 : chipHit.containsMouse ? t.tileActive : t.tile
+            color: chip.selected ? Theme.accent
+                 : chipHit.containsMouse ? Theme.tileActive : Theme.tile
             border.width: chip.selected ? 0 : 1
-            border.color: t.border
+            border.color: Theme.border
             Behavior on color { ColorAnimation { duration: 120 } }
             scale: chipHit.pressed ? 0.96 : 1
             Behavior on scale { NumberAnimation { duration: 100 } }
@@ -832,8 +579,8 @@ Item {
             id: chipText
             anchors.centerIn: parent
             text: chip.text
-            color: chip.selected ? t.inverse : (chipHit.containsMouse ? t.ink : t.textDim)
-            font.family: t.font
+            color: chip.selected ? Theme.inverse : (chipHit.containsMouse ? Theme.ink : Theme.textDim)
+            font.family: Theme.font
             font.pixelSize: 11
             font.weight: chip.selected ? Font.DemiBold : Font.Medium
             Behavior on color { ColorAnimation { duration: 120 } }
@@ -865,8 +612,8 @@ Item {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: ls.label
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
             }
@@ -874,8 +621,8 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 text: Number(ls.value).toFixed(ls.decimals)
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.Bold
                 font.features: ({ "tnum": 1 })
@@ -905,17 +652,17 @@ Item {
 
             Text {
                 text: qsTr("Settings")
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 16
                 font.weight: Font.Bold
             }
             Text {
-                text: panel.tab === 0 ? qsTr("Scale, appearance & system behavior")
+                text: panel.tab === 0 ? qsTr("Size, notch & system behavior")
                     : (panel.tab === 1 ? qsTr("Manage pinned dock & installed apps")
-                                       : qsTr("Desktop buddy & AI provider"))
-                color: t.textDim
-                font.family: t.font
+                                       : qsTr("Buddy, AI provider & agent tools"))
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 11
             }
         }
@@ -924,7 +671,7 @@ Item {
             anchors.right: closeBtn.left
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
-            width: 300
+            width: Math.min(340, panel.width - 260)
             height: 34
             options: [
                 { label: qsTr("General"), value: 0 },
@@ -953,7 +700,7 @@ Item {
         anchors.top: header.bottom
         width: parent.width
         height: 1
-        color: t.borderSoft
+        color: Theme.borderSoft
     }
 
     // ---------- body ----------------------------------------------------------
@@ -977,244 +724,182 @@ Item {
             visible: panel.tab === 0 || general.opacity > 0.01
             z: panel.tab === 0 ? 1 : 0
 
-            Column {
+            Flow {
                 id: general
                 x: 20 - (panel.tab === 0 ? 0 : 16)
                 width: content.width - 40
                 topPadding: 16
-                bottomPadding: 16
-                spacing: 12
+                bottomPadding: 18
+                spacing: panel.colGap
                 opacity: panel.tab === 0 ? 1 : 0
                 enabled: panel.tab === 0
                 Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-                SectionHeader {
-                    title: qsTr("Size & Scale")
-                    rightText: Math.round(panel.prefs.sizeScale * 100) + "%"
-                }
+                Column {
+                    width: panel.colW
+                    spacing: 12
 
-                GroupCard {
-                    Row {
-                        width: parent.width
-                        spacing: 14
+                    SectionHeader {
+                        title: qsTr("Size & scale")
+                        rightText: Math.round(panel.prefs.sizeScale * 100) + "%"
+                    }
 
-                        Segmented {
-                            width: 220
+                    GroupCard {
+                        Item {
+                            width: parent.width
                             height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-                            options: [
-                                { label: "S", value: 0.8 },
-                                { label: "M", value: 1.0 },
-                                { label: "L", value: 1.2 },
-                                { label: "XL", value: 1.4 }
-                            ]
-                            value: panel.prefs.sizeScale
-                            onPicked: (v) => panel.prefs.sizeScale = v
-                        }
 
-                        SizeSlider {
-                            width: parent.width - 234
-                            anchors.verticalCenter: parent.verticalCenter
-                            from: 0.7
-                            to: 1.6
-                            value: panel.prefs.sizeScale
-                            onMoved: (v) => panel.prefs.sizeScale = Math.round(v * 100) / 100
-                        }
-                    }
+                            Segmented {
+                                id: sizePresets
+                                width: Math.min(200, parent.width * 0.5)
+                                height: 32
+                                anchors.verticalCenter: parent.verticalCenter
+                                options: [
+                                    { label: "S", value: 0.8 },
+                                    { label: "M", value: 1.0 },
+                                    { label: "L", value: 1.2 },
+                                    { label: "XL", value: 1.4 }
+                                ]
+                                value: panel.prefs.sizeScale
+                                onPicked: (v) => panel.prefs.sizeScale = v
+                            }
 
-                    Text {
-                        width: parent.width
-                        text: qsTr("Drag the handle below the notch or Ctrl + scroll on the notch to resize live.")
-                        color: t.textFaint
-                        font.family: t.font
-                        font.pixelSize: 11
-                        wrapMode: Text.WordWrap
-                    }
-                }
-
-                SectionHeader { title: qsTr("Appearance & Bar") }
-
-                // 2x2 grid of appearance cards utilizing the wider layout
-                Grid {
-                    width: parent.width
-                    columns: 2
-                    rowSpacing: 10
-                    columnSpacing: 10
-
-                    readonly property real tileW: Math.floor((width - columnSpacing) / 2)
-
-                    ToggleTile {
-                        width: parent.tileW
-                        label: qsTr("Light theme")
-                        sub: qsTr("Crisp light surface instead of dark carbon.")
-                        checked: panel.lightTheme
-                        onToggled: (c) => panel.themeToggled(c)
-                    }
-                    ToggleTile {
-                        width: parent.tileW
-                        label: qsTr("Monochrome icons")
-                        sub: qsTr("Render dock icons in high-contrast monochrome.")
-                        checked: panel.prefs.monoIcons
-                        onToggled: (c) => panel.prefs.monoIcons = c
-                    }
-                    ToggleTile {
-                        width: parent.tileW
-                        label: qsTr("Show clock")
-                        sub: qsTr("Display current time and date on the notch.")
-                        checked: panel.prefs.showClock
-                        onToggled: (c) => panel.prefs.showClock = c
-                    }
-                }
-
-                SectionHeader {
-                    title: qsTr("Theme colours")
-                    rightText: panel.optionLabel(panel.paletteOpts, appearance.palette)
-                               + " · " + panel.optionLabel(panel.accentOpts, appearance.accent)
-                }
-
-                GroupCard {
-                    Text {
-                        text: qsTr("Surface")
-                        color: t.textDim
-                        font.family: t.font
-                        font.pixelSize: 12
-                        font.weight: Font.Medium
-                    }
-                    Flow {
-                        width: parent.width
-                        spacing: 12
-                        Repeater {
-                            model: panel.paletteOpts
-                            PaletteSwatch {
-                                required property var modelData
-                                option: modelData
-                                selected: appearance.palette === modelData.id
-                                onPicked: appearance.palette = modelData.id
+                            SizeSlider {
+                                anchors.left: sizePresets.right
+                                anchors.leftMargin: 14
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                from: 0.7
+                                to: 1.6
+                                value: panel.prefs.sizeScale
+                                onMoved: (v) => panel.prefs.sizeScale = Math.round(v * 100) / 100
                             }
                         }
-                    }
 
-                    CardDivider {}
-
-                    Item {
-                        width: parent.width
-                        height: 34
                         Text {
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: qsTr("Accent")
-                            color: t.textDim
-                            font.family: t.font
-                            font.pixelSize: 12
-                            font.weight: Font.Medium
-                        }
-                        Row {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 8
-                            Repeater {
-                                model: panel.accentOpts
-                                AccentSwatch {
-                                    required property var modelData
-                                    option: modelData
-                                    selected: appearance.accent === modelData.id
-                                    onPicked: appearance.accent = modelData.id
-                                }
-                            }
-                        }
-                    }
-                }
-
-                SectionHeader { title: qsTr("Behavior & System") }
-
-                GroupCard {
-                    ToggleRow {
-                        label: qsTr("Auto-hide notch")
-                        sub: qsTr("Tucks into the top edge; hover the top dash to reveal.")
-                        checked: panel.prefs.autoHide
-                        onToggled: (c) => panel.prefs.autoHide = c
-                    }
-
-                    Item {
-                        visible: panel.prefs.autoHide
-                        width: parent.width
-                        height: 32
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: qsTr("Hide delay")
-                            color: t.textDim
-                            font.family: t.font
-                            font.pixelSize: 12
-                            font.weight: Font.Medium
-                        }
-                        Segmented {
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 268
-                            height: 28
-                            options: [
-                                { label: "0.3s", value: 300 },
-                                { label: "0.8s", value: 800 },
-                                { label: "1.2s", value: 1200 },
-                                { label: "1.5s", value: 1500 },
-                                { label: "3s", value: 3000 }
-                            ]
-                            value: panel.prefs.hideDelay
-                            onPicked: (v) => panel.prefs.hideDelay = v
+                            width: parent.width
+                            text: qsTr("Drag the handle below the notch, or Ctrl + scroll on it, to resize live.")
+                            color: Theme.textFaint
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontSm
+                            wrapMode: Text.WordWrap
                         }
                     }
 
-                    CardDivider {}
-                    ToggleRow {
-                        label: qsTr("Quiet in fullscreen")
-                        sub: qsTr("Ignore top-edge hover while a game or fullscreen video is active.")
-                        checked: panel.prefs.suppressInFullscreen
-                        onToggled: (c) => panel.prefs.suppressInFullscreen = c
-                    }
-                    CardDivider {}
-                    Item {
-                        width: parent.width
-                        implicitHeight: buddyToggle.implicitHeight
+                    SectionHeader { title: qsTr("Notch") }
 
+                    GroupCard {
                         ToggleRow {
-                            id: buddyToggle
-                            width: parent.width - (resetPosBtn.visible ? resetPosBtn.width + 12 : 0)
-                            label: qsTr("Desktop buddy")
-                            sub: qsTr("Interactive orb companion. Drag it anywhere or click it for tasks, timers and AI chat.")
-                            checked: panel.prefs.buddyEnabled
-                            onToggled: (c) => panel.prefs.buddyEnabled = c
+                            label: qsTr("Monochrome app icons")
+                            sub: qsTr("Render dock icons in quiet monochrome that sits well on dark stone.")
+                            checked: panel.prefs.monoIcons
+                            onToggled: (c) => panel.prefs.monoIcons = c
                         }
-                        SmallPillButton {
-                            id: resetPosBtn
-                            visible: panel.buddyMovedCustom
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            icon: "reset"
-                            label: qsTr("Reset position")
-                            onClicked: panel.resetBuddyPosRequested()
+                        CardDivider {}
+                        ToggleRow {
+                            label: qsTr("Show clock")
+                            sub: qsTr("Time and date on the right of the notch. Click it for the timer and clipboard.")
+                            checked: panel.prefs.showClock
+                            onToggled: (c) => panel.prefs.showClock = c
                         }
                     }
-                    CardDivider {}
-                    ToggleRow {
-                        label: qsTr("Command palette hotkey")
-                        sub: !panel.prefs.hotkeyPalette
-                             ? qsTr("Off. Ctrl + Alt + Space summons search from anywhere.")
-                             : (!hotkey.registered
-                                ? qsTr("Shortcut unavailable on this PC.")
-                                : (hotkey.preferred
-                                   ? qsTr("Press Ctrl + Alt + Space anywhere to search.")
-                                   : qsTr("Active on %1.").arg(hotkey.shortcut)))
-                        checked: panel.prefs.hotkeyPalette
-                        onToggled: (c) => panel.prefs.hotkeyPalette = c
-                    }
-                    CardDivider { visible: panel.startupSupported }
-                    ToggleRow {
-                        visible: panel.startupSupported
-                        label: qsTr("Launch at startup")
-                        sub: qsTr("Start Noch automatically when you sign in to Windows.")
-                        checked: panel.launchAtStartup
-                        onToggled: (c) => panel.startupToggled(c)
+                }
+
+                Column {
+                    width: panel.colW
+                    spacing: 12
+
+                    SectionHeader { title: qsTr("Behavior & system") }
+
+                    GroupCard {
+                        ToggleRow {
+                            label: qsTr("Auto-hide notch")
+                            sub: qsTr("Tucks into the top edge; hover the top dash to reveal.")
+                            checked: panel.prefs.autoHide
+                            onToggled: (c) => panel.prefs.autoHide = c
+                        }
+
+                        Item {
+                            visible: panel.prefs.autoHide
+                            width: parent.width
+                            height: 32
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: qsTr("Hide delay")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 12
+                                font.weight: Font.Medium
+                            }
+                            Segmented {
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 268
+                                height: 28
+                                options: [
+                                    { label: "0.3s", value: 300 },
+                                    { label: "0.8s", value: 800 },
+                                    { label: "1.2s", value: 1200 },
+                                    { label: "1.5s", value: 1500 },
+                                    { label: "3s", value: 3000 }
+                                ]
+                                value: panel.prefs.hideDelay
+                                onPicked: (v) => panel.prefs.hideDelay = v
+                            }
+                        }
+
+                        CardDivider {}
+                        ToggleRow {
+                            label: qsTr("Quiet in fullscreen")
+                            sub: qsTr("Ignore top-edge hover while a game or fullscreen video is active.")
+                            checked: panel.prefs.suppressInFullscreen
+                            onToggled: (c) => panel.prefs.suppressInFullscreen = c
+                        }
+                        CardDivider {}
+                        Item {
+                            width: parent.width
+                            implicitHeight: buddyToggle.implicitHeight
+
+                            ToggleRow {
+                                id: buddyToggle
+                                width: parent.width - (resetPosBtn.visible ? resetPosBtn.width + 12 : 0)
+                                label: qsTr("Desktop buddy")
+                                sub: qsTr("Interactive orb companion. Drag it anywhere or click it for tasks, timers and AI chat.")
+                                checked: panel.prefs.buddyEnabled
+                                onToggled: (c) => panel.prefs.buddyEnabled = c
+                            }
+                            SmallPillButton {
+                                id: resetPosBtn
+                                visible: panel.buddyMovedCustom
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                icon: "reset"
+                                label: qsTr("Reset position")
+                                onClicked: panel.resetBuddyPosRequested()
+                            }
+                        }
+                        CardDivider {}
+                        ToggleRow {
+                            label: qsTr("Command palette hotkey")
+                            sub: !panel.prefs.hotkeyPalette
+                                 ? qsTr("Off. Ctrl + Alt + Space summons search from anywhere.")
+                                 : (!Hotkey.registered
+                                    ? qsTr("Shortcut unavailable on this PC.")
+                                    : (Hotkey.preferred
+                                       ? qsTr("Press Ctrl + Alt + Space anywhere to search.")
+                                       : qsTr("Active on %1.").arg(Hotkey.shortcut)))
+                            checked: panel.prefs.hotkeyPalette
+                            onToggled: (c) => panel.prefs.hotkeyPalette = c
+                        }
+                        CardDivider { visible: panel.startupSupported }
+                        ToggleRow {
+                            visible: panel.startupSupported
+                            label: qsTr("Launch at startup")
+                            sub: qsTr("Start Noch automatically when you sign in to Windows.")
+                            checked: panel.launchAtStartup
+                            onToggled: (c) => panel.startupToggled(c)
+                        }
                     }
                 }
             }
@@ -1235,7 +920,7 @@ Item {
                 id: appsView
                 x: 20 + (panel.tab === 1 ? 0 : 16)
                 width: content.width - 40
-                implicitHeight: 392
+                implicitHeight: panel.appsListH + 72
                 height: implicitHeight
                 opacity: panel.tab === 1 ? 1 : 0
                 enabled: panel.tab === 1
@@ -1262,8 +947,8 @@ Item {
                             anchors.leftMargin: 2
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("PINNED (%1)").arg(panel.dockModel.length)
-                            color: t.textDim
-                            font.family: t.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 11
                             font.weight: Font.Bold
                             font.letterSpacing: 0.8
@@ -1289,11 +974,11 @@ Item {
 
                     Rectangle {
                         width: parent.width
-                        height: 322
+                        height: panel.appsListH
                         radius: 14
-                        color: t.raised
+                        color: Theme.raised
                         border.width: 1
-                        border.color: t.borderSoft
+                        border.color: Theme.borderSoft
                         clip: true
 
                         Text {
@@ -1303,8 +988,8 @@ Item {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
                             text: qsTr("No apps pinned yet.\nClick + Add on the right to pin apps.")
-                            color: t.textDim
-                            font.family: t.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 12
                         }
 
@@ -1340,7 +1025,7 @@ Item {
                                 Rectangle {
                                     anchors.fill: parent
                                     radius: 9
-                                    color: rowHover.hovered ? t.hover : "transparent"
+                                    color: rowHover.hovered ? Theme.hover : "transparent"
                                 }
 
                                 Item {
@@ -1354,7 +1039,7 @@ Item {
                                         id: rowImg
                                         anchors.fill: parent
                                         source: appRow.modelData.iconId
-                                                ? "image://appicon/" + (panel.prefs.monoIcons ? t.iconMono : "color") + "/" + appRow.modelData.iconId
+                                                ? "image://appicon/" + (panel.prefs.monoIcons ? Theme.iconMono : "color") + "/" + appRow.modelData.iconId
                                                 : ""
                                         sourceSize: Qt.size(96, 96)
                                         mipmap: true
@@ -1366,16 +1051,15 @@ Item {
                                         anchors.fill: parent
                                         visible: rowImg.status !== Image.Ready
                                         radius: 6
-                                        color: t.tile
+                                        color: Theme.tile
                                         border.width: 1
-                                        border.color: t.border
-                                        Text {
+                                        border.color: Theme.border
+                                        Glyph {
                                             anchors.centerIn: parent
-                                            text: (appRow.modelData.name || "?").charAt(0).toUpperCase()
-                                            color: t.ink
-                                            font.family: t.font
-                                            font.pixelSize: 11
-                                            font.weight: Font.Bold
+                                            name: Theme.appGlyph(appRow.modelData.name)
+                                            size: Math.round(parent.height * 0.58)
+                                            stroke: 1.6
+                                            color: Theme.inkSoft
                                         }
                                     }
                                 }
@@ -1391,9 +1075,9 @@ Item {
                                     Text {
                                         width: Math.min(implicitWidth, parent.width - (appRow.isRunning ? 14 : 0))
                                         text: appRow.modelData.name
-                                        color: t.ink
+                                        color: Theme.ink
                                         elide: Text.ElideRight
-                                        font.family: t.font
+                                        font.family: Theme.font
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
                                     }
@@ -1403,7 +1087,7 @@ Item {
                                         width: 6
                                         height: 6
                                         radius: 3
-                                        color: t.success
+                                        color: Theme.success
                                     }
                                 }
 
@@ -1456,8 +1140,8 @@ Item {
                             anchors.leftMargin: 2
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("ADD APPS")
-                            color: t.textDim
-                            font.family: t.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 11
                             font.weight: Font.Bold
                             font.letterSpacing: 0.8
@@ -1467,8 +1151,8 @@ Item {
                             anchors.rightMargin: 2
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("%1 available").arg(panel.availableList.length)
-                            color: t.textFaint
-                            font.family: t.font
+                            color: Theme.textFaint
+                            font.family: Theme.font
                             font.pixelSize: 11
                             font.weight: Font.DemiBold
                         }
@@ -1476,11 +1160,11 @@ Item {
 
                     Rectangle {
                         width: parent.width
-                        height: 322
+                        height: panel.appsListH
                         radius: 14
-                        color: t.raised
+                        color: Theme.raised
                         border.width: 1
-                        border.color: t.borderSoft
+                        border.color: Theme.borderSoft
                         clip: true
 
                         // Search bar pinned at the top of the right card
@@ -1491,9 +1175,9 @@ Item {
                             width: parent.width - 20
                             height: 34
                             radius: 9
-                            color: t.field
+                            color: Theme.field
                             border.width: 1
-                            border.color: filterInput.activeFocus ? t.accent : t.fieldBorder
+                            border.color: filterInput.activeFocus ? Theme.accent : Theme.fieldBorder
                             Behavior on border.color { ColorAnimation { duration: 130 } }
 
                             Glyph {
@@ -1503,7 +1187,7 @@ Item {
                                 name: "search"
                                 size: 13
                                 stroke: 2
-                                color: filterInput.activeFocus ? t.accent : t.textDim
+                                color: filterInput.activeFocus ? Theme.accent : Theme.textDim
                             }
 
                             TextInput {
@@ -1513,10 +1197,10 @@ Item {
                                 anchors.right: clearFilterBtn.visible ? clearFilterBtn.left : parent.right
                                 anchors.rightMargin: 8
                                 anchors.verticalCenter: parent.verticalCenter
-                                color: t.ink
-                                selectionColor: t.accent
-                                selectedTextColor: t.inverse
-                                font.family: t.font
+                                color: Theme.ink
+                                selectionColor: Theme.accent
+                                selectedTextColor: Theme.inverse
+                                font.family: Theme.font
                                 font.pixelSize: 13
                                 font.weight: Font.Medium
                                 clip: true
@@ -1528,7 +1212,7 @@ Item {
                                     visible: filterInput.text.length === 0
                                     verticalAlignment: TextInput.AlignVCenter
                                     text: qsTr("Search installed apps…")
-                                    color: t.textFaint
+                                    color: Theme.textFaint
                                     font: filterInput.font
                                 }
                             }
@@ -1557,8 +1241,8 @@ Item {
                             text: filterInput.text.length > 0
                                   ? qsTr("No matching unpinned apps found")
                                   : qsTr("All detected apps are already pinned")
-                            color: t.textDim
-                            font.family: t.font
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 12
                         }
 
@@ -1592,7 +1276,7 @@ Item {
                                 Rectangle {
                                     anchors.fill: parent
                                     radius: 9
-                                    color: candHover.hovered ? t.hover : "transparent"
+                                    color: candHover.hovered ? Theme.hover : "transparent"
                                 }
 
                                 Item {
@@ -1618,16 +1302,15 @@ Item {
                                         anchors.fill: parent
                                         visible: candImg.status !== Image.Ready
                                         radius: 6
-                                        color: t.tile
+                                        color: Theme.tile
                                         border.width: 1
-                                        border.color: t.border
-                                        Text {
+                                        border.color: Theme.border
+                                        Glyph {
                                             anchors.centerIn: parent
-                                            text: (candRow.modelData.name || "?").charAt(0).toUpperCase()
-                                            color: t.ink
-                                            font.family: t.font
-                                            font.pixelSize: 11
-                                            font.weight: Font.Bold
+                                            name: Theme.appGlyph(candRow.modelData.name)
+                                            size: Math.round(parent.height * 0.58)
+                                            stroke: 1.6
+                                            color: Theme.inkSoft
                                         }
                                     }
                                 }
@@ -1639,9 +1322,9 @@ Item {
                                     anchors.rightMargin: 8
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: candRow.modelData.name
-                                    color: t.ink
+                                    color: Theme.ink
                                     elide: Text.ElideRight
-                                    font.family: t.font
+                                    font.family: Theme.font
                                     font.pixelSize: 13
                                     font.weight: Font.DemiBold
                                 }
@@ -1654,9 +1337,9 @@ Item {
                                     width: addPillRow.implicitWidth + 16
                                     height: 25
                                     radius: 12.5
-                                    color: candHover.hovered ? t.accent : t.tile
+                                    color: candHover.hovered ? Theme.accent : Theme.tile
                                     border.width: candHover.hovered ? 0 : 1
-                                    border.color: t.border
+                                    border.color: Theme.border
                                     scale: candTap.pressed ? 0.94 : 1
                                     Behavior on scale { NumberAnimation { duration: 100 } }
                                     Behavior on color { ColorAnimation { duration: 110 } }
@@ -1670,13 +1353,13 @@ Item {
                                             name: "plus"
                                             size: 11
                                             stroke: 2.2
-                                            color: candHover.hovered ? t.inverse : t.ink
+                                            color: candHover.hovered ? Theme.inverse : Theme.ink
                                         }
                                         Text {
                                             anchors.verticalCenter: parent.verticalCenter
                                             text: qsTr("Add")
-                                            color: candHover.hovered ? t.inverse : t.ink
-                                            font.family: t.font
+                                            color: candHover.hovered ? Theme.inverse : Theme.ink
+                                            font.family: Theme.font
                                             font.pixelSize: 12
                                             font.weight: Font.Bold
                                         }
@@ -1706,468 +1389,589 @@ Item {
             visible: panel.tab === 2 || buddyCol.opacity > 0.01
             z: panel.tab === 2 ? 1 : 0
 
-            Column {
+            Flow {
                 id: buddyCol
                 x: 20 + (panel.tab === 2 ? 0 : 16)
                 width: content.width - 40
                 topPadding: 16
-                bottomPadding: 16
-                spacing: 12
+                bottomPadding: 18
+                spacing: panel.colGap
                 opacity: panel.tab === 2 ? 1 : 0
                 enabled: panel.tab === 2
                 Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                 Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
 
-                SectionHeader {
-                    title: qsTr("Desktop Buddy")
-                    rightText: panel.prefs.buddyEnabled
-                                 ? (panel.realChat ? panel.labelFor(panel.prefs.buddyProvider) : qsTr("Local mode"))
-                                 : qsTr("Disabled")
-                }
+                // Left: the buddy itself and the model it talks to.
+                Column {
+                    width: panel.colW
+                    spacing: 12
 
-                GroupCard {
-                    Item {
-                        width: parent.width
-                        implicitHeight: enableBuddyRow.implicitHeight
-
-                        ToggleRow {
-                            id: enableBuddyRow
-                            width: parent.width - (resetBuddyBtn2.visible ? resetBuddyBtn2.width + 12 : 0)
-                            label: qsTr("Enable desktop buddy")
-                            sub: qsTr("Show the interactive orb on your desktop. Drag to move, click to ask.")
-                            checked: panel.prefs.buddyEnabled
-                            onToggled: (c) => panel.prefs.buddyEnabled = c
-                        }
-
-                        SmallPillButton {
-                            id: resetBuddyBtn2
-                            visible: panel.buddyMovedCustom
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            icon: "reset"
-                            label: qsTr("Reset position")
-                            onClicked: panel.resetBuddyPosRequested()
-                        }
+                    SectionHeader {
+                        title: qsTr("Desktop buddy")
+                        rightText: panel.prefs.buddyEnabled
+                                     ? (panel.realChat ? panel.labelFor(panel.prefs.buddyProvider) : qsTr("Local mode"))
+                                     : qsTr("Disabled")
                     }
 
-                    CardDivider {}
+                    GroupCard {
+                        Item {
+                            width: parent.width
+                            implicitHeight: enableBuddyRow.implicitHeight
 
-                    Item {
-                        width: parent.width
-                        implicitHeight: sfxToggleRow.implicitHeight
+                            ToggleRow {
+                                id: enableBuddyRow
+                                width: parent.width - (resetBuddyBtn2.visible ? resetBuddyBtn2.width + 12 : 0)
+                                label: qsTr("Enable desktop buddy")
+                                sub: qsTr("Show the interactive orb on your desktop. Drag to move, click to ask.")
+                                checked: panel.prefs.buddyEnabled
+                                onToggled: (c) => panel.prefs.buddyEnabled = c
+                            }
 
-                        ToggleRow {
-                            id: sfxToggleRow
-                            width: parent.width - (previewSfxBtn.width + 12)
-                            label: qsTr("Buddy sound effects")
-                            sub: qsTr("Expressive companion chirps, purrs, and chimes when interacting.")
-                            checked: panel.prefs.buddySfxEnabled
-                            onToggled: (c) => {
-                                panel.prefs.buddySfxEnabled = c
-                                if (c && typeof buddySfx !== "undefined" && buddySfx)
-                                    Qt.callLater(function() { buddySfx.play("wake") })
+                            SmallPillButton {
+                                id: resetBuddyBtn2
+                                visible: panel.buddyMovedCustom
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                icon: "reset"
+                                label: qsTr("Reset position")
+                                onClicked: panel.resetBuddyPosRequested()
                             }
                         }
 
-                        SmallPillButton {
-                            id: previewSfxBtn
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            icon: panel.prefs.buddySfxEnabled ? "volume" : "mute"
-                            label: qsTr("Test sound")
-                            enabled: panel.prefs.buddySfxEnabled
-                            onClicked: {
-                                if (typeof buddySfx !== "undefined" && buddySfx)
-                                    buddySfx.play("happy")
+                        CardDivider {}
+
+                        Item {
+                            width: parent.width
+                            implicitHeight: sfxToggleRow.implicitHeight
+
+                            ToggleRow {
+                                id: sfxToggleRow
+                                width: parent.width - (previewSfxBtn.width + 12)
+                                label: qsTr("Buddy sound effects")
+                                sub: qsTr("Expressive companion chirps, purrs, and chimes when interacting.")
+                                checked: panel.prefs.buddySfxEnabled
+                                onToggled: (c) => {
+                                    panel.prefs.buddySfxEnabled = c
+                                    if (c && BuddySound)
+                                        Qt.callLater(function() { BuddySound.play("wake") })
+                                }
                             }
+
+                            SmallPillButton {
+                                id: previewSfxBtn
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                icon: panel.prefs.buddySfxEnabled ? "volume" : "mute"
+                                label: qsTr("Test sound")
+                                enabled: panel.prefs.buddySfxEnabled
+                                onClicked: {
+                                    if (BuddySound)
+                                        BuddySound.play("happy")
+                                }
+                            }
+                        }
+
+                        Row {
+                            visible: panel.prefs.buddySfxEnabled
+                            width: parent.width
+                            spacing: 14
+
+                            Column {
+                                width: Math.floor((parent.width - 14) * 0.54)
+                                spacing: 6
+
+                                Text {
+                                    width: parent.width
+                                    text: qsTr("Voice style")
+                                    color: Theme.textDim
+                                    font.family: Theme.font
+                                    font.pixelSize: 11
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Segmented {
+                                    width: parent.width
+                                    height: 30
+                                    options: [
+                                        { label: qsTr("Cute"), value: "cute" },
+                                        { label: qsTr("Warm"), value: "warm" },
+                                        { label: qsTr("Mellow"), value: "mellow" }
+                                    ]
+                                    value: panel.prefs.buddySfxStyle
+                                    onPicked: (v) => {
+                                        panel.prefs.buddySfxStyle = v
+                                        if (BuddySound)
+                                            Qt.callLater(function() { BuddySound.play("wake") })
+                                    }
+                                }
+                            }
+
+                            Column {
+                                width: parent.width - Math.floor((parent.width - 14) * 0.54) - 14
+                                spacing: 6
+
+                                Row {
+                                    width: parent.width
+                                    Text {
+                                        text: qsTr("Sound volume")
+                                        color: Theme.textDim
+                                        font.family: Theme.font
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Item { width: Math.max(4, parent.width - 115); height: 1 }
+                                    Text {
+                                        text: Math.round(panel.prefs.buddySfxVolume * 100) + "%"
+                                        color: Theme.ink
+                                        font.family: Theme.font
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+
+                                SizeSlider {
+                                    width: parent.width
+                                    height: 30
+                                    from: 0.05
+                                    to: 1.0
+                                    value: panel.prefs.buddySfxVolume
+                                    onMoved: (v) => panel.prefs.buddySfxVolume = Math.round(v * 100) / 100
+                                }
+                            }
+                        }
+
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Solid color ring")
+                            sub: qsTr("Show the solid accent outline and aura ring around buddy during interactions.")
+                            checked: panel.prefs.buddySolidRing
+                            onToggled: (c) => panel.prefs.buddySolidRing = c
+                        }
+
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Real chat (AI provider)")
+                            sub: panel.realChat
+                                 ? qsTr("Questions go to %1 (%2). Local timers, app launch and plans still run directly.")
+                                      .arg(panel.labelFor(panel.prefs.buddyProvider))
+                                      .arg(panel.prefs.buddyModel || qsTr("no model"))
+                                 : qsTr("Off: answers come from built-in local routes (timers, app launch, plans, sample cards).")
+                            checked: panel.realChat
+                            onToggled: (c) => panel.setRealChat(c)
                         }
                     }
 
-                    Row {
-                        visible: panel.prefs.buddySfxEnabled
-                        width: parent.width
-                        spacing: 14
+                    SectionHeader {
+                        visible: panel.realChat
+                        title: qsTr("Provider")
+                        rightText: panel.labelFor(panel.prefs.buddyProvider)
+                    }
+
+                    GroupCard {
+                        visible: panel.realChat
 
                         Column {
-                            width: Math.floor((parent.width - 14) * 0.54)
+                            width: parent.width
                             spacing: 6
 
                             Text {
                                 width: parent.width
-                                text: qsTr("Voice style")
-                                color: t.textDim
-                                font.family: t.font
+                                text: qsTr("Provider")
+                                color: Theme.textDim
+                                font.family: Theme.font
                                 font.pixelSize: 11
                                 font.weight: Font.DemiBold
                             }
 
                             Segmented {
                                 width: parent.width
-                                height: 30
+                                height: 34
                                 options: [
-                                    { label: qsTr("Cute"), value: "cute" },
-                                    { label: qsTr("Warm"), value: "warm" },
-                                    { label: qsTr("Mellow"), value: "mellow" }
+                                    { label: panel.labelFor("openai"), value: "openai" },
+                                    { label: panel.labelFor("ollama"), value: "ollama" },
+                                    { label: panel.labelFor("anthropic"), value: "anthropic" },
+                                    { label: panel.labelFor("custom"), value: "custom" }
                                 ]
-                                value: panel.prefs.buddySfxStyle
-                                onPicked: (v) => {
-                                    panel.prefs.buddySfxStyle = v
-                                    if (typeof buddySfx !== "undefined" && buddySfx)
-                                        Qt.callLater(function() { buddySfx.play("wake") })
+                                value: panel.prefs.buddyProvider
+                                onPicked: (v) => panel.pickProvider(v)
+                            }
+                        }
+
+                        CardDivider {}
+
+                        // Base URL and API key side by side when there is room.
+                        Flow {
+                            width: parent.width
+                            spacing: 12
+
+                            readonly property bool showKey: panel.showsKeyFor(panel.prefs.buddyProvider)
+                            readonly property bool pair: width >= 520
+                            readonly property real halfW: pair ? Math.floor((width - spacing) / 2) : width
+
+                            FieldBox {
+                                width: parent.showKey ? parent.halfW : parent.width
+                                label: qsTr("Base URL")
+                                placeholder: panel.infoFor(panel.prefs.buddyProvider).base
+                                             || qsTr("https://your-endpoint")
+                                hint: qsTr("POST %1").arg(panel.chatEndpoint())
+                                mono: true
+                                text: panel.prefs.buddyApiBase
+                                onEdited: (v) => { panel.prefs.buddyApiBase = v; panel.markDirty() }
+                            }
+
+                            FieldBox {
+                                visible: parent.showKey
+                                width: parent.halfW
+                                label: qsTr("API key")
+                                placeholder: panel.infoFor(panel.prefs.buddyProvider).needsKey
+                                             ? qsTr("Paste your API key")
+                                             : qsTr("Optional for local servers")
+                                hint: panel.infoFor(panel.prefs.buddyProvider).needsKey
+                                      ? qsTr("Stored locally in Noch settings.")
+                                      : qsTr("Leave blank if not required.")
+                                secret: true
+                                mono: true
+                                text: panel.prefs.buddyApiKey
+                                onEdited: (v) => { panel.prefs.buddyApiKey = v; panel.markDirty() }
+                            }
+                        }
+
+                        CardDivider {}
+
+                        // Model id beside the temperature slider.
+                        Row {
+                            width: parent.width
+                            spacing: 14
+
+                            FieldBox {
+                                width: parent.width - 154
+                                label: qsTr("Model")
+                                placeholder: qsTr("Model id, e.g. gpt-4o-mini")
+                                mono: true
+                                text: panel.prefs.buddyModel
+                                onEdited: (v) => { panel.prefs.buddyModel = v; panel.markDirty() }
+                            }
+
+                            LabeledSlider {
+                                width: 140
+                                label: qsTr("Temperature")
+                                decimals: 2
+                                value: panel.prefs.buddyTemperature
+                                onMoved: (v) => panel.prefs.buddyTemperature = Math.round(v * 100) / 100
+                            }
+                        }
+
+                        Flow {
+                            width: parent.width
+                            spacing: 6
+                            visible: panel.modelChips.length > 0
+
+                            Repeater {
+                                model: panel.modelChips
+                                delegate: Chip {
+                                    required property var modelData
+                                    text: modelData
+                                    selected: String(panel.prefs.buddyModel) === String(modelData)
+                                    onPicked: panel.setModel(modelData)
                                 }
                             }
                         }
+
+                        CardDivider {}
+
+                        Row {
+                            width: parent.width
+                            spacing: 12
+
+                            SmallPillButton {
+                                id: testBtn
+                                anchors.verticalCenter: parent.verticalCenter
+                                icon: "wifi"
+                                label: panel.testState === "testing" ? qsTr("Testing…") : qsTr("Test connection")
+                                primary: true
+                                enabled: panel.testState !== "testing"
+                                onClicked: panel.runTest()
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.max(0, parent.width - testBtn.width - 12)
+                                text: panel.testMessage.length > 0
+                                      ? panel.testMessage
+                                      : qsTr("Verify endpoint & fetch available models.")
+                                color: panel.testState === "ok" ? Theme.success
+                                     : panel.testState === "failed" ? Theme.danger : Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 12
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    SectionHeader {
+                        visible: panel.prefs.buddyAgentMode
+                        title: qsTr("Safety & permissions")
+                        rightText: ({ "default": qsTr("Asks before side effects"),
+                                      "acceptEdits": qsTr("Auto-approves workspace edits"),
+                                      "plan": qsTr("Read-only"),
+                                      "bypass": qsTr("Trusted — no prompts") })[panel.prefs.buddyPermissionMode] || ""
+                    }
+
+                    GroupCard {
+                        visible: panel.prefs.buddyAgentMode
 
                         Column {
-                            width: parent.width - Math.floor((parent.width - 14) * 0.54) - 14
+                            width: parent.width
                             spacing: 6
 
-                            Row {
+                            Text {
                                 width: parent.width
-                                Text {
-                                    text: qsTr("Sound volume")
-                                    color: t.textDim
-                                    font.family: t.font
-                                    font.pixelSize: 11
-                                    font.weight: Font.DemiBold
-                                }
-                                Item { width: Math.max(4, parent.width - 115); height: 1 }
-                                Text {
-                                    text: Math.round(panel.prefs.buddySfxVolume * 100) + "%"
-                                    color: t.ink
-                                    font.family: t.font
-                                    font.pixelSize: 11
-                                    font.weight: Font.DemiBold
-                                }
+                                text: qsTr("Permission mode")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
                             }
 
-                            SizeSlider {
+                            Segmented {
                                 width: parent.width
-                                height: 30
-                                from: 0.05
-                                to: 1.0
-                                value: panel.prefs.buddySfxVolume
-                                onMoved: (v) => panel.prefs.buddySfxVolume = Math.round(v * 100) / 100
+                                height: 34
+                                options: [
+                                    { label: qsTr("Ask"), value: "default" },
+                                    { label: qsTr("Auto-edit"), value: "acceptEdits" },
+                                    { label: qsTr("Plan"), value: "plan" },
+                                    { label: qsTr("Trusted"), value: "bypass" }
+                                ]
+                                value: panel.prefs.buddyPermissionMode
+                                onPicked: (v) => panel.prefs.buddyPermissionMode = v
+                            }
+
+                            Text {
+                                width: parent.width
+                                text: panel.prefs.buddyPermissionMode === "bypass"
+                                      ? qsTr("Every tool call runs without asking. Destructive commands, system folders and credential stores stay blocked.")
+                                      : panel.prefs.buddyPermissionMode === "plan"
+                                        ? qsTr("The agent can look around and read, but cannot run commands with side effects, edit files or control the computer.")
+                                        : panel.prefs.buddyPermissionMode === "acceptEdits"
+                                          ? qsTr("File edits inside the workspace run straight away. Commands and computer control still ask first.")
+                                          : qsTr("Read-only commands run straight away. Anything that changes files, runs programs or clicks asks you first.")
+                                color: panel.prefs.buddyPermissionMode === "bypass" ? Theme.warning : Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
                             }
                         }
-                    }
 
-                    CardDivider {}
+                        CardDivider {}
 
-                    ToggleRow {
-                        label: qsTr("Solid color ring")
-                        sub: qsTr("Show the solid accent outline and aura ring around buddy during interactions.")
-                        checked: panel.prefs.buddySolidRing
-                        onToggled: (c) => panel.prefs.buddySolidRing = c
-                    }
-
-                    CardDivider {}
-
-                    ToggleRow {
-                        label: qsTr("Real chat (AI provider)")
-                        sub: panel.realChat
-                             ? qsTr("Questions go to %1 (%2). Local timers, app launch and plans still run directly.")
-                                  .arg(panel.labelFor(panel.prefs.buddyProvider))
-                                  .arg(panel.prefs.buddyModel || qsTr("no model"))
-                             : qsTr("Off: answers come from built-in local routes (timers, app launch, plans, sample cards).")
-                        checked: panel.realChat
-                        onToggled: (c) => panel.setRealChat(c)
-                    }
-                }
-
-                SectionHeader {
-                    title: qsTr("Ring colour")
-                    rightText: panel.optionLabel(panel.ringOpts, appearance.ring)
-                }
-
-                GroupCard {
-                    Text {
-                        width: parent.width
-                        text: qsTr("The neon halo your buddy wears when it's happy.")
-                        color: t.textFaint
-                        font.family: t.font
-                        font.pixelSize: 11
-                        wrapMode: Text.WordWrap
-                    }
-                    Flow {
-                        width: parent.width
-                        spacing: 4
-                        Repeater {
-                            model: panel.ringOpts
-                            RingSwatch {
-                                required property var modelData
-                                option: modelData
-                                selected: appearance.ring === modelData.id
-                                onPicked: {
-                                    appearance.ring = modelData.id
-                                    panel.ringPreviewRequested()
-                                }
-                            }
-                        }
-                    }
-                }
-
-                SectionHeader {
-                    visible: panel.realChat
-                    title: qsTr("Provider Configuration")
-                    rightText: panel.labelFor(panel.prefs.buddyProvider)
-                }
-
-                GroupCard {
-                    visible: panel.realChat
-
-                    Column {
-                        width: parent.width
-                        spacing: 6
-
-                        Text {
+                        FieldBox {
                             width: parent.width
-                            text: qsTr("Provider")
-                            color: t.textDim
-                            font.family: t.font
-                            font.pixelSize: 11
-                            font.weight: Font.DemiBold
+                            label: qsTr("Workspace folder")
+                            placeholder: BuddyAgent ? BuddyAgent.effectiveWorkspace() : qsTr("~/Noch Workspace")
+                            hint: qsTr("Auto-edit mode only auto-approves edits inside this folder.")
+                            mono: true
+                            text: panel.prefs.buddyWorkspaceRoot
+                            onEdited: (v) => panel.prefs.buddyWorkspaceRoot = v
                         }
 
-                        Segmented {
-                            width: parent.width
-                            height: 34
-                            options: [
-                                { label: panel.labelFor("openai"), value: "openai" },
-                                { label: panel.labelFor("ollama"), value: "ollama" },
-                                { label: panel.labelFor("anthropic"), value: "anthropic" },
-                                { label: panel.labelFor("custom"), value: "custom" }
-                            ]
-                            value: panel.prefs.buddyProvider
-                            onPicked: (v) => panel.pickProvider(v)
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Redact secrets")
+                            sub: qsTr("Mask API keys, tokens and private keys in tool output before the model or the transcript sees them.")
+                            checked: panel.prefs.buddyRedactSecrets
+                            onToggled: (c) => panel.prefs.buddyRedactSecrets = c
+                        }
+
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Keep run traces")
+                            sub: qsTr("Save a local JSON trace of each run (model calls, tool calls, approvals) for debugging. Newest 40 are kept.")
+                            checked: panel.prefs.buddyKeepTraces
+                            onToggled: (c) => panel.prefs.buddyKeepTraces = c
                         }
                     }
 
-                    CardDivider {}
-
-                    // Side-by-side Base URL and API Key on the wide layout
-                    Row {
-                        width: parent.width
-                        spacing: 12
-
-                        readonly property bool showKey: panel.showsKeyFor(panel.prefs.buddyProvider)
-                        readonly property real halfW: Math.floor((width - spacing) / 2)
-
-                        FieldBox {
-                            width: parent.showKey ? parent.halfW : parent.width
-                            label: qsTr("Base URL")
-                            placeholder: panel.infoFor(panel.prefs.buddyProvider).base
-                                         || qsTr("https://your-endpoint")
-                            hint: qsTr("POST %1").arg(panel.chatEndpoint())
-                            mono: true
-                            text: panel.prefs.buddyApiBase
-                            onEdited: (v) => { panel.prefs.buddyApiBase = v; panel.markDirty() }
-                        }
-
-                        FieldBox {
-                            visible: parent.showKey
-                            width: parent.halfW
-                            label: qsTr("API key")
-                            placeholder: panel.infoFor(panel.prefs.buddyProvider).needsKey
-                                         ? qsTr("Paste your API key")
-                                         : qsTr("Optional for local servers")
-                            hint: panel.infoFor(panel.prefs.buddyProvider).needsKey
-                                  ? qsTr("Stored locally in Noch settings.")
-                                  : qsTr("Leave blank if not required.")
-                            secret: true
-                            mono: true
-                            text: panel.prefs.buddyApiKey
-                            onEdited: (v) => { panel.prefs.buddyApiKey = v; panel.markDirty() }
-                        }
+                    SectionHeader {
+                        visible: panel.prefs.buddyAgentMode
+                        title: qsTr("Agent behaviour")
+                        rightText: qsTr("OpenAI Agents SDK patterns")
                     }
 
-                    CardDivider {}
+                    GroupCard {
+                        visible: panel.prefs.buddyAgentMode
 
-                    // Side-by-side Model + Temperature slider
-                    Row {
-                        width: parent.width
-                        spacing: 14
+                        ToggleRow {
+                            label: qsTr("Stream replies")
+                            sub: qsTr("Show the answer word by word while the model writes it (Anthropic and OpenAI-compatible providers).")
+                            checked: panel.prefs.buddyStreamReplies
+                            onToggled: (c) => panel.prefs.buddyStreamReplies = c
+                        }
 
-                        FieldBox {
-                            width: parent.width - 184
-                            label: qsTr("Model")
-                            placeholder: qsTr("Model id, e.g. gpt-4o-mini")
-                            mono: true
-                            text: panel.prefs.buddyModel
-                            onEdited: (v) => { panel.prefs.buddyModel = v; panel.markDirty() }
+                        CardDivider {}
+
+                        ToggleRow {
+                            label: qsTr("Specialist handoffs")
+                            sub: qsTr("Let Buddy hand research to a web-only specialist and code work to a files-and-shell specialist, each with a smaller toolset.")
+                            checked: panel.prefs.buddyHandoffs
+                            onToggled: (c) => panel.prefs.buddyHandoffs = c
+                        }
+                    }
+                }
+
+                // Right: what the agent is allowed to do.
+                Column {
+                    width: panel.colW
+                    spacing: 12
+
+                    SectionHeader {
+                        title: qsTr("Anthropic Agent SDK & Tools")
+                        rightText: panel.prefs.buddyAgentMode
+                                     ? qsTr("%1 of 9 tool suites armed")
+                                         .arg((panel.prefs.buddyAllowBash ? 1 : 0)
+                                              + (panel.prefs.buddyAllowComputer ? 1 : 0)
+                                              + (panel.prefs.buddyAllowEditor ? 1 : 0)
+                                              + (panel.prefs.buddyAllowCodeSearch ? 1 : 0)
+                                              + (panel.prefs.buddyAllowMemory ? 1 : 0)
+                                              + (panel.prefs.buddyAllowWebSearch ? 1 : 0)
+                                              + (panel.prefs.buddyAllowToolSearch ? 1 : 0)
+                                              + (panel.prefs.buddyAllowAdvisor ? 1 : 0)
+                                              + (panel.prefs.buddyAllowTodoTask ? 1 : 0))
+                                     : qsTr("Disabled")
+                    }
+
+                    GroupCard {
+                        ToggleRow {
+                            label: qsTr("Enable Agent SDK tool loop")
+                            sub: qsTr("Allow Anthropic and all configured AI agents to autonomously run multi-turn tool calls, execute commands, consult the advisor, and use the computer.")
+                            checked: panel.prefs.buddyAgentMode
+                            onToggled: (c) => panel.prefs.buddyAgentMode = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Command execution (bash / PowerShell)")
+                            sub: qsTr("Run terminal and PowerShell commands asynchronously with output capture and 25s timeout protection.")
+                            checked: panel.prefs.buddyAllowBash
+                            onToggled: (c) => panel.prefs.buddyAllowBash = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Computer use (screen, mouse & keyboard)")
+                            sub: qsTr("Claude-style computer use: screenshots and zoom scaled to your display, mouse moves, clicks, drags, scrolling and typing. Clicks and typing ask first; never types into password fields. Ctrl+Alt+Esc or holding Esc stops it, and touching the mouse or keyboard pauses it.")
+                            checked: panel.prefs.buddyAllowComputer
+                            onToggled: (c) => panel.prefs.buddyAllowComputer = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
+                            label: qsTr("Show Buddy's cursor")
+                            sub: qsTr("Draw Buddy's own pointer gliding to each target, with click ripples, drag trails and a typing indicator. It never takes focus or blocks your own pointer.")
+                            checked: panel.prefs.buddyCuShowCursor
+                            onToggled: (c) => panel.prefs.buddyCuShowCursor = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
+                            label: qsTr("Glow around the screen while in control")
+                            sub: qsTr("A soft pulsing edge on every screen so it's always clear when Buddy is driving.")
+                            checked: panel.prefs.buddyCuShowGlow
+                            onToggled: (c) => panel.prefs.buddyCuShowGlow = c
                         }
 
                         LabeledSlider {
-                            width: 170
-                            label: qsTr("Temperature")
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer && panel.prefs.buddyCuShowGlow
+                            label: qsTr("Glow intensity")
                             decimals: 2
-                            value: panel.prefs.buddyTemperature
-                            onMoved: (v) => panel.prefs.buddyTemperature = Math.round(v * 100) / 100
+                            value: panel.prefs.buddyCuGlowIntensity
+                            onMoved: (v) => panel.prefs.buddyCuGlowIntensity = Math.max(0.1, Math.round(v * 100) / 100)
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("File editor (str_replace_editor)")
+                            sub: qsTr("Inspect directories, view file line ranges, create files, apply exact replacements, and undo edits.")
+                            checked: panel.prefs.buddyAllowEditor
+                            onToggled: (c) => panel.prefs.buddyAllowEditor = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Code search (glob_grep)")
+                            sub: qsTr("Anthropic Agent SDK Glob & Grep: fast recursive file pattern matching and regex code search with line numbers.")
+                            checked: panel.prefs.buddyAllowCodeSearch
+                            onToggled: (c) => panel.prefs.buddyAllowCodeSearch = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Memory tool (/memories)")
+                            sub: qsTr("Anthropic Memory Tool: persist notes, context, and structured files across conversations in a sandboxed /memories directory.")
+                            checked: panel.prefs.buddyAllowMemory
+                            onToggled: (c) => panel.prefs.buddyAllowMemory = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Web search & fetch (web_search / web_fetch)")
+                            sub: qsTr("Search the live web with source citations and extract structured text, links, and metadata from URLs.")
+                            checked: panel.prefs.buddyAllowWebSearch
+                            onToggled: (c) => panel.prefs.buddyAllowWebSearch = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Tool search (tool_search BM25 & regex)")
+                            sub: qsTr("Anthropic Tool Search: dynamically discover and inspect Agent SDK tool schemas using BM25 natural language or regex queries.")
+                            checked: panel.prefs.buddyAllowToolSearch
+                            onToggled: (c) => panel.prefs.buddyAllowToolSearch = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Advisor consultation (advisor_20260301)")
+                            sub: qsTr("Anthropic Advisor Tool: invoke strategic architectural review, debugging verification, security auditing, and execution planning.")
+                            checked: panel.prefs.buddyAllowAdvisor
+                            onToggled: (c) => panel.prefs.buddyAllowAdvisor = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Task checklist & desktop context (todo_write)")
+                            sub: qsTr("Anthropic TodoWrite live task tracker, Windows clipboard read/write, and live CPU/RAM/display telemetry.")
+                            checked: panel.prefs.buddyAllowTodoTask
+                            onToggled: (c) => panel.prefs.buddyAllowTodoTask = c
                         }
                     }
 
-                    Flow {
-                        width: parent.width
-                        spacing: 6
-                        visible: panel.modelChips.length > 0
-
-                        Repeater {
-                            model: panel.modelChips
-                            delegate: Chip {
-                                required property var modelData
-                                text: modelData
-                                selected: String(panel.prefs.buddyModel) === String(modelData)
-                                onPicked: panel.setModel(modelData)
-                            }
-                        }
-                    }
-
-                    CardDivider {}
-
-                    Row {
-                        width: parent.width
-                        spacing: 12
-
-                        SmallPillButton {
-                            id: testBtn
-                            anchors.verticalCenter: parent.verticalCenter
-                            icon: "wifi"
-                            label: panel.testState === "testing" ? qsTr("Testing…") : qsTr("Test connection")
-                            primary: true
-                            enabled: panel.testState !== "testing"
-                            onClicked: panel.runTest()
-                        }
-
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: Math.max(0, parent.width - testBtn.width - 12)
-                            text: panel.testMessage.length > 0
-                                  ? panel.testMessage
-                                  : qsTr("Verify endpoint & fetch available models.")
-                            color: panel.testState === "ok" ? t.success
-                                 : panel.testState === "failed" ? t.danger : t.textDim
-                            font.family: t.font
-                            font.pixelSize: 12
-                            wrapMode: Text.WordWrap
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                        }
-                    }
-                }
-
-                SectionHeader {
-                    title: qsTr("Anthropic Agent SDK & Tools")
-                    rightText: panel.prefs.buddyAgentMode
-                                 ? qsTr("%1 of 9 tool suites armed")
-                                     .arg((panel.prefs.buddyAllowBash ? 1 : 0)
-                                          + (panel.prefs.buddyAllowComputer ? 1 : 0)
-                                          + (panel.prefs.buddyAllowEditor ? 1 : 0)
-                                          + (panel.prefs.buddyAllowCodeSearch ? 1 : 0)
-                                          + (panel.prefs.buddyAllowMemory ? 1 : 0)
-                                          + (panel.prefs.buddyAllowWebSearch ? 1 : 0)
-                                          + (panel.prefs.buddyAllowToolSearch ? 1 : 0)
-                                          + (panel.prefs.buddyAllowAdvisor ? 1 : 0)
-                                          + (panel.prefs.buddyAllowTodoTask ? 1 : 0))
-                                 : qsTr("Disabled")
-                }
-
-                GroupCard {
-                    ToggleRow {
-                        label: qsTr("Enable Agent SDK tool loop")
-                        sub: qsTr("Allow Anthropic and all configured AI agents to autonomously run multi-turn tool calls, execute commands, consult the advisor, and use the computer.")
-                        checked: panel.prefs.buddyAgentMode
-                        onToggled: (c) => panel.prefs.buddyAgentMode = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Command execution (bash / PowerShell)")
-                        sub: qsTr("Run terminal and PowerShell commands asynchronously with output capture and 25s timeout protection.")
-                        checked: panel.prefs.buddyAllowBash
-                        onToggled: (c) => panel.prefs.buddyAllowBash = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Computer use (screen, mouse & keyboard)")
-                        sub: qsTr("Anthropic Computer Use API: capture 1280×800 screenshots, move/click cursor, scroll, and synthesize keyboard input.")
-                        checked: panel.prefs.buddyAllowComputer
-                        onToggled: (c) => panel.prefs.buddyAllowComputer = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("File editor (str_replace_editor)")
-                        sub: qsTr("Inspect directories, view file line ranges, create files, apply exact replacements, and undo edits.")
-                        checked: panel.prefs.buddyAllowEditor
-                        onToggled: (c) => panel.prefs.buddyAllowEditor = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Code search (glob_grep)")
-                        sub: qsTr("Anthropic Agent SDK Glob & Grep: fast recursive file pattern matching and regex code search with line numbers.")
-                        checked: panel.prefs.buddyAllowCodeSearch
-                        onToggled: (c) => panel.prefs.buddyAllowCodeSearch = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Memory tool (/memories)")
-                        sub: qsTr("Anthropic Memory Tool: persist notes, context, and structured files across conversations in a sandboxed /memories directory.")
-                        checked: panel.prefs.buddyAllowMemory
-                        onToggled: (c) => panel.prefs.buddyAllowMemory = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Web search & fetch (web_search / web_fetch)")
-                        sub: qsTr("Search the live web with source citations and extract structured text, links, and metadata from URLs.")
-                        checked: panel.prefs.buddyAllowWebSearch
-                        onToggled: (c) => panel.prefs.buddyAllowWebSearch = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Tool search (tool_search BM25 & regex)")
-                        sub: qsTr("Anthropic Tool Search: dynamically discover and inspect Agent SDK tool schemas using BM25 natural language or regex queries.")
-                        checked: panel.prefs.buddyAllowToolSearch
-                        onToggled: (c) => panel.prefs.buddyAllowToolSearch = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Advisor consultation (advisor_20260301)")
-                        sub: qsTr("Anthropic Advisor Tool: invoke strategic architectural review, debugging verification, security auditing, and execution planning.")
-                        checked: panel.prefs.buddyAllowAdvisor
-                        onToggled: (c) => panel.prefs.buddyAllowAdvisor = c
-                    }
-
-                    CardDivider { visible: panel.prefs.buddyAgentMode }
-
-                    ToggleRow {
-                        visible: panel.prefs.buddyAgentMode
-                        label: qsTr("Task checklist & desktop context (todo_write)")
-                        sub: qsTr("Anthropic TodoWrite live task tracker, Windows clipboard read/write, and live CPU/RAM/display telemetry.")
-                        checked: panel.prefs.buddyAllowTodoTask
-                        onToggled: (c) => panel.prefs.buddyAllowTodoTask = c
-                    }
                 }
             }
         }
@@ -2178,7 +1982,7 @@ Item {
         anchors.top: content.bottom
         width: parent.width
         height: 1
-        color: t.borderSoft
+        color: Theme.borderSoft
     }
 
     // ---------- footer --------------------------------------------------------
@@ -2196,8 +2000,8 @@ Item {
 
             Text {
                 text: "Noch"
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 13
                 font.weight: Font.ExtraBold
             }
@@ -2206,15 +2010,15 @@ Item {
                 width: verText.implicitWidth + 12
                 height: 20
                 radius: 10
-                color: t.raised
+                color: Theme.raised
                 border.width: 1
-                border.color: t.border
+                border.color: Theme.border
                 Text {
                     id: verText
                     anchors.centerIn: parent
                     text: "v" + panel.version
-                    color: t.textDim
-                    font.family: t.font
+                    color: Theme.textDim
+                    font.family: Theme.font
                     font.pixelSize: 11
                     font.weight: Font.DemiBold
                 }
@@ -2230,7 +2034,7 @@ Item {
             SmallPillButton {
                 icon: "folder"
                 label: qsTr("Data folder")
-                onClicked: dock.openDataFolder()
+                onClicked: Dock.openDataFolder()
             }
 
             SmallPillButton {

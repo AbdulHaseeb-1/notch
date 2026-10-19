@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Clipboard page of the hub: what you copied recently, one click to copy it
@@ -7,13 +8,12 @@ Item {
 
     signal toastRequested(string text)
 
-    Theme { id: t }
 
     readonly property int rowH: 58
     readonly property int maxRows: 5
 
     implicitWidth: 348
-    implicitHeight: clipboard.enabled ? enabledCol.implicitHeight : offCol.implicitHeight
+    implicitHeight: Clipboard.enabled ? enabledCol.implicitHeight : offCol.implicitHeight
 
     function ago(when) {
         const sec = Math.max(0, Math.round((Date.now() - when.getTime()) / 1000))
@@ -31,7 +31,7 @@ Item {
     // ---- off: ask first
     Column {
         id: offCol
-        visible: !clipboard.enabled
+        visible: !Clipboard.enabled
         width: parent.width
         topPadding: 30
         bottomPadding: 28
@@ -42,21 +42,21 @@ Item {
             width: 56
             height: 56
             radius: 28
-            color: t.raised
+            color: Theme.raised
             border.width: 1
-            border.color: t.borderSoft
+            border.color: Theme.borderSoft
             Glyph {
                 anchors.centerIn: parent
                 name: "clipboard"
                 size: 26
-                color: t.ink
+                color: Theme.ink
             }
         }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: qsTr("Clipboard history")
-            color: t.ink
-            font.family: t.font
+            color: Theme.ink
+            font.family: Theme.font
             font.pixelSize: 16
             font.weight: Font.Bold
         }
@@ -67,8 +67,8 @@ Item {
             wrapMode: Text.WordWrap
             lineHeight: 1.12
             text: qsTr("Keeps the text you copy so you can copy it again. It stays in memory only and is gone when Noch quits. Copies from password managers are skipped.")
-            color: t.textDim
-            font.family: t.font
+            color: Theme.textDim
+            font.family: Theme.font
             font.pixelSize: 12
         }
         Item { width: 1; height: 2 }
@@ -77,7 +77,7 @@ Item {
             width: onLabel.implicitWidth + 36
             height: 36
             radius: 18
-            color: onHit.containsMouse ? t.inkSoft : t.ink
+            color: onHit.containsMouse ? Theme.inkSoft : Theme.ink
             scale: onHit.pressed ? 0.95 : 1
             Behavior on scale { SpringAnimation { spring: 6; damping: 0.35; epsilon: 0.0005 } }
             Behavior on color { ColorAnimation { duration: 120 } }
@@ -85,8 +85,8 @@ Item {
                 id: onLabel
                 anchors.centerIn: parent
                 text: qsTr("Turn on")
-                color: t.inverse
-                font.family: t.font
+                color: Theme.inverse
+                font.family: Theme.font
                 font.pixelSize: 14
                 font.weight: Font.Bold
             }
@@ -95,7 +95,7 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: clipboard.enabled = true
+                onClicked: Clipboard.enabled = true
             }
         }
     }
@@ -103,7 +103,7 @@ Item {
     // ---- on: the list
     Column {
         id: enabledCol
-        visible: clipboard.enabled
+        visible: Clipboard.enabled
         width: parent.width
 
         Item {
@@ -114,10 +114,10 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: 20
                 anchors.verticalCenter: parent.verticalCenter
-                text: clipboard.count === 0 ? qsTr("Nothing yet")
-                    : (clipboard.count === 1 ? qsTr("1 item") : qsTr("%1 items").arg(clipboard.count))
-                color: t.textDim
-                font.family: t.font
+                text: Clipboard.count === 0 ? qsTr("Nothing yet")
+                    : (Clipboard.count === 1 ? qsTr("1 item") : qsTr("%1 items").arg(Clipboard.count))
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
             }
@@ -140,8 +140,8 @@ Item {
                             id: linkText
                             anchors.centerIn: parent
                             text: link.modelData.label
-                            color: linkHit.containsMouse ? t.ink : t.textDim
-                            font.family: t.font
+                            color: linkHit.containsMouse ? Theme.ink : Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                         }
@@ -152,9 +152,9 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 if (link.modelData.action === "clear")
-                                    clipboard.clearUnpinned()
+                                    Clipboard.clearUnpinned()
                                 else
-                                    clipboard.enabled = false
+                                    Clipboard.enabled = false
                             }
                         }
                     }
@@ -162,11 +162,11 @@ Item {
             }
         }
 
-        Rectangle { width: parent.width; height: 1; color: t.borderSoft }
+        Rectangle { width: parent.width; height: 1; color: Theme.borderSoft }
 
         // Empty state.
         Item {
-            visible: clipboard.count === 0
+            visible: Clipboard.count === 0
             width: parent.width
             height: 124
             Text {
@@ -175,15 +175,15 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 text: qsTr("Copy some text and it shows up here.")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 13
             }
         }
 
         ListView {
             id: list
-            visible: clipboard.count > 0
+            visible: Clipboard.count > 0
             width: parent.width
             height: Math.min(contentHeight, view.rowH * view.maxRows) + 8
             topMargin: 4
@@ -192,7 +192,7 @@ Item {
             interactive: contentHeight > view.rowH * view.maxRows
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 320
-            model: clipboard.items
+            model: Clipboard.items
 
             delegate: Item {
                 id: row
@@ -200,14 +200,57 @@ Item {
                 required property var modelData
 
                 width: list.width
-                height: view.rowH
+                // Size to the content so one- and two-line clips get the
+                // same padding (fixed rows left uneven gaps).
+                height: Math.max(view.rowH - 10, rowText.implicitHeight + 20)
                 readonly property bool hot: rowHover.hovered
 
                 HoverHandler { id: rowHover; cursorShape: Qt.PointingHandCursor }
 
+                // What kind of text this is, for the tile glyph.
+                readonly property string kind: {
+                    const t = String(row.modelData.preview || "").trim()
+                    if (/^(https?:\/\/|www\.)\S+$/i.test(t)) return "globe"
+                    if (/^(\$ |>|git |npm |cmake |cd |ls |dir |python|pip |winget )/.test(t)
+                            || /[{};]\s*$/.test(t)) return "terminal"
+                    if (row.modelData.lines > 1) return "doc"
+                    return "text"
+                }
+
+                // Glass row: transparent at rest, lifted on hover.
+                Rectangle {
+                    x: 10
+                    y: 2
+                    width: parent.width - 20
+                    height: parent.height - 4
+                    radius: Theme.radiusMd
+                    color: row.hot ? Theme.glassFillHover : "transparent"
+                    border.width: row.hot ? 1 : 0
+                    border.color: Theme.glassBorder
+                }
+
+                Rectangle {
+                    id: kindTile
+                    x: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 28
+                    height: 28
+                    radius: Theme.radiusSm + 1
+                    color: Theme.glassFillActive
+                    border.width: 1
+                    border.color: Theme.glassBorder
+                    Glyph {
+                        anchors.centerIn: parent
+                        name: row.kind
+                        size: 14
+                        color: row.hot ? Theme.ink : Theme.inkSoft
+                    }
+                }
+
                 Column {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 20
+                    id: rowText
+                    anchors.left: kindTile.right
+                    anchors.leftMargin: 11
                     anchors.right: actions.left
                     anchors.rightMargin: 6
                     anchors.verticalCenter: parent.verticalCenter
@@ -216,12 +259,12 @@ Item {
                     Text {
                         width: parent.width
                         text: row.modelData.preview
-                        color: t.text
+                        color: Theme.text
                         elide: Text.ElideRight
                         maximumLineCount: 2
                         wrapMode: Text.Wrap
                         lineHeight: 1.05
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 13
                         font.weight: Font.DemiBold
                     }
@@ -230,9 +273,9 @@ Item {
                         text: (row.modelData.lines > 1 ? qsTr("%1 lines").arg(row.modelData.lines)
                                                        : qsTr("%1 chars").arg(row.modelData.chars))
                               + "  ·  " + view.ago(row.modelData.when)
-                        color: t.textFaint
+                        color: Theme.textFaint
                         elide: Text.ElideRight
-                        font.family: t.font
+                        font.family: Theme.font
                         font.pixelSize: 11
                     }
                 }
@@ -241,7 +284,7 @@ Item {
                     id: rowTap
                     gesturePolicy: TapHandler.ReleaseWithinBounds
                     onTapped: {
-                        if (clipboard.copy(row.index))
+                        if (Clipboard.copy(row.index))
                             view.toastRequested(qsTr("Copied"))
                     }
                 }
@@ -263,7 +306,7 @@ Item {
                             name: "pin"
                             size: 15
                             stroke: 2
-                            color: row.modelData.pinned ? t.ink : (pinHit.containsMouse ? t.ink : t.textDim)
+                            color: row.modelData.pinned ? Theme.ink : (pinHit.containsMouse ? Theme.ink : Theme.textDim)
                             rotation: row.modelData.pinned ? 0 : 35
                             Behavior on rotation { SpringAnimation { spring: 5; damping: 0.3; epsilon: 0.05 } }
                         }
@@ -275,7 +318,7 @@ Item {
                             // Hidden must mean unhittable: without this the
                             // transparent action spots swallow clicks.
                             enabled: parent.opacity > 0.5
-                            onClicked: clipboard.togglePin(row.index)
+                            onClicked: Clipboard.togglePin(row.index)
                         }
                     }
                     Item {
@@ -288,7 +331,7 @@ Item {
                             name: "close"
                             size: 14
                             stroke: 2
-                            color: delHit.containsMouse ? t.danger : t.textDim
+                            color: delHit.containsMouse ? Theme.danger : Theme.textDim
                         }
                         MouseArea {
                             id: delHit
@@ -296,7 +339,7 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             enabled: parent.opacity > 0.5
-                            onClicked: clipboard.remove(row.index)
+                            onClicked: Clipboard.remove(row.index)
                         }
                     }
                 }

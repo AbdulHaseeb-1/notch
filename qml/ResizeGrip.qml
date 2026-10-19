@@ -9,14 +9,13 @@ MouseArea {
     property var pillItem: null
     property bool pillHovered: false
 
-    Theme { id: t }
 
-    width: Math.round(64 * root.s)
+    width: Math.round(64 * self.root.s)
     height: 16
-    x: (root.width - width) / 2
+    x: (self.root.width - width) / 2
     y: (pillItem ? pillItem.y + pillItem.height : 0) - 6
     hoverEnabled: true
-    enabled: root.revealed
+    enabled: self.root.revealed
     cursorShape: Qt.SizeVerCursor
     preventStealing: true
 
@@ -26,19 +25,19 @@ MouseArea {
     onPressed: (mouse) => {
         startY = mapToItem(null, mouse.x, mouse.y).y
         startScale = cfg.sizeScale
-        root.resizing = true
+        self.root.resizing = true
     }
     onPositionChanged: (mouse) => {
         if (!pressed)
             return
         const dy = mapToItem(null, mouse.x, mouse.y).y - startY
-        root.setScale(startScale + dy / 58)
+        self.root.setScale(startScale + dy / 58)
     }
-    onReleased: { root.resizing = false; root.hudTimer.restart() }
-    onCanceled: root.resizing = false
+    onReleased: { self.root.resizing = false; self.root.hudTimer.restart() }
+    onCanceled: self.root.resizing = false
 
     readonly property bool showBar: containsMouse || pressed
-        || (pillHovered && !root.tipVisible && root.menuIndex < 0)
+        || (pillHovered && !self.root.tipVisible && self.root.menuIndex < 0)
 
     // Expose hovered state name used by root? root references grip.containsMouse already via id.
     Rectangle {
@@ -47,10 +46,10 @@ MouseArea {
         width: self.containsMouse || self.pressed ? 46 : 30
         height: self.pressed ? 5 : 4
         radius: height / 2
-        color: self.containsMouse || self.pressed ? t.ink : t.textDim
+        color: self.containsMouse || self.pressed ? Theme.ink : Theme.textDim
         border.width: 1
-        border.color: t.surface
-        opacity: self.showBar && root.progress > 0.9 ? 1 : 0
+        border.color: Theme.surface
+        opacity: self.showBar && self.root.progress > 0.9 ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 150 } }
         Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
     }

@@ -14,7 +14,6 @@ Item {
     signal hintRequested(string text)
     signal hintCleared()
 
-    Theme { id: t }
 
     visible: showClock
     width: visible ? row.implicitWidth + Math.round(18 * s) : 0
@@ -49,8 +48,8 @@ Item {
             Text {
                 anchors.right: parent.right
                 text: block.now.toLocaleTimeString(Qt.locale(), Locale.ShortFormat)
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: Math.round(13 * block.s)
                 font.weight: Font.Bold
                 font.features: ({ "tnum": 1 })
@@ -59,8 +58,8 @@ Item {
             Text {
                 anchors.right: parent.right
                 text: block.now.toLocaleDateString(Qt.locale(), "ddd, MMM d")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: Math.round(10.5 * block.s)
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })

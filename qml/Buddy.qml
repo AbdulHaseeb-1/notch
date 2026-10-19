@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 // Noch's desktop buddy: an expressive companion orb with wide-angle 3D
 // sphere-projected eyes, squash-and-stretch physics, mood expressions (happy
 // arcs with a neon gradient halo, curious tilt, listening, pondering, reading
@@ -25,7 +26,7 @@ Item {
 
     // ---- state & mood -------------------------------------------------------
     property string session: "idle"      // idle | input | thinking | result
-    property string mood: "neutral"      // neutral | happy | love | curious | listening | thinking | speaking | surprised | error
+    property string mood: "neutral"      // neutral | happy | love | curious | listening | thinking | speaking | surprised | error | sleepy
     property string lastRequest: ""
     property bool awaitingReply: false   // a chat request is in flight for the bubble
     readonly property bool inputActive: session === "input" || session === "thinking"
@@ -103,7 +104,8 @@ Item {
             q: lastRequest,
             kind: kind,
             title: String(title || ""),
-            a: kind === "chat" && payload && payload.response ? String(payload.response).slice(0, 6000) : "",
+            // Long answers stay whole when reopened (was cut at 6000 chars).
+            a: kind === "chat" && payload && payload.response ? historyAnswer(payload.response) : "",
             t: Date.now()
         }
         // Asking the same thing again moves it to the top instead of piling up.
@@ -114,9 +116,16 @@ Item {
     function clearHistory() {
         historySaved("[]")
     }
+    readonly property int historyAnswerChars: 24000
+    function historyAnswer(text) {
+        const s = String(text || "")
+        return s.length <= historyAnswerChars ? s : s.slice(0, historyAnswerChars) + " …"
+    }
     function rememberTurn(question, answer) {
+        // The whole answer goes along: BuddyAgent shortens long turns itself,
+        // keeping their ending, instead of a blind 4000-char cut here.
         const c = conversation.concat([{ role: "user", content: question },
-                                       { role: "assistant", content: String(answer).slice(0, 4000) }])
+                                       { role: "assistant", content: String(answer) }])
         conversation = c.slice(-8)
     }
     // Reopen a past answer. Chat answers come straight from the record;
@@ -133,17 +142,16 @@ Item {
             thought.showAnswer("chat", entry.title || entry.q, { response: entry.a }, false)
             session = "result"
             eureka()
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
         } else {
             session = "thinking"
             runTask()
         }
     }
 
-    Theme { id: t }
 
-    readonly property real mo: appearance.systemMotionReduced() ? 0.35 : 1.0
+    readonly property real mo: SystemAppearance.systemMotionReduced() ? 0.35 : 1.0
 
     // Orb geometry: sized to match the notch height (52px at 1.0x scale).
     readonly property real orbSize: Math.round(52 * s)
@@ -202,6 +210,7 @@ Item {
     property real asymRight: 0         // curious asymmetric right eye scale
     property real speakBounce: 0       // 0..1 rhythmic modulation while speaking/streaming
     property real breathPhase: 0       // continuous organic idle breathing phase
+    property real shakeX: 0            // brief horizontal "no" wobble on errors
     property real hopOffsetY: 0        // vertical jump/bounce offset
     property real hopVelY: 0
     property real squashX: 1.0         // squash-and-stretch horizontal scale
@@ -210,7 +219,7 @@ Item {
     property real dragVelY: 0
     property real neon: 0              // 0..1: neon gradient halo, the buddy's "happy glow"
     // The halo's gradient stops, chosen in Settings > Buddy > Ring colour.
-    readonly property var ringColors: appearance.ringColors
+    readonly property var ringColors: Theme.ringColors
 
     Timer {
         id: moodResetTimer
@@ -224,6 +233,36 @@ Item {
                 buddy.mood = "neutral"
             buddy.springing = true
         }
+    }
+
+    // Reactions can overlap (a tool error while an approval is pending, a
+    // success hop while the user is typing). Higher priority wins; a lower
+    // one is ignored until the current reaction expires. Priority 0 = idle.
+    //   1 typing/hover  2 tool tick  3 success  4 approval  5 error  6 celebrate
+    property int reactPriority: 0
+    function react(m, durationMs, priority, strength) {
+        const p = priority === undefined ? 1 : priority
+        if (p < reactPriority)
+            return false
+        reactPriority = p
+        setMood(m, durationMs || 0)
+        if (strength)
+            hop(strength)
+        if (durationMs && durationMs > 0) {
+            reactClearTimer.interval = durationMs
+            reactClearTimer.restart()
+        } else {
+            reactClearTimer.stop()
+            // Sticky moods (sleepy, thinking) clear priority immediately so
+            // the next event can still interrupt them.
+            if (p < 4)
+                reactPriority = 0
+        }
+        return true
+    }
+    Timer {
+        id: reactClearTimer
+        onTriggered: buddy.reactPriority = 0
     }
 
     function setMood(m, durationMs) {
@@ -244,15 +283,66 @@ Item {
         springing = true
     }
 
+    // A quick head shake: one cheap property animation, no per-frame JS.
+    function shake() {
+        if (mo < 0.5)
+            return
+        shakeAnim.restart()
+    }
+    SequentialAnimation {
+        id: shakeAnim
+        NumberAnimation { target: buddy; property: "shakeX"; to: -4 * buddy.s; duration: 55; easing.type: Easing.OutQuad }
+        NumberAnimation { target: buddy; property: "shakeX"; to: 4 * buddy.s; duration: 90; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: buddy; property: "shakeX"; to: -2.5 * buddy.s; duration: 80; easing.type: Easing.InOutQuad }
+        NumberAnimation { target: buddy; property: "shakeX"; to: 0; duration: 70; easing.type: Easing.OutQuad }
+    }
+
+    // Small success beat when an agent run finishes cleanly with tools.
+    function nodHappy() {
+        if (!react("happy", 1500, 3, 70))
+            return
+        neonBurst(false)
+    }
+
+    // ---- idle → sleepy --------------------------------------------------------
+    // After a few quiet minutes the buddy dozes (droopy eyes, an occasional
+    // zzz). The timer only runs while idle, so it costs nothing otherwise, and
+    // the sleepy face settles the frame loop like any other expression.
+    Timer {
+        id: dozeTimer
+        interval: 180000
+        running: buddy.visible && buddy.session === "idle" && buddy.mood === "neutral"
+                 && !buddy.busy && !buddy.dragging
+        onTriggered: {
+            buddy.setMood("sleepy", 0)
+            buddy.targetPitch = -8 * buddy.mo
+            buddy.emote("", "zzz")
+        }
+    }
+    Timer {
+        interval: 14000
+        repeat: true
+        running: buddy.visible && buddy.mood === "sleepy"
+        onTriggered: buddy.emote("", "zzz")
+    }
+    function wake() {
+        if (mood !== "sleepy")
+            return
+        targetPitch = restPitch
+        setMood("surprised", 650)
+        hop(55)
+    }
+    onSessionChanged: { wake(); dozeTimer.restart() }
+
     function celebrate() {
-        setMood("love", 3000)
-        hop(145)
+        if (!react("love", 3000, 6, 145))
+            return
         targetRoll = 12 * mo
         neonBurst(true)
         if (!thought.visible)
             emote("", "heart")
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("happy")
+        if (BuddySound)
+            BuddySound.play("happy")
     }
 
     // A ripple of the neon ring, optionally with a little ring of sparkles.
@@ -326,7 +416,7 @@ Item {
             forgetAnswer()
         setMood("happy", 1800)
         hop(60)
-        const c = overlay.cursorPos()
+        const c = Overlay.cursorPos()
         lx = c.x
         ly = c.y
         cursorStill = 0
@@ -578,7 +668,7 @@ Item {
             buddy.wanderT += 0.020
             buddy.petAccum = Math.max(0, buddy.petAccum - 3.5)
 
-            const c = overlay.cursorPos()
+            const c = Overlay.cursorPos()
             const moved = Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 1.2
             if (moved && !buddy.gazeLock) {
                 buddy.lx = c.x
@@ -609,7 +699,7 @@ Item {
 
             // Live per-frame cursor tracking while cursor is moving
             if (buddy.cursorStill < 20 && !buddy.gazeLock && !buddy.dragging) {
-                const c = overlay.cursorPos()
+                const c = Overlay.cursorPos()
                 if (Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 0.4) {
                     buddy.lx = c.x
                     buddy.ly = c.y
@@ -625,7 +715,8 @@ Item {
                            : (buddy.mood === "surprised" ? 0.34
                            : (buddy.mood === "listening" ? 0.14
                            : (buddy.mood === "thinking" ? -0.06
-                           : (buddy.mood === "error" ? -0.22 : 0.0))))
+                           : (buddy.mood === "error" ? -0.22
+                           : (buddy.mood === "sleepy" ? -0.5 : 0.0)))))
             // Curious: one eye a touch bigger. Pondering: a slight one-eyed squint.
             const wantAsymL = buddy.mood === "curious" ? 0.18 : (buddy.mood === "thinking" ? 0.05 : 0.0)
             const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
@@ -699,7 +790,7 @@ Item {
         color: "transparent"
         border.width: buddy.solidRing && (buddy.session === "thinking" || buddy.busy
                                           || buddy.mood === "speaking") ? 2 : 0
-        border.color: t.accent
+        border.color: Theme.accent
         opacity: (buddy.session === "thinking" || buddy.busy)
                  ? (0.45 + 0.35 * Math.sin(buddy.breathPhase * 2.0))
                  : (buddy.mood === "speaking" ? 0.55 * (1 - buddy.neon) : 0)
@@ -713,17 +804,17 @@ Item {
         width: parent.width
         height: parent.height
         // Subtle body lean toward gaze + organic breathing bob + hop bounce
-        x: Math.round(buddy.faceLeadX * 0.28)
+        x: Math.round(buddy.faceLeadX * 0.28 + buddy.shakeX)
         y: Math.round(buddy.faceLeadY * 0.25 + buddy.hopOffsetY
                       + (buddy.mo > 0.5 ? Math.sin(buddy.breathPhase) * 1.4 * buddy.s : 0))
         radius: buddy.orbRadius
-        color: t.orb
+        color: Theme.orb
         border.width: !buddy.solidRing ? 0
                     : (buddyHit.containsMouse || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
         border.color: !buddy.solidRing ? "transparent"
-                    : (buddy.mood === "error" ? t.danger
-                    : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? t.accent
-                    : (buddyHit.containsMouse || buddy.session === "input" ? t.accent : "#2c2c35")))
+                    : (buddy.mood === "error" ? Theme.danger
+                    : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? Theme.accent
+                    : (buddyHit.containsMouse || buddy.session === "input" ? Theme.accent : Theme.borderStrong)))
         Behavior on border.color { ColorAnimation { duration: 140 } }
 
         rotation: Math.max(-14, Math.min(14, buddy.gazeRoll * 0.55 + buddy.dragVelX * 0.18))
@@ -759,9 +850,9 @@ Item {
                 id: eyeLPill
                 anchors.fill: parent
                 radius: width / 2
-                color: buddy.mood === "love" ? "#ffd1e3"
-                     : (buddy.mood === "error" ? t.danger
-                     : ((buddy.session === "thinking" || buddy.busy) ? t.accent : "#ffffff"))
+                color: buddy.mood === "love" ? Theme.loveSoft
+                     : (buddy.mood === "error" ? Theme.danger
+                     : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
                 antialiasing: true
             }
@@ -803,9 +894,9 @@ Item {
                 id: eyeRPill
                 anchors.fill: parent
                 radius: width / 2
-                color: buddy.mood === "love" ? "#ffd1e3"
-                     : (buddy.mood === "error" ? t.danger
-                     : ((buddy.session === "thinking" || buddy.busy) ? t.accent : "#ffffff"))
+                color: buddy.mood === "love" ? Theme.loveSoft
+                     : (buddy.mood === "error" ? Theme.danger
+                     : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
                 Behavior on color { ColorAnimation { duration: 140 } }
                 antialiasing: true
             }
@@ -844,7 +935,7 @@ Item {
         id: ring
         property real midR: 30          // centre line of the stroke
         property real thickness: 2
-        property var stops: ["#3ee8ff", "#8b6cff", "#ff4fd8", "#ffb36b"]
+        property var stops: Theme.ringColors
         readonly property real outerR: midR + thickness / 2
         preferredRendererType: Shape.CurveRenderer
         ShapePath {
@@ -1006,9 +1097,9 @@ Item {
         Rectangle {
             anchors.fill: parent
             radius: height / 2
-            color: t.surface
+            color: Theme.surface
             border.width: 1
-            border.color: t.borderStrong
+            border.color: Theme.borderStrong
         }
         Row {
             anchors.centerIn: parent
@@ -1026,8 +1117,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: buddy.bubbleText.length > 0
                 text: buddy.bubbleText
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
             }
@@ -1074,8 +1165,8 @@ Item {
         if (!busy)
             setMood("neutral", 0)
         // Only acknowledge an actual fade-out (startup focus loss is silent).
-        if (hadSomething && typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (hadSomething && BuddySound)
+            BuddySound.play("dismiss")
     }
 
     // Abandons the request in flight. Only a deliberate user decision (New
@@ -1085,8 +1176,8 @@ Item {
         thinkTimer.stop()
         if (awaitingReply) {
             awaitingReply = false
-            if (buddyProvider)
-                buddyProvider.cancel()
+            if (BuddyAgent)
+                BuddyAgent.cancel()
         }
     }
 
@@ -1098,8 +1189,8 @@ Item {
         thought.close()
         if (session !== "thinking")
             session = canContinue ? (busy ? "thinking" : "result") : "idle"
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (BuddySound)
+            BuddySound.play("dismiss")
     }
 
     // Keeps what was on screen so "continue" can reopen the exact same answer.
@@ -1148,8 +1239,8 @@ Item {
             session = "result"
             setMood(resultPanel.phase === "loading" ? "thinking" : "speaking", 0)
             hop(55)
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
             return
         }
         // Still waiting on the provider / a local task: show it pondering.
@@ -1159,8 +1250,8 @@ Item {
             hop(55)
             thought.think()
             lookAtBubble(18, 22)
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (BuddySound)
+                BuddySound.play("pop")
             return
         }
         // An answer was on screen when it got tucked away: show it again from
@@ -1180,8 +1271,8 @@ Item {
         setMood(lastAnswerKind === "chat" ? "speaking" : "happy", 0)
         hop(60)
         lookAtBubble(24, 0)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("pop")
+        if (BuddySound)
+            BuddySound.play("pop")
     }
 
     // Plain "type a new question" path. The conversation thread is kept across
@@ -1198,8 +1289,8 @@ Item {
         hop(wasShown ? 50 : 85)
         thought.openInput()
         lookAtBubble(26, 4)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play(wasShown ? "pop" : "wake")
+        if (BuddySound)
+            BuddySound.play(wasShown ? "pop" : "wake")
     }
 
     // The bubble was closed by its own x / Esc. Even then nothing in flight is
@@ -1217,8 +1308,8 @@ Item {
             setMood("neutral", 0)
         blinkShut = true
         blinkOpen.restart()
-        if (!quiet && typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (!quiet && BuddySound)
+            BuddySound.play("dismiss")
     }
     // A click on the orb while its bubble is open just folds it away.
     function dismissInput() {
@@ -1238,8 +1329,8 @@ Item {
     // available, and a request it started keeps running.
     function panelClosed() {
         session = thought.visible ? session : (replyToPanel && busy ? "thinking" : "idle")
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("dismiss")
+        if (BuddySound)
+            BuddySound.play("dismiss")
     }
 
     function watchTyping(frac) {
@@ -1273,12 +1364,12 @@ Item {
         if (!replyToPanel)
             thought.think()
         lookAtBubble(18, 22)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("think")
+        if (BuddySound)
+            BuddySound.play("think")
 
         // Direct shell command shortcut ($ <cmd>, bash: <cmd>, powershell: <cmd>, cmd: <cmd>)
         const directMatch = trimmed.match(/^(?:\$|!|bash:|powershell:|ps:|cmd:)\s*(.+)$/i)
-        if (directMatch && buddyProvider && buddyProvider.allowBash) {
+        if (directMatch && BuddyAgent && BuddyAgent.allowBash) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1288,13 +1379,13 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.runDirectCommand(directMatch[1])
+            BuddyAgent.runDirectCommand(directMatch[1])
             return
         }
 
         // Direct web search shortcut (search: <query>, web: <query>)
         const webMatch = trimmed.match(/^(?:search:|web:)\s*(.+)$/i)
-        if (webMatch && buddyProvider && buddyProvider.allowWebSearch) {
+        if (webMatch && BuddyAgent && BuddyAgent.allowWebSearch) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1304,13 +1395,13 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.runDirectWebSearch(webMatch[1])
+            BuddyAgent.runDirectWebSearch(webMatch[1])
             return
         }
 
         // Direct tool search shortcut (tools: <query>, tool_search: <query>, regex_tools: <pattern>)
         const toolSearchMatch = trimmed.match(/^(?:tools:|tool_search:|tool-search:|regex_tools:)\s*(.+)$/i)
-        if (toolSearchMatch && buddyProvider && buddyProvider.allowToolSearch) {
+        if (toolSearchMatch && BuddyAgent && BuddyAgent.allowToolSearch) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1321,13 +1412,13 @@ Item {
             }
             awaitingReply = true
             const useRegex = /^regex_tools:/i.test(trimmed)
-            buddyProvider.runDirectToolSearch(toolSearchMatch[1], useRegex ? "regex" : "bm25")
+            BuddyAgent.runDirectToolSearch(toolSearchMatch[1], useRegex ? "regex" : "bm25")
             return
         }
 
         // Direct Advisor consultation shortcut (advisor: <question>, advise: <question>)
         const advisorMatch = trimmed.match(/^(?:advisor:|advise:|consult:)\s*(.+)$/i)
-        if (advisorMatch && buddyProvider && buddyProvider.allowAdvisor) {
+        if (advisorMatch && BuddyAgent && BuddyAgent.allowAdvisor) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1337,7 +1428,7 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.runDirectAdvisor(advisorMatch[1], "general")
+            BuddyAgent.runDirectAdvisor(advisorMatch[1], "general")
             return
         }
 
@@ -1347,10 +1438,10 @@ Item {
         const compoundAgentIntent = /\b(and|then|command|powershell|bash|terminal|shell|click|screenshot|screen|cursor|mouse|type|press|key|file|folder|directory|read|write|create|edit|script|memory|memories|remember|search|web|url|http|https|grep|glob|advisor|advise|consult|tool|clipboard|cpu|ram|system|todo|checklist)\b/i.test(trimmed)
         const local = !!localTask
                       && (localTask.kind === "timer" || localTask.kind === "apps" || localTask.kind === "tasks")
-                      && !(buddyProvider && buddyProvider.enabled && buddyProvider.agentMode
+                      && !(BuddyAgent && BuddyAgent.enabled && BuddyAgent.agentMode
                            && (localTask.kind === "apps" || localTask.kind === "tasks")
                            && compoundAgentIntent)
-        if (!local && buddyProvider && buddyProvider.enabled) {
+        if (!local && BuddyAgent && BuddyAgent.enabled) {
             if (replyToPanel) {
                 resultPanel.kind = "chat"
                 resultPanel.title = trimmed
@@ -1360,11 +1451,11 @@ Item {
                 resultPanel.phase = "loading"
             }
             awaitingReply = true
-            buddyProvider.sendMessage(trimmed, conversation)
+            BuddyAgent.sendMessage(trimmed, conversation)
             return
         }
-        if (buddyProvider)
-            buddyProvider.clearToolSteps()
+        if (BuddyAgent)
+            BuddyAgent.clearToolSteps()
         thinkTimer.restart()
     }
     function retryTask() {
@@ -1385,12 +1476,13 @@ Item {
         }
         session = "result"
         // A sympathetic droop: squinted eyes, head tilted, looking down.
-        setMood("error", 2600)
+        if (react("error", 2600, 5, 0))
+            shake()
         targetRoll = -10 * mo
         targetPitch = -12 * mo
         springing = true
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("error")
+        if (BuddySound)
+            BuddySound.play("error")
     }
     // Local tasks still think for a beat so the bubble's morph can be seen.
     Timer { id: thinkTimer; interval: 820; onTriggered: buddy.runTask() }
@@ -1435,10 +1527,10 @@ Item {
             break
         }
         case "apps": {
-            const rows = search.search(task.payload.query)
+            const rows = AppIndex.search(task.payload.query)
                             .filter(function (r) { return r.kind === "app" })
             if (rows.length > 0) {
-                search.activate(rows[0])
+                AppIndex.activate(rows[0])
                 note(qsTr("Opening %1").arg(String(rows[0].name || task.payload.query)), "open")
             } else {
                 showError(qsTr("No app matched “%1”.").arg(task.payload.query))
@@ -1491,8 +1583,8 @@ Item {
     // off-screen focus, so make the arrival obvious).
     function popForward() {
         eureka()
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("reply")
+        if (BuddySound)
+            BuddySound.play("reply")
     }
     // A quick confirmation that tucks itself away.
     function note(text, icon) {
@@ -1505,8 +1597,8 @@ Item {
         hop(105)
         neonBurst(false)
         lookAtBubble(22, 0)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("reply")
+        if (BuddySound)
+            BuddySound.play("reply")
     }
     function setPanel(kind, title, payload, simulated) {
         if (!resultPanel)
@@ -1524,8 +1616,8 @@ Item {
         session = "result"
         setMood(kind === "chat" ? "speaking" : "happy", 2400)
         hop(115)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("reply")
+        if (BuddySound)
+            BuddySound.play("reply")
     }
     // Pop the bubble's answer out into the movable, resizable panel, right
     // where the bubble was.
@@ -1556,8 +1648,8 @@ Item {
         resultPanel.open = true
         session = "result"
         setMood("happy", 1400)
-        if (typeof buddySfx !== "undefined" && buddySfx)
-            buddySfx.play("pop")
+        if (BuddySound)
+            BuddySound.play("pop")
     }
 
     // ---- capability actions -------------------------------------------------
@@ -1580,9 +1672,9 @@ Item {
             clipboardRequested()
             break
         case "mic":
-            audio.toggleMicMute()
+            Audio.toggleMicMute()
             dismiss()
-            toastRequested(audio.micMuted ? "Microphone muted" : "Microphone live")
+            toastRequested(Audio.micMuted ? "Microphone muted" : "Microphone live")
             break
         case "settings":
             dismiss()
@@ -1660,8 +1752,12 @@ Item {
             buddy.lastHoverX = mouseX
             buddy.lastHoverY = mouseY
             buddy.springing = true
+            buddy.wake()
+            dozeTimer.restart()
         }
         onPressed: (mouse) => {
+            buddy.wake()
+            dozeTimer.restart()
             const g = buddy.desktop
                       ? buddyHit.mapToItem(buddy.desktop, mouse.x, mouse.y)
                       : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
@@ -1732,8 +1828,8 @@ Item {
                 buddy.hop(75)
                 buddy.setMood("happy", 1400)
                 buddy.neonBurst(false)
-                if (typeof buddySfx !== "undefined" && buddySfx)
-                    buddySfx.play("drop")
+                if (BuddySound)
+                    BuddySound.play("drop")
                 buddy.buddyMoved(newAnchorX, newAnchorY)
             } else {
                 // The orb toggles its thought bubble.
@@ -1755,27 +1851,70 @@ Item {
     // Only the request the buddy is still waiting for may answer; a reply to
     // a question that was closed or superseded is dropped.
     Connections {
-        target: buddyProvider
+        target: BuddyAgent
         function onResponseReady(text) {
             if (!buddy.awaitingReply)
                 return
+            const steps = BuddyAgent.toolSteps || []
+            let clean = steps.length > 0
+            for (let i = 0; i < steps.length; ++i)
+                if (steps[i].status === "error") { clean = false; break }
+            if (clean)
+                buddy.nodHappy()
+            const streamed = String(BuddyAgent.streamText || "").length > 0
+            if (streamed && buddy.replyToPanel && buddy.resultPanel)
+                buddy.resultPanel.instantReveal = true
             buddy.present("chat", buddy.lastRequest.length > 0 ? buddy.lastRequest : "Buddy",
                           { response: text }, false)
+            if (streamed && thought.phase === "answer" && thought.kind === "chat")
+                thought.revealAll()
         }
         function onErrorOccurred(message) {
             if (!buddy.awaitingReply)
                 return
             buddy.showError(message)
         }
+        // The agent paused on a tool call that needs the user's OK: perk up,
+        // look at the bubble, and nudge again every few seconds until answered.
+        function onPendingApprovalChanged() {
+            const p = BuddyAgent.pendingApproval
+            const waiting = p && p.id !== undefined
+            if (waiting && !approvalNudge.running) {
+                buddy.wake()
+                buddy.react("surprised", 900, 4, 80)
+                buddy.lookAtBubble(24, 4)
+                if (BuddySound)
+                    BuddySound.play("pop")
+            }
+            approvalNudge.running = waiting && buddy.visible && !buddy.motionPaused
+        }
+        function onToolStepsChanged() {
+            const steps = BuddyAgent.toolSteps || []
+            if (!buddy.awaitingReply || steps.length === 0)
+                return
+            const last = steps[steps.length - 1]
+            if (last.status === "error" && buddy.lastErrorStep !== last.id) {
+                buddy.lastErrorStep = String(last.id)
+                if (buddy.react("error", 900, 5, 0))   // a brief wince; the run carries on
+                    buddy.shake()
+            }
+        }
         function onToolExecuted(name, summary) {
             if (!buddy.awaitingReply)
                 return
-            buddy.setMood("curious", 1600)
-            buddy.hop(42)
-            buddy.lookAtBubble(22, 6)
-            if (typeof buddySfx !== "undefined" && buddySfx)
-                buddySfx.play("pop")
+            if (buddy.react("curious", 1600, 2, 42))
+                buddy.lookAtBubble(22, 6)
+            if (BuddySound)
+                BuddySound.play("pop")
         }
+    }
+
+    property string lastErrorStep: ""
+    Timer {
+        id: approvalNudge
+        interval: 6000
+        repeat: true
+        onTriggered: buddy.react("curious", 1200, 4, 48)
     }
 
     Component.onCompleted: computeEyePoses()

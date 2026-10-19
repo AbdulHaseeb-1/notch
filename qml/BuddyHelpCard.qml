@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // The "what can you do" card. Everything on it is a real Noch action wired to
@@ -9,7 +10,6 @@ Item {
 
     property var host: null   // BuddyPanel → capability(id)/signals out
 
-    Theme { id: t }
 
     readonly property var rows: [
         { id: "palette", icon: "search",
@@ -48,8 +48,8 @@ Item {
                 width: parent.width - 4
                 x: 2
                 text: qsTr("I'm Noch's little helper — no online model, no secret sauce. Here's what this desktop can really do:")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 lineHeight: 1.15
@@ -67,9 +67,9 @@ Item {
                     Rectangle {
                         anchors.fill: parent
                         radius: 10
-                        color: rowHit.containsMouse ? t.tile : "transparent"
+                        color: rowHit.containsMouse ? Theme.tile : "transparent"
                         border.width: rowHit.containsMouse ? 1 : 0
-                        border.color: t.tileEdge
+                        border.color: Theme.tileEdge
                     }
 
                     Item {
@@ -82,14 +82,14 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             radius: 13
-                            color: t.tileActive
+                            color: Theme.tileActive
                         }
                         Glyph {
                             anchors.centerIn: parent
                             name: row.modelData.icon
                             size: 14
                             stroke: 2
-                            color: t.ink
+                            color: Theme.ink
                         }
                     }
 
@@ -104,8 +104,8 @@ Item {
                         Text {
                             width: parent.width
                             text: row.modelData.text
-                            color: t.text
-                            font.family: t.font
+                            color: Theme.text
+                            font.family: Theme.font
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
@@ -113,8 +113,8 @@ Item {
                         Text {
                             width: parent.width
                             text: row.modelData.sub
-                            color: t.textFaint
-                            font.family: t.font
+                            color: Theme.textFaint
+                            font.family: Theme.font
                             font.pixelSize: 10
                             elide: Text.ElideRight
                         }
@@ -135,8 +135,8 @@ Item {
                 width: parent.width - 4
                 x: 2
                 text: qsTr("Try: “Analyze BTC/USDT”, “Summarize gold news”, “Plan my day”, or “Open Spotify”.")
-                color: t.textFaint
-                font.family: t.font
+                color: Theme.textFaint
+                font.family: Theme.font
                 font.pixelSize: 10
                 wrapMode: Text.WordWrap
             }

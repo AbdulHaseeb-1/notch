@@ -26,6 +26,8 @@
 #include "FullscreenWatcher.h"
 #include "GlassBackdrop.h"
 #include "GlobalHotkey.h"
+#include "IconSet.h"
+#include "QmlSingletons.h"
 #include "MediaHub.h"
 #include "MusicPlayer.h"
 #include "NightLight.h"
@@ -147,6 +149,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("dock"), dock);
     engine.rootContext()->setContextProperty(QStringLiteral("player"), player);
     engine.rootContext()->setContextProperty(QStringLiteral("appearance"), appearance);
+    auto *iconSet = new IconSet(&app);
+    engine.rootContext()->setContextProperty(QStringLiteral("iconSet"), iconSet);
     engine.rootContext()->setContextProperty(QStringLiteral("buddyProvider"), buddyProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("buddySfx"), buddySfx);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
@@ -161,6 +165,26 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("hotkey"), hotkey);
     engine.rootContext()->setContextProperty(QStringLiteral("search"), search);
 
+    // Same instances as typed QML singletons (see QmlSingletons.h).
+    OverlaySingleton::s_singletonInstance = overlay;
+    DockSingleton::s_singletonInstance = dock;
+    PlayerSingleton::s_singletonInstance = player;
+    AppearanceSingleton::s_singletonInstance = appearance;
+    IconsSingleton::s_singletonInstance = iconSet;
+    BuddyAgentSingleton::s_singletonInstance = buddyProvider;
+    AgentControlSingleton::s_singletonInstance = buddyProvider->computer();
+    BuddySoundSingleton::s_singletonInstance = buddySfx;
+    BackdropSingleton::s_singletonInstance = glass;
+    OpenAppsSingleton::s_singletonInstance = openApps;
+    ClipboardSingleton::s_singletonInstance = clipboard;
+    MediaSingleton::s_singletonInstance = media;
+    AudioSingleton::s_singletonInstance = audio;
+    RadiosSingleton::s_singletonInstance = radios;
+    NightLightSingleton::s_singletonInstance = nightLight;
+    PowerSingleton::s_singletonInstance = power;
+    FullscreenSingleton::s_singletonInstance = fullscreen;
+    HotkeySingleton::s_singletonInstance = hotkey;
+    AppIndexSingleton::s_singletonInstance = search;
     engine.loadFromModule("noch", "Main");
 
     if (engine.rootObjects().isEmpty())

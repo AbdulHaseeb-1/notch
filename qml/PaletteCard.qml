@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // The command palette: Ctrl+Alt+Space summons the notch and this card. One
@@ -5,21 +6,21 @@ import QtQuick
 // built-in commands and a web search fallback. The C++ side (AppSearch) does
 // the finding; this does the looking and the keys.
 Item {
-    id: palette
+    id: pcard
 
     // Raised when the palette should close because the user is done with it
     // (Escape, or a row was run).
     signal dismissed()
 
-    Theme { id: t }
 
     property var results: []
     property int currentIndex: 0
     readonly property int rowH: 44
     readonly property int maxRows: 7
 
-    implicitWidth: 520
-    readonly property real targetListHeight: Math.min(results.length, palette.maxRows) * palette.rowH
+    property real maxPanelWidth: 100000
+    implicitWidth: Theme.fit(Theme.paletteWidth, maxPanelWidth)
+    readonly property real targetListHeight: Math.min(results.length, pcard.maxRows) * pcard.rowH
     readonly property real targetHeight: field.implicitHeight + 1 + targetListHeight + 1 + footer.implicitHeight
     implicitHeight: field.implicitHeight + 1 + list.height + 1 + footer.implicitHeight
 
@@ -31,7 +32,7 @@ Item {
     }
 
     function refresh() {
-        results = search.search(paletteInput.text)
+        results = AppIndex.search(paletteInput.text)
         currentIndex = 0
         list.positionViewAtBeginning()
     }
@@ -39,7 +40,7 @@ Item {
     Timer {
         id: searchDebounce
         interval: 60
-        onTriggered: palette.refresh()
+        onTriggered: pcard.refresh()
     }
 
     function move(delta) {
@@ -53,7 +54,7 @@ Item {
         if (!item)
             return
         dismissed()
-        search.activate(item)
+        AppIndex.activate(item)
     }
 
     function runCurrent() {
@@ -69,8 +70,8 @@ Item {
     // The Start Menu scan now runs off the GUI thread; refresh once it lands
     // so the very first keystroke fills up with real results when they arrive.
     Connections {
-        target: search
-        function onIndexReady() { palette.refresh() }
+        target: AppIndex
+        function onIndexReady() { pcard.refresh() }
     }
 
     Column {
@@ -89,20 +90,23 @@ Item {
                 name: "search"
                 size: 17
                 stroke: 2
-                color: paletteInput.activeFocus ? t.accent : t.textFaint
+                color: paletteInput.activeFocus ? Theme.accent : Theme.textFaint
             }
 
             TextInput {
                 id: paletteInput
+                Accessible.role: Accessible.EditableText
+                Accessible.name: qsTr("Command palette")
+                Accessible.description: qsTr("Search apps, windows and commands")
                 anchors.left: parent.left
                 anchors.leftMargin: 46
                 anchors.right: clearBtn.visible ? clearBtn.left : parent.right
                 anchors.rightMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
-                color: t.ink
-                selectionColor: t.accent
-                selectedTextColor: t.inverse
-                font.family: t.font
+                color: Theme.ink
+                selectionColor: Theme.accent
+                selectedTextColor: Theme.inverse
+                font.family: Theme.font
                 font.pixelSize: 15
                 font.weight: Font.Medium
                 clip: true
@@ -111,23 +115,25 @@ Item {
                 onTextChanged: {
                     if (text === "") {
                         searchDebounce.stop()
-                        palette.refresh()
+                        pcard.refresh()
                     } else {
                         searchDebounce.restart()
                     }
                 }
-                onAccepted: palette.runCurrent()
+                onAccepted: pcard.runCurrent()
 
                 Keys.onDownPressed: (event) => {
-                    palette.move(1)
+                    pcard.move(1)
                     event.accepted = true
                 }
                 Keys.onUpPressed: (event) => {
-                    palette.move(-1)
+                    pcard.move(-1)
                     event.accepted = true
                 }
+                Keys.onReturnPressed: (event) => { pcard.runCurrent(); event.accepted = true }
+                Keys.onEnterPressed: (event) => { pcard.runCurrent(); event.accepted = true }
                 Keys.onEscapePressed: (event) => {
-                    palette.dismissed()
+                    pcard.dismissed()
                     event.accepted = true
                 }
 
@@ -136,7 +142,7 @@ Item {
                     visible: paletteInput.text.length === 0
                     verticalAlignment: TextInput.AlignVCenter
                     text: qsTr("Search apps, switch windows, calculate, or search the web…")
-                    color: t.textFaint
+                    color: Theme.textFaint
                     font: paletteInput.font
                 }
             }
@@ -155,7 +161,7 @@ Item {
                     name: "close"
                     size: 12
                     stroke: 2
-                    color: clearHit.containsMouse ? t.ink : t.textDim
+                    color: clearHit.containsMouse ? Theme.ink : Theme.textDim
                 }
                 MouseArea {
                     id: clearHit
@@ -173,30 +179,30 @@ Item {
         Rectangle {
             width: parent.width
             height: 1
-            color: t.borderSoft
+            color: Theme.borderSoft
         }
 
         // ── Results ─────────────────────────────────────────────────────
         ListView {
             id: list
             width: parent.width
-            height: palette.targetListHeight
+            height: pcard.targetListHeight
             Behavior on height { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-            interactive: count * palette.rowH > height
+            interactive: count * pcard.rowH > height
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 320
             clip: true
 
-            model: palette.results
-            onCountChanged: palette.currentIndex = Math.min(palette.currentIndex, Math.max(0, count - 1))
+            model: pcard.results
+            onCountChanged: pcard.currentIndex = Math.min(pcard.currentIndex, Math.max(0, count - 1))
 
             delegate: Item {
                 id: row
                 required property int index
                 required property var modelData
                 width: list.width
-                height: palette.rowH
-                readonly property bool active: index === palette.currentIndex
+                height: pcard.rowH
+                readonly property bool active: index === pcard.currentIndex
 
                 Rectangle {
                     x: 8
@@ -204,14 +210,14 @@ Item {
                     width: parent.width - 16
                     height: parent.height - 4
                     radius: 10
-                    color: row.active ? t.tileActive : "transparent"
+                    color: row.active ? Theme.tileActive : "transparent"
                     border.width: row.active ? 1 : 0
-                    border.color: t.tileEdge
+                    border.color: Theme.tileEdge
                 }
 
                 HoverHandler {
                     id: rowHover
-                    onHoveredChanged: if (hovered) palette.currentIndex = row.index
+                    onHoveredChanged: if (hovered) pcard.currentIndex = row.index
                 }
 
                 // Leading icon: a real app icon when there is one, a glyph
@@ -239,10 +245,10 @@ Item {
                     Glyph {
                         anchors.centerIn: parent
                         visible: !rowIcon.visible
-                        name: row.modelData.icon || "plus"
+                        name: row.modelData.icon || ((row.modelData.kind === "app" || row.modelData.kind === "window") ? Theme.appGlyph(row.modelData.title) : "plus")
                         size: 17
                         stroke: 1.9
-                        color: t.text
+                        color: Theme.text
                     }
                 }
 
@@ -254,9 +260,9 @@ Item {
                     anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
                     text: row.modelData.title || ""
-                    color: t.ink
+                    color: Theme.ink
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 14
                     font.weight: row.modelData.kind === "calc" ? Font.Bold : Font.DemiBold
 
@@ -267,8 +273,8 @@ Item {
                         x: parent.contentWidth + 10
                         anchors.verticalCenter: parent.verticalCenter
                         text: row.modelData.subtitle || ""
-                        color: t.textFaint
-                        font.family: t.font
+                        color: Theme.textFaint
+                        font.family: Theme.font
                         font.pixelSize: 12
                     }
                 }
@@ -281,9 +287,9 @@ Item {
                     width: Math.min(implicitWidth, row.width * 0.42)
                     horizontalAlignment: Text.AlignRight
                     text: row.modelData.kind === "calc" ? "" : (row.modelData.subtitle || "")
-                    color: row.active ? t.textDim : t.textFaint
+                    color: row.active ? Theme.textDim : Theme.textFaint
                     elide: Text.ElideRight
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 12
                     font.weight: Font.Medium
                 }
@@ -291,7 +297,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: palette.run(row.modelData)
+                    onClicked: pcard.run(row.modelData)
                 }
             }
         }
@@ -299,7 +305,7 @@ Item {
         Rectangle {
             width: parent.width
             height: 1
-            color: t.borderSoft
+            color: Theme.borderSoft
         }
 
         // ── Footer hints ────────────────────────────────────────────────
@@ -315,7 +321,7 @@ Item {
                 spacing: 14
 
                 component Hint: Row {
-                    Theme { id: ht }
+                    id: hint
                     property string key
                     property string what
                     spacing: 5
@@ -324,15 +330,15 @@ Item {
                         width: Math.max(18, hintKey.implicitWidth + 8)
                         height: 17
                         radius: 5
-                        color: ht.raised
+                        color: Theme.raised
                         border.width: 1
-                        border.color: ht.border
+                        border.color: Theme.border
                         Text {
                             id: hintKey
                             anchors.centerIn: parent
-                            text: parent.parent.key
-                            color: ht.textDim
-                            font.family: ht.font
+                            text: hint.key
+                            color: Theme.textDim
+                            font.family: Theme.font
                             font.pixelSize: 10
                             font.weight: Font.Bold
                         }
@@ -340,8 +346,8 @@ Item {
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         text: parent.what
-                        color: ht.textFaint
-                        font.family: ht.font
+                        color: Theme.textFaint
+                        font.family: Theme.font
                         font.pixelSize: 10
                         font.weight: Font.Medium
                     }
@@ -356,10 +362,10 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: 18
                 anchors.verticalCenter: parent.verticalCenter
-                visible: palette.results.length > 0
-                text: qsTr("%1 result(s)").arg(palette.results.length)
-                color: t.textFaint
-                font.family: t.font
+                visible: pcard.results.length > 0
+                text: qsTr("%1 result(s)").arg(pcard.results.length)
+                color: Theme.textFaint
+                font.family: Theme.font
                 font.pixelSize: 10
             }
         }

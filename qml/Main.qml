@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Window
 import QtQuick.Dialogs
@@ -5,6 +6,12 @@ import QtCore
 
 Window {
     id: root
+    // Handles for the flyouts, which used to reach these ids through the
+    // parent context. Qualified access keeps qmllint (and readers) happy.
+    readonly property var settingsStore: cfg
+    readonly property var addAppDialog: fileDialog
+    readonly property var addMusicDialog: musicDialog
+    readonly property var hubTimer: sessionTimer
 
     visible: true
     color: "transparent"
@@ -16,11 +23,10 @@ Window {
     width: Screen.width
     height: Screen.height
 
-    Theme { id: t }
 
     Settings {
         id: cfg
-        location: dock.settingsFileUrl
+        location: Dock.settingsFileUrl
         category: "ui"
         property real sizeScale: 1.0
         property bool autoHide: true
@@ -49,7 +55,12 @@ Window {
         // ---- Anthropic Agent SDK & Computer Use tools ------------------------
         property bool buddyAgentMode: true
         property bool buddyAllowBash: true
-        property bool buddyAllowComputer: true
+        // Computer use (mouse/keyboard control) is off until the user opts in.
+        property bool buddyAllowComputer: false
+        // How computer use looks while Buddy is in control.
+        property bool buddyCuShowCursor: true
+        property bool buddyCuShowGlow: true
+        property real buddyCuGlowIntensity: 0.6
         property bool buddyAllowEditor: true
         property bool buddyAllowCodeSearch: true
         property bool buddyAllowMemory: true
@@ -57,6 +68,16 @@ Window {
         property bool buddyAllowToolSearch: true
         property bool buddyAllowAdvisor: true
         property bool buddyAllowTodoTask: true
+        // ---- Agent safety (see docs/agent-safety.md) -------------------------
+        // "default" asks before side effects, "acceptEdits" auto-approves file
+        // edits inside the workspace, "plan" is read-only, "bypass" trusts all
+        // (hard-deny rules still apply).
+        property string buddyPermissionMode: "default"
+        property string buddyWorkspaceRoot: ""
+        property bool buddyRedactSecrets: true
+        property bool buddyKeepTraces: true
+        property bool buddyStreamReplies: true
+        property bool buddyHandoffs: true
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
         property real buddySfxVolume: 0.75
@@ -69,17 +90,17 @@ Window {
         cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
         cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
         cfg.buddyApiBase, cfg.buddyModel, cfg.buddyTemperature,
-        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyAllowEditor,
+        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
-        cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle,
-        appearance.light, appearance.palette, appearance.accent, appearance.ring
+        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyHandoffs,
+        cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
     Timer {
         id: snapshotSyncTimer
         interval: 600
-        onTriggered: dock.syncStateSnapshot()
+        onTriggered: Dock.syncStateSnapshot()
     }
 
     // ------------------------------------------------------------------ size
@@ -130,7 +151,7 @@ Window {
     // lifts the guard by itself.
     // When tucked away (!revealed), ONLY hovering the dash (peekZone) brings
     // the notch out — hovering around it does nothing.
-    readonly property bool fullscreenGuard: cfg.suppressInFullscreen && fullscreen.active && !paletteOpen
+    readonly property bool fullscreenGuard: cfg.suppressInFullscreen && Fullscreen.active && !paletteOpen
     readonly property bool notchElementsHovered: pillHover.hovered || grip.containsMouse || panelItem.hovered
                                                  || menu.hovered || musicFlyout.hovered
                                                  || hubFlyout.hovered || musicPillHover.hovered
@@ -203,16 +224,16 @@ Window {
     readonly property bool hudVisible: resizing || hudTimer.running
 
     // ------------------------------------------------------------ data
-    readonly property var apps: dock.apps
-    readonly property var running: dock.running
-    readonly property var openList: openApps.apps
+    readonly property var apps: Dock.apps
+    readonly property var running: Dock.running
+    readonly property var openList: OpenApps.apps
 
     function activateOrLaunchApp(i) {
         if (i < 0 || i >= apps.length)
             return
         previewOpen = false
         const app = apps[i]
-        if (app.exe && running.indexOf(app.exe) >= 0 && openApps.activateApp(app.exe)) {
+        if (app.exe && running.indexOf(app.exe) >= 0 && OpenApps.activateApp(app.exe)) {
             closeAll()
             return
         }
@@ -230,7 +251,7 @@ Window {
         paletteOpen = false
         launchHold = true
         launchHoldTimer.restart()
-        if (dock.launch(i))
+        if (Dock.launch(i))
             toast = qsTr("Opening %1").arg(apps[i].name)
         else
             toast = qsTr("Couldn't open %1").arg(apps[i].name)
@@ -316,7 +337,7 @@ Window {
             revealed = true
         paletteOpen = true
         root.requestActivate()
-        paletteCard.takeFocus()
+        paletteFlyout.takeFocus()
     }
 
     function closePalette() {
@@ -328,27 +349,27 @@ Window {
     function hotkeyNotice() {
         if (!cfg.hotkeyPalette)
             return
-        if (!hotkey.registered)
+        if (!Hotkey.registered)
             showToast(qsTr("Palette hotkey unavailable"))
-        else if (!hotkey.preferred)
-            showToast(qsTr("Ctrl+Alt+Space is taken — press %1 for the palette").arg(hotkey.shortcut))
+        else if (!Hotkey.preferred)
+            showToast(qsTr("Ctrl+Alt+Space is taken — press %1 for the palette").arg(Hotkey.shortcut))
     }
 
     // The built-in commands the palette's list can offer.
     function runCommand(id) {
         switch (id) {
         case "lock":
-            power.lock()
+            Power.lock()
             break
         case "sleep":
-            power.sleep()
+            Power.sleep()
             break
         case "mic":
-            audio.toggleMicMute()
-            showToast(audio.micMuted ? qsTr("Microphone muted") : qsTr("Microphone live"))
+            Audio.toggleMicMute()
+            showToast(Audio.micMuted ? qsTr("Microphone muted") : qsTr("Microphone live"))
             break
         case "taskmgr":
-            search.openPath("taskmgr.exe")
+            AppIndex.openPath("taskmgr.exe")
             break
         case "winsettings":
             Qt.openUrlExternally("ms-settings:")
@@ -490,7 +511,7 @@ Window {
             }
         }
         pushBuddyRegions(r)
-        overlay.setInteractiveRegions(r)
+        Overlay.setInteractiveRegions(r)
     }
 
     Component.onCompleted: updateMask()
@@ -521,7 +542,7 @@ Window {
             if (!bub) bub = find(buddy, function(o) { return o.objectName === "buddyBubble" })
             switch (step++) {
             case 0:
-                saved = { h: cfg.buddyHistory, p: appearance.palette, a: appearance.accent, r: appearance.ring, l: appearance.light }
+                saved = { h: cfg.buddyHistory }
                 const now = Date.now()
                 cfg.buddyHistory = JSON.stringify([
                     { q: "How do I stay focused in the afternoon?", kind: "chat", title: "", a: "Try a **25-minute** focus block, a short walk, and water before coffee.", t: now - 120000 },
@@ -534,16 +555,15 @@ Window {
             case 2: grab("h1_hist_anim"); next(800); break
             case 3: grab("h2_hist"); bub.pickHistory(0); next(1600); break
             case 4: grab("h3_replay"); buddy.dismiss(); next(700); break
-            case 5: appearance.palette = "midnight"; appearance.accent = "violet"; appearance.ring = "sunset"; buddy.openInput(); next(900); break
-            case 6: grab("t1_midnight_input"); buddy.dismiss(); buddy.setMood("happy", 5000); next(600); break
-            case 7: grab("t2_sunset_ring"); root.toggleSettings(); next(900); break
-            case 8: sp = find(root.contentItem, function(o) { return o.paletteOpts !== undefined && o.tab !== undefined }); grab("s1_general"); next(100); break
+            case 5: buddy.openInput(); next(900); break
+            case 6: grab("t1_input"); buddy.dismiss(); buddy.setMood("happy", 5000); next(600); break
+            case 7: grab("t2_ring"); root.toggleSettings(); next(900); break
+            case 8: sp = find(root.contentItem, function(o) { return o.appFilter !== undefined && o.tab !== undefined }); grab("s1_general"); next(100); break
             case 9: { const f = find(sp, function(o) { return o.contentHeight !== undefined && o.visible && o.contentHeight > o.height }); if (f) f.contentY = f.contentHeight - f.height; next(500); break }
             case 10: grab("s1b_general_scrolled"); sp.tab = 2; next(600); break
-            case 11: grab("s2_buddy"); appearance.light = true; next(700); break
-            case 12: grab("s3_light"); next(100); break
+            case 11: grab("s2_buddy"); next(700); break
+            case 12: next(100); break
             case 13:
-                appearance.light = saved.l; appearance.palette = saved.p; appearance.accent = saved.a; appearance.ring = saved.r
                 cfg.buddyHistory = saved.h
                 root.toggleSettings(); console.log("DEMO restored"); break
             }
@@ -582,7 +602,7 @@ Window {
             id: bg
             anchors.fill: parent
             radius: height / 2
-            edge: root.dragging ? t.accent : "transparent"
+            edge: root.dragging ? Theme.accent : "transparent"
         }
 
         // Clicking empty notch space dismisses menus; right-click opens settings.
@@ -681,13 +701,13 @@ Window {
                                 radius: width * 0.28
                                 color: "transparent"
                                 border.width: 1.5
-                                border.color: t.accent
+                                border.color: Theme.accent
                                 Glyph {
                                     anchors.centerIn: parent
                                     name: "plus"
                                     size: root.iconSize * 0.55
                                     stroke: 2
-                                    color: t.accent
+                                    color: Theme.accent
                                 }
                             }
                         }
@@ -708,13 +728,13 @@ Window {
                                     name: "plus"
                                     size: Math.round(14 * root.s)
                                     stroke: 2
-                                    color: emptyPromptHit.containsMouse ? t.ink : t.textDim
+                                    color: emptyPromptHit.containsMouse ? Theme.ink : Theme.textDim
                                 }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: qsTr("Add apps")
-                                    color: emptyPromptHit.containsMouse ? t.ink : t.textDim
-                                    font.family: t.font
+                                    color: emptyPromptHit.containsMouse ? Theme.ink : Theme.textDim
+                                    font.family: Theme.font
                                     font.pixelSize: Math.round(12.5 * root.s)
                                     font.weight: Font.DemiBold
                                 }
@@ -726,7 +746,7 @@ Window {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    settings.tab = 1
+                                    panelItem.tab = 1
                                     root.panelOpen = true
                                 }
                             }
@@ -745,7 +765,7 @@ Window {
                         anchors.centerIn: parent
                         width: 1
                         height: Math.round(20 * root.s)
-                        color: t.border
+                        color: Theme.border
                     }
                 }
 
@@ -782,12 +802,12 @@ Window {
     }
 
     function handleDrop(drop) {
-        const result = player.ingestDrop(drop.urls)
+        const result = Player.ingestDrop(drop.urls)
         const added = result.added || 0
         let pinned = 0
         const others = result.other || []
         for (let i = 0; i < others.length; ++i) {
-            if (dock.pinUrl(others[i]))
+            if (Dock.pinUrl(others[i]))
                 ++pinned
         }
         if (added > 0) {
@@ -937,7 +957,7 @@ Window {
     }
 
     function openPreview(exe, centerX) {
-        const windows = openApps.windowsFor(exe)
+        const windows = OpenApps.windowsFor(exe)
         if (windows.length === 0) {
             previewOpen = false
             return
@@ -991,7 +1011,7 @@ Window {
 
         onActivated: (windowId) => {
             root.previewOpen = false
-            openApps.activateWindow(windowId)
+            OpenApps.activateWindow(windowId)
         }
         onHoveredChanged: {
             if (hovered)
@@ -1071,20 +1091,12 @@ Window {
         ? Math.max(8, Math.min(height - 64, cfg.buddyY))
         : root.shownY
 
-    // Settings > Buddy > Ring colour: let the buddy show off the new halo.
-    function previewBuddyRing() {
-        if (!cfg.buddyEnabled)
-            return
-        buddy.setMood("happy", 2200)
-        buddy.hop(90)
-        buddy.neonBurst(true)
-    }
 
     Buddy {
         id: buddy
         visible: cfg.buddyEnabled
         solidRing: cfg.buddySolidRing
-        motionPaused: root.fullscreenGuard
+        motionPaused: root.fullscreenGuard || !visible
         s: root.s
         desktop: root.contentItem
         focusTimer: sessionTimer
@@ -1108,24 +1120,42 @@ Window {
     }
 
     // Keep the C++ buddy provider and sound synthesizer in sync with saved settings.
-    Binding { target: buddyProvider; property: "provider"; value: cfg.buddyProvider }
-    Binding { target: buddyProvider; property: "apiKey"; value: cfg.buddyApiKey }
-    Binding { target: buddyProvider; property: "apiBase"; value: cfg.buddyApiBase }
-    Binding { target: buddyProvider; property: "model"; value: cfg.buddyModel }
-    Binding { target: buddyProvider; property: "temperature"; value: cfg.buddyTemperature }
-    Binding { target: buddyProvider; property: "agentMode"; value: cfg.buddyAgentMode }
-    Binding { target: buddyProvider; property: "allowBash"; value: cfg.buddyAllowBash }
-    Binding { target: buddyProvider; property: "allowComputer"; value: cfg.buddyAllowComputer }
-    Binding { target: buddyProvider; property: "allowEditor"; value: cfg.buddyAllowEditor }
-    Binding { target: buddyProvider; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
-    Binding { target: buddyProvider; property: "allowMemory"; value: cfg.buddyAllowMemory }
-    Binding { target: buddyProvider; property: "allowWebSearch"; value: cfg.buddyAllowWebSearch }
-    Binding { target: buddyProvider; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
-    Binding { target: buddyProvider; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
-    Binding { target: buddyProvider; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
-    Binding { target: buddySfx; property: "enabled"; value: cfg.buddySfxEnabled }
-    Binding { target: buddySfx; property: "volume"; value: cfg.buddySfxVolume }
-    Binding { target: buddySfx; property: "style"; value: cfg.buddySfxStyle }
+    Binding { target: BuddyAgent; property: "provider"; value: cfg.buddyProvider }
+    Binding { target: BuddyAgent; property: "apiKey"; value: cfg.buddyApiKey }
+    Binding { target: BuddyAgent; property: "apiBase"; value: cfg.buddyApiBase }
+    Binding { target: BuddyAgent; property: "model"; value: cfg.buddyModel }
+    Binding { target: BuddyAgent; property: "temperature"; value: cfg.buddyTemperature }
+    Binding { target: BuddyAgent; property: "agentMode"; value: cfg.buddyAgentMode }
+    Binding { target: BuddyAgent; property: "allowBash"; value: cfg.buddyAllowBash }
+    Binding { target: BuddyAgent; property: "allowComputer"; value: cfg.buddyAllowComputer }
+    Binding { target: AgentControl; property: "showCursor"; value: cfg.buddyCuShowCursor }
+    Binding { target: AgentControl; property: "showGlow"; value: cfg.buddyCuShowGlow }
+    Binding { target: AgentControl; property: "glowIntensity"; value: cfg.buddyCuGlowIntensity }
+
+    // Buddy's cursor, the screen-edge glow and the control HUD while the
+    // agent uses the computer. The HUD sits just under the notch.
+    AgentControlOverlay {
+        id: agentOverlay
+        hudScreen: root.screen
+        hudCenterX: root.x + root.width / 2
+        hudTop: root.y + root.shownY + root.pillH + 10
+    }
+    Binding { target: BuddyAgent; property: "allowEditor"; value: cfg.buddyAllowEditor }
+    Binding { target: BuddyAgent; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
+    Binding { target: BuddyAgent; property: "allowMemory"; value: cfg.buddyAllowMemory }
+    Binding { target: BuddyAgent; property: "allowWebSearch"; value: cfg.buddyAllowWebSearch }
+    Binding { target: BuddyAgent; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
+    Binding { target: BuddyAgent; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
+    Binding { target: BuddyAgent; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
+    Binding { target: BuddyAgent; property: "permissionMode"; value: cfg.buddyPermissionMode }
+    Binding { target: BuddyAgent; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
+    Binding { target: BuddyAgent; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
+    Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
+    Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
+    Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
+    Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
+    Binding { target: BuddySound; property: "volume"; value: cfg.buddySfxVolume }
+    Binding { target: BuddySound; property: "style"; value: cfg.buddySfxStyle }
 
     BuddyPanel {
         id: buddyPanel
@@ -1159,7 +1189,7 @@ Window {
     }
 
     Connections {
-        target: player
+        target: Player
         function onPlaybackError(message) { root.showToast(message) }
         function onFolderScanNotice(message) { root.showToast(message) }
     }
@@ -1168,25 +1198,25 @@ Window {
     // disables the registration; if the combination is taken, registration
     // simply fails and everything else keeps working.
     Connections {
-        target: hotkey
+        target: Hotkey
         function onActivated() { root.summonPalette() }
         function onRegisteredChanged() { root.hotkeyNotice() }
     }
-    Binding { target: hotkey; property: "enabled"; value: cfg.hotkeyPalette }
+    Binding { target: Hotkey; property: "enabled"; value: cfg.hotkeyPalette }
 
     Connections {
-        target: search
+        target: AppIndex
         function onCommandRequested(command) { root.runCommand(command) }
         function onToastRequested(text) { root.showToast(text) }
     }
 
     Connections {
-        target: radios
+        target: Radio
         function onDenied() { root.showToast(qsTr("Windows blocked that switch")) }
     }
 
     Connections {
-        target: nightLight
+        target: Night
         function onFailed() { root.showToast(qsTr("Night light could not be switched here")) }
     }
 
@@ -1196,7 +1226,7 @@ Window {
         currentFolder: StandardPaths.writableLocation(StandardPaths.ApplicationsLocation)
         nameFilters: [qsTr("Apps and shortcuts (*.exe *.lnk *.url *.bat *.cmd)"), qsTr("All files (*)")]
         onAccepted: {
-            if (dock.pinUrl(selectedFile))
+            if (Dock.pinUrl(selectedFile))
                 root.showToast(qsTr("Pinned"))
         }
     }
@@ -1208,7 +1238,7 @@ Window {
         currentFolder: StandardPaths.writableLocation(StandardPaths.MusicLocation)
         nameFilters: [qsTr("Audio (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma *.aiff *.aif)")]
         onAccepted: {
-            const n = player.addUrls(selectedFiles)
+            const n = Player.addUrls(selectedFiles)
             if (n > 0) {
                 root.showToast(n === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(n))
                 root.panelOpen = false

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Music pill beside the notch, separate from the app dock.
@@ -22,17 +23,16 @@ Item {
     signal hintRequested(string text)
     signal hintCleared()
 
-    Theme { id: t }
 
-    readonly property bool playing: media.playing
-    readonly property color dynAccent: media.hasTrack ? media.accentColor : t.ink
+    readonly property bool playing: Media.playing
+    readonly property color dynAccent: Media.hasTrack ? Media.accentColor : Theme.ink
     readonly property real pillH: Math.round(50 * s)
-    readonly property real playingW: Math.round((media.hasCover ? 86 : 80) * s)
+    readonly property real playingW: Math.round((Media.hasCover ? 86 : 80) * s)
     property bool barOpen: false
     property bool volumeOpen: false
 
     width: barOpen ? barRow.implicitWidth + Math.round(20 * s)
-                   : (playing || media.hasCover ? playingW : pillH)
+                   : (playing || Media.hasCover ? playingW : pillH)
     height: pillH
     opacity: appear
 
@@ -43,7 +43,7 @@ Item {
         id: tb
         property string icon
         property real glyphSize: Math.round(18 * chip.s)
-        property color tint: t.ink
+        property color tint: Theme.ink
         property bool filled: false
         property bool badge: false
         signal clicked()
@@ -55,7 +55,7 @@ Item {
             visible: tb.filled
             anchors.fill: parent
             radius: width / 2
-            color: t.ink
+            color: Theme.ink
             opacity: tbHit.pressed ? 0.85 : 1
             Behavior on opacity { NumberAnimation { duration: 120 } }
         }
@@ -63,7 +63,7 @@ Item {
             anchors.centerIn: parent
             name: tb.icon
             size: tb.glyphSize
-            color: tb.filled ? t.inverse : tb.tint
+            color: tb.filled ? Theme.inverse : tb.tint
             scale: tbHit.pressed ? 0.86 : 1
             Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
         }
@@ -80,7 +80,7 @@ Item {
                 anchors.centerIn: parent
                 text: "1"
                 color: "#ffffff"
-                font.family: t.font
+                font.family: Theme.font
                 font.pixelSize: Math.round(8 * chip.s)
                 font.weight: Font.Black
             }
@@ -106,7 +106,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: height / 2
-        opacity: (chip.playing || media.hasCover) && !chip.barOpen ? 1 : 0
+        opacity: (chip.playing || Media.hasCover) && !chip.barOpen ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 280 } }
         gradient: Gradient {
             orientation: Gradient.Horizontal
@@ -128,7 +128,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: Qt.PointingHandCursor
         onClicked: (mouse) => {
-            if (mouse.button === Qt.RightButton || !media.hasTrack || chip.active) {
+            if (mouse.button === Qt.RightButton || !Media.hasTrack || chip.active) {
                 chip.barOpen = false
                 chip.volumeOpen = false
                 chip.openRequested()
@@ -145,9 +145,9 @@ Item {
         onHoveredChanged: {
             if (hovered) {
                 collapseTimer.stop()
-                chip.hintRequested(media.hasTrack && media.title.length > 0
-                                   ? media.title + (media.artist ? " — " + media.artist : "")
-                                             + (media.sourceName ? " · " + media.sourceName : "")
+                chip.hintRequested(Media.hasTrack && Media.title.length > 0
+                                   ? Media.title + (Media.artist ? " — " + Media.artist : "")
+                                             + (Media.sourceName ? " · " + Media.sourceName : "")
                                    : qsTr("Music"))
             } else {
                 chip.hintCleared()
@@ -178,7 +178,7 @@ Item {
         Behavior on opacity { NumberAnimation { duration: 160 } }
 
         Item {
-            width: media.hasCover ? Math.round(28 * chip.s) : Math.round(20 * chip.s)
+            width: Media.hasCover ? Math.round(28 * chip.s) : Math.round(20 * chip.s)
             height: width
             anchors.verticalCenter: parent.verticalCenter
 
@@ -186,7 +186,7 @@ Item {
                 id: miniArtFrame
                 anchors.fill: parent
                 radius: width / 2
-                color: t.raised
+                color: Theme.raised
                 border.width: 1
                 border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.45)
                 visible: miniCover.visible
@@ -198,10 +198,10 @@ Item {
                     anchors.margins: 1
                     // Pre-rounded pixels from the provider: clip ignores
                     // radius, so a square crop would poke past this circle.
-                    source: media.hasCover ? media.coverUrlRound : ""
+                    source: Media.hasCover ? Media.coverUrlRound : ""
                     sourceSize: Qt.size(64, 64)
                     fillMode: Image.PreserveAspectCrop
-                    visible: media.hasCover && status === Image.Ready
+                    visible: Media.hasCover && status === Image.Ready
                     asynchronous: true
                     smooth: true
                 }
@@ -212,14 +212,14 @@ Item {
                 visible: !miniCover.visible
                 name: "notes"
                 size: Math.round(20 * chip.s)
-                color: media.hasTrack ? chip.dynAccent : t.ink
+                color: Media.hasTrack ? chip.dynAccent : Theme.ink
                 Behavior on color { ColorAnimation { duration: 260 } }
             }
         }
 
         Item {
             id: meter
-            visible: chip.playing || media.hasCover
+            visible: chip.playing || Media.hasCover
             width: Math.round(18 * chip.s)
             height: Math.round(20 * chip.s)
             anchors.verticalCenter: parent.verticalCenter
@@ -258,7 +258,7 @@ Item {
                         // so bars used to freeze mid-value when paused. Resting
                         // height back on the way out.
                         onRunningChanged: if (!running)
-                            level = 0.22
+                            bar.level = Qt.binding(() => chip.playing ? 0.45 : 0.22)
 
                         NumberAnimation { to: 1.0; duration: 340 + bar.index * 110; easing.type: Easing.InOutSine }
                         NumberAnimation { to: 0.22; duration: 340 + bar.index * 110; easing.type: Easing.InOutSine }
@@ -288,7 +288,7 @@ Item {
                 width: Math.round(26 * chip.s)
                 height: width
                 radius: Math.round(7 * chip.s)
-                color: t.raised
+                color: Theme.raised
                 border.width: 1
                 border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.5)
                 visible: barMiniCover.visible
@@ -300,10 +300,10 @@ Item {
                     anchors.margins: 1
                     // Same trick: the provider hands over rounded corners, so
                     // the image cannot out-stick its rounded frame.
-                    source: media.hasCover ? media.coverUrlRound : ""
+                    source: Media.hasCover ? Media.coverUrlRound : ""
                     sourceSize: Qt.size(64, 64)
                     fillMode: Image.PreserveAspectCrop
-                    visible: media.hasCover && status === Image.Ready
+                    visible: Media.hasCover && status === Image.Ready
                     asynchronous: true
                     smooth: true
                 }
@@ -314,7 +314,7 @@ Item {
                 visible: !barMiniCover.visible
                 name: "notes"
                 size: Math.round(18 * chip.s)
-                color: chip.active ? chip.dynAccent : t.textDim
+                color: chip.active ? chip.dynAccent : Theme.textDim
             }
 
             MouseArea {
@@ -327,31 +327,31 @@ Item {
         TransportButton {
             icon: "prev"
             glyphSize: Math.round(19 * chip.s)
-            tint: media.canPrev ? t.ink : t.textFaint
-            onClicked: if (media.canPrev) media.previous()
+            tint: Media.canPrev ? Theme.ink : Theme.textFaint
+            onClicked: if (Media.canPrev) Media.previous()
         }
         TransportButton {
             icon: chip.playing ? "pause" : "play"
             filled: true
             glyphSize: Math.round(17 * chip.s)
-            onClicked: media.toggle()
+            onClicked: Media.toggle()
         }
         TransportButton {
             icon: "next"
             glyphSize: Math.round(19 * chip.s)
-            tint: media.canNext ? t.ink : t.textFaint
-            onClicked: if (media.canNext) media.next()
+            tint: Media.canNext ? Theme.ink : Theme.textFaint
+            onClicked: if (Media.canNext) Media.next()
         }
         TransportButton {
-            visible: media.canRepeat
+            visible: Media.canRepeat
             icon: "repeat"
-            tint: media.repeatMode > 0 ? chip.dynAccent : t.textFaint
-            badge: media.repeatMode === 2
-            onClicked: media.cycleRepeat()
+            tint: Media.repeatMode > 0 ? chip.dynAccent : Theme.textFaint
+            badge: Media.repeatMode === 2
+            onClicked: Media.cycleRepeat()
         }
         TransportButton {
-            icon: media.muted || media.volume < 0.01 ? "mute" : "volume"
-            tint: chip.volumeOpen ? chip.dynAccent : t.textDim
+            icon: Media.muted || Media.volume < 0.01 ? "mute" : "volume"
+            tint: chip.volumeOpen ? chip.dynAccent : Theme.textDim
             onClicked: chip.volumeOpen = !chip.volumeOpen
         }
         Item {
@@ -365,9 +365,9 @@ Item {
                 width: parent.width
                 from: 0
                 to: 1
-                value: media.volume
+                value: Media.volume
                 onMoved: (v) => {
-                    media.setVolume(v)
+                    Media.setVolume(v)
                     chip.volumeNudged(v)
                 }
             }
@@ -377,8 +377,8 @@ Item {
     WheelHandler {
         target: null
         onWheel: (event) => {
-            const next = Math.max(0, Math.min(1, media.volume + (event.angleDelta.y / 120) * 0.05))
-            media.setVolume(next)
+            const next = Math.max(0, Math.min(1, Media.volume + (event.angleDelta.y / 120) * 0.05))
+            Media.setVolume(next)
             chip.volumeNudged(next)
         }
     }

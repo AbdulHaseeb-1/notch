@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QElapsedTimer>
+#include <QTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -14,6 +15,10 @@
 #include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
+
+#include "AgentPolicy.h"
+#include "ComputerUse.h"
+#include "StreamAccumulator.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
 // Anthropic Agent SDK / Computer Use multi-turn tool loop across all providers:
@@ -34,6 +39,16 @@
 //   - "tool_search"        — Anthropic Tool Search (BM25 natural language & Regex tool discovery + dynamic schema loading)
 //   - "advisor"            — Anthropic Advisor Tool (high-reasoning strategic consultation, architecture review & verification)
 //   - "todo_write"         — Anthropic Task & Desktop Context Tool (structured TodoWrite checklist, clipboard & system inspection)
+//
+// Safety layer (see AgentPolicy.h and docs/agent-safety.md):
+//   - every tool call passes AgentPolicy (permission mode, deny/ask/allow
+//     rules, guardrails); "ask" pauses the run and raises pendingApproval for
+//     the UI, resolved with resolveApproval()
+//   - tool inputs/outputs are checked by guardrails (secret leak, prompt
+//     injection in fetched content), repeated identical calls are cut off
+//   - old tool results are compacted before each model call, Anthropic
+//     prompts are cached, transient API errors retry with backoff
+//   - each run writes a JSON trace (model + tool spans) to tracesPath()
 class BuddyProvider : public QObject
 {
     Q_OBJECT
@@ -57,6 +72,28 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowTodoTask READ allowTodoTask WRITE setAllowTodoTask NOTIFY agentConfigChanged)
 
     // Live tool-execution telemetry & Anthropic Agent SDK response metadata for the UI
+    // Permission mode: "default" | "acceptEdits" | "plan" | "bypass".
+    Q_PROPERTY(QString permissionMode READ permissionMode WRITE setPermissionMode NOTIFY agentConfigChanged)
+    // Folder where acceptEdits auto-approves file edits (empty = ~/Noch Workspace).
+    Q_PROPERTY(QString workspaceRoot READ workspaceRoot WRITE setWorkspaceRoot NOTIFY agentConfigChanged)
+    Q_PROPERTY(bool redactSecrets READ redactSecrets WRITE setRedactSecrets NOTIFY agentConfigChanged)
+    Q_PROPERTY(bool keepTraces READ keepTraces WRITE setKeepTraces NOTIFY agentConfigChanged)
+    // Streaming (SSE) replies: streamText is the answer text of the model
+    // turn in flight, updated live (coalesced to ~25 fps, secrets redacted).
+    Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
+    // Agent cursor / edge glow / control HUD state for computer use.
+    Q_PROPERTY(ComputerUse *computer READ computer CONSTANT)
+    Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
+    Q_PROPERTY(bool streaming READ streaming NOTIFY streamTextChanged)
+    // Handoffs (OpenAI Agents SDK style): Buddy can transfer the run to a
+    // specialist with its own instructions and a restricted toolset.
+    Q_PROPERTY(bool handoffs READ handoffs WRITE setHandoffs NOTIFY agentConfigChanged)
+    Q_PROPERTY(QString activeAgent READ activeAgent NOTIFY activeAgentChanged)
+    Q_PROPERTY(QString activeAgentTitle READ activeAgentTitle NOTIFY activeAgentChanged)
+    // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
+    // badge, icon, title, detail, reason, rule, secondsLeft }.
+    Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
+
     Q_PROPERTY(QVariantList toolSteps READ toolSteps NOTIFY toolStepsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
     Q_PROPERTY(QString activeToolBadge READ activeToolBadge NOTIFY activeToolChanged)
@@ -67,6 +104,9 @@ class BuddyProvider : public QObject
     Q_PROPERTY(QVariantList citations READ citations NOTIFY responseMetaChanged)
 
 public:
+    ComputerUse *computer() const { return m_computer; }
+    // Tests pin the monitor layout instead of reading it from Qt.
+    void setComputerAutoScreens(bool on) { m_computerAutoScreens = on; m_computer->setAutoScreens(on); }
     explicit BuddyProvider(QObject *parent = nullptr);
 
     QString provider() const { return m_provider; }
@@ -103,6 +143,35 @@ public:
     bool allowTodoTask() const { return m_allowTodoTask; }
     void setAllowTodoTask(bool on);
 
+    QString permissionMode() const { return m_permissionMode; }
+    void setPermissionMode(const QString &m);
+    QString workspaceRoot() const { return m_workspaceRoot; }
+    void setWorkspaceRoot(const QString &r);
+    bool redactSecrets() const { return m_redactSecrets; }
+    void setRedactSecrets(bool on);
+    bool keepTraces() const { return m_keepTraces; }
+    void setKeepTraces(bool on);
+    bool streamReplies() const { return m_streamReplies; }
+    void setStreamReplies(bool on);
+    QString streamText() const { return m_streamText; }
+    bool streaming() const { return m_streamingNow; }
+    bool handoffs() const { return m_handoffs; }
+    void setHandoffs(bool on);
+    QString activeAgent() const { return m_activeAgent; }
+    QString activeAgentTitle() const;
+    // Specialist registry (static): id -> title, icon, allowed tools, instructions.
+    struct AgentProfile {
+        QString id;
+        QString title;
+        QString icon;
+        QStringList tools;      // empty = every enabled tool
+        QString handoffDescription;
+        QString instructions;
+    };
+    static const QList<AgentProfile> &agentProfiles();
+    static const AgentProfile *profileFor(const QString &id);
+    QVariantMap pendingApproval() const { return m_pendingApproval; }
+
     QVariantList toolSteps() const { return m_toolSteps; }
     QString activeTool() const { return m_activeTool; }
     QString activeToolBadge() const { return m_activeToolBadge; }
@@ -121,6 +190,12 @@ public:
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void probe();
     Q_INVOKABLE void clearToolSteps();
+    // Answer the pending approval: approve (once, or for the rest of the
+    // session with always=true) or reject; a reject tells the model why.
+    Q_INVOKABLE void resolveApproval(bool approve, bool always = false);
+    Q_INVOKABLE QString tracesPath() const;
+    Q_INVOKABLE QString effectiveWorkspace() const;
+    void syncPrivatePaths();
 
     Q_INVOKABLE QString chatUrl() const;
     Q_INVOKABLE QString modelsUrl() const;
@@ -139,6 +214,9 @@ signals:
     void activeToolChanged();
     void responseMetaChanged();
     void agentTodosChanged();
+    void pendingApprovalChanged();
+    void streamTextChanged();
+    void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
 
     void responseReady(const QString &text);
@@ -185,6 +263,25 @@ private:
     bool m_allowAdvisor = true;
     bool m_allowTodoTask = true;
 
+    // ---- safety, recovery and tracing ------------------------------------
+    AgentPolicy m_policy;
+    QString m_permissionMode = QStringLiteral("default");
+    QString m_workspaceRoot;
+    bool m_redactSecrets = true;
+    bool m_keepTraces = true;
+    QVariantMap m_pendingApproval;
+    QTimer m_approvalTimer;      // 1 s ticks for the countdown, auto-deny at 0
+    int m_approvalSecondsLeft = 0;
+    QTimer m_retryTimer;         // backoff before re-sending a failed model call
+    int m_retryCount = 0;
+    QHash<QString, int> m_callRepeats;  // name+input fingerprint -> count in this run
+    QJsonArray m_traceSpans;
+    QString m_traceId;
+    QElapsedTimer m_modelTimer;
+    int m_compactedResults = 0;
+    int m_cachedTokens = 0;
+    int m_deniedCalls = 0;
+
     QVariantList m_toolSteps;
     QString m_activeTool;
     QString m_activeToolBadge;
@@ -192,6 +289,13 @@ private:
     int m_agentIteration = 0;
     bool m_toolsDisabledForTurn = false;
     QString m_accumulatedText;
+    // Output-limit continuation (stop_reason max_tokens / finish_reason
+    // length): the text of the cut turns so far, how many continuations this
+    // run asked for, and whether the answer was still cut after the last one.
+    QString m_continuedText;
+    int m_continuations = 0;
+    bool m_truncated = false;
+    int m_outputTokenLimit = 8192;   // Anthropic max_tokens; lowered if the model rejects it
 
     QVariantMap m_responseMeta;
     QVariantList m_agentTodos;
@@ -210,6 +314,30 @@ private:
 
     QJsonArray m_agentMessages;
     QList<PendingToolCall> m_pendingTools;
+    PendingToolCall m_approvalCall;
+    // streaming
+    bool wantsStreaming() const;
+    void onStreamReadyRead();
+    void setStreamText(const QString &text, bool live);
+    bool m_streamReplies = true;
+    ComputerUse *m_computer = nullptr;
+    bool m_computerAutoScreens = true;
+    StreamAccumulator m_stream;
+    bool m_streamConsumed = false;    // this reply's body is being parsed as SSE
+    bool m_streamingNow = false;
+    QString m_streamText;
+    QTimer m_streamEmitTimer;
+    // handoffs
+    bool m_handoffs = true;
+    QString m_activeAgent = QStringLiteral("buddy");
+    QString m_memoryIndexSnapshot;   // memoryIndex() taken at run start
+    int m_handoffCount = 0;
+    void setActiveAgent(const QString &id);
+    bool toolAllowedForActiveAgent(const QString &tool) const;
+    void executeHandoff(const PendingToolCall &call);
+    QString memoryIndex() const;
+    quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
+    QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
     QList<ToolOutcome> m_completedTools;
 
     QPointer<QNetworkReply> m_chatReply;
@@ -227,6 +355,18 @@ private:
     QNetworkRequest buildRequest(const QString &url) const;
 
     void dispatchAgentTurn();
+    void executeToolCall(const PendingToolCall &call);
+    void gateAndExecute(const PendingToolCall &call);
+    void setStepFields(int stepIndex, const QVariantMap &fields);
+    void clearPendingApproval();
+    void onApprovalTick();
+    int compactContext();
+    bool scheduleRetry(int status, QNetworkReply::NetworkError err, const QByteArray &retryAfter);
+    QString guardToolOutput(const PendingToolCall &call, const QString &output, bool *flagged) const;
+    QString redact(const QString &text) const;
+    void addSpan(const QJsonObject &span);
+    void finishTrace(const QString &outcome, const QString &detail = QString());
+    void emitFinal(const QString &text);
     void processNextToolCall();
     void finishCurrentToolCall(const PendingToolCall &call, const QString &output,
                                const QString &imageBase64, bool isError);
@@ -250,6 +390,7 @@ private:
     static QString badgeForTool(const QString &name, const QJsonObject &input);
 
     QString extractText(const QJsonDocument &doc) const;
+    QString rawAnswerText(const QJsonDocument &doc) const;
     static QString errorText(const QByteArray &body, int status,
                              const QString &fallback);
     static QStringList modelsIn(const QJsonDocument &doc, const QString &provider);

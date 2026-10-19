@@ -1,13 +1,13 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
-// Segmented control with a sliding white highlight.
+// Segmented control: recessed stone well with a sliding light-stone thumb.
 Item {
     id: seg
     property var options: []          // [{ label, value }]
     property var value
     signal picked(var value)
 
-    Theme { id: t }
 
     readonly property int currentIndex: {
         for (let i = 0; i < options.length; ++i) {
@@ -24,12 +24,37 @@ Item {
 
     implicitWidth: 240
     implicitHeight: 32
+    activeFocusOnTab: true
+    focus: false
+    Accessible.role: Accessible.PageTabList
+    Accessible.name: qsTr("Section")
+    Accessible.description: {
+        const i = currentIndex
+        return i >= 0 && i < options.length ? String(options[i].label) : ""
+    }
+    Keys.onLeftPressed: (event) => { move(-1); event.accepted = true }
+    Keys.onRightPressed: (event) => { move(1); event.accepted = true }
+    Keys.onReturnPressed: (event) => { event.accepted = true }
+    function move(delta) {
+        if (options.length === 0) return
+        const i = currentIndex < 0 ? 0 : (currentIndex + delta + options.length) % options.length
+        picked(options[i].value)
+    }
 
     Rectangle {
         anchors.fill: parent
         radius: height / 2
-        color: t.raised
-        border.color: t.borderSoft
+        color: "transparent"
+        border.width: seg.activeFocus ? 1 : 0
+        border.color: Theme.focusRing
+        z: 2
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: height / 2
+        color: Theme.field
+        border.color: Theme.glassBorder
         border.width: 1
     }
 
@@ -41,7 +66,7 @@ Item {
         width: seg.cellW
         x: 3 + Math.max(0, seg.currentIndex) * seg.cellW
         radius: height / 2
-        color: t.accent
+        color: Theme.accent
         Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
         Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutQuint } }
     }
@@ -63,9 +88,9 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: cell.modelData.label
-                    color: cell.selected ? t.inverse : (cellHit.containsMouse ? t.text : t.textDim)
-                    font.family: t.font
-                    font.pixelSize: 12
+                    color: cell.selected ? Theme.inverse : (cellHit.containsMouse ? Theme.text : Theme.textDim)
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontBase
                     font.weight: cell.selected ? Font.Bold : Font.Medium
                     Behavior on color { ColorAnimation { duration: 160 } }
                 }
@@ -75,6 +100,10 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    Accessible.role: Accessible.PageTab
+                    Accessible.name: String(cell.modelData.label || "")
+                    Accessible.checkable: true
+                    Accessible.checked: cell.selected
                     onClicked: seg.picked(cell.modelData.value)
                 }
             }

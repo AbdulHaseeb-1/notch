@@ -1,18 +1,19 @@
 import QtQuick
 import QtQuick.Shapes
 
-// Vector glyph icons on a 24-unit grid with support for stroked and filled
-// icons, drawn with the curve renderer so they stay razor sharp at any size
-// and display scale. The stroke width is in device-independent pixels, so a
-// 13 px icon and a 24 px icon read with the same line weight.
+// One SVG icon from qml/icons/*.svg (24-unit grid, Lucide-derived, round caps
+// and joins). IconSet parses the files once; this item only looks the path
+// up and draws it with a Shape so it stays vector-sharp at any size and DPI
+// and recolours for free. The stroke is in device-independent pixels, so a
+// 13 px and a 20 px icon share the same line weight.
 Item {
     id: glyph
     property string name: "close"
-    Theme { id: t }
 
-    property color color: t.text
-    property real size: 16
-    property real stroke: 1.8
+    property color color: Theme.text
+    property real size: Theme.iconMd
+    property real stroke: Theme.iconStroke
+    // Force a solid fill (the SVG's own fill="currentColor" also enables it).
     property bool filled: false
 
     implicitWidth: size
@@ -20,23 +21,23 @@ Item {
     width: size
     height: size
 
-    // Icon geometry lives once in the GlyphPaths singleton instead of in
-    // every Glyph instance.
-    readonly property bool isFill: filled || !!GlyphPaths.fillIcons[glyph.name]
+    readonly property string pathData: Icons.path(glyph.name)
+    readonly property bool isFill: filled || Icons.isFilled(glyph.name)
 
     Shape {
         anchors.fill: parent
+        visible: glyph.pathData.length > 0
         preferredRendererType: Shape.CurveRenderer
         transform: Scale { xScale: glyph.width / 24; yScale: glyph.height / 24 }
 
         ShapePath {
-            strokeColor: glyph.isFill ? "transparent" : glyph.color
-            strokeWidth: glyph.isFill ? 0 : glyph.stroke * 24 / Math.max(1, glyph.width)
+            strokeColor: glyph.color
+            strokeWidth: glyph.stroke * 24 / Math.max(1, glyph.width)
             fillColor: glyph.isFill ? glyph.color : "transparent"
             fillRule: ShapePath.WindingFill
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
-            PathSvg { path: GlyphPaths.paths[glyph.name] || "" }
+            PathSvg { path: glyph.pathData }
         }
     }
 }

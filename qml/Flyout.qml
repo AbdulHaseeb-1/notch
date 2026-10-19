@@ -10,7 +10,7 @@ Item {
     id: fly
 
     property bool open: false
-    property real radius: 22
+    property real radius: Theme.radiusXl
     property real baseY: 0
     default property alias content: holder.data
     readonly property bool hovered: hover.hovered

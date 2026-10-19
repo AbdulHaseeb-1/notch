@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // Candlestick view of the buddy's sample chart. The fixture comes from
@@ -14,12 +15,11 @@ Item {
     // this card file with an empty payload, so every read is guarded by this.
     readonly property bool ready: !!cd && !!cd.candles && Array.isArray(cd.candles)
 
-    Theme { id: t }
 
     function biasColor(bias) {
-        if (bias === "uptrend") return t.success
-        if (bias === "downtrend") return t.danger
-        return t.textDim
+        if (bias === "uptrend") return Theme.success
+        if (bias === "downtrend") return Theme.danger
+        return Theme.textDim
     }
 
     function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
@@ -52,7 +52,7 @@ Item {
     }
 
     Connections {
-        target: host
+        target: card.host
         function onPayloadChanged() { canvas1.requestPaint() }
     }
     Component.onCompleted: canvas1.requestPaint()
@@ -71,8 +71,8 @@ Item {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: (card.ready && card.cd && card.cd.symbol) ? String(card.cd.symbol) : ""
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
             }
@@ -84,8 +84,8 @@ Item {
                          + (card.cd.changePct >= 0 ? "  +" : "  ")
                          + Number(card.cd.changePct).toFixed(2) + "%")
                       : ""
-                color: (card.ready && card.cd && card.cd.changePct >= 0) ? t.success : t.danger
-                font.family: t.font
+                color: (card.ready && card.cd && card.cd.changePct >= 0) ? Theme.success : Theme.danger
+                font.family: Theme.font
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
             }
@@ -130,7 +130,7 @@ Item {
                 }
                 const cw = plotW / count
                 const bodyW = Math.max(2, Math.min(8, cw * 0.62))
-                const upCol = t.success, downCol = t.danger
+                const upCol = Theme.success, downCol = Theme.danger
 
                 // Candlesticks.
                 for (let i = 0; i < count; ++i) {
@@ -212,7 +212,7 @@ Item {
                              : (card.cd.bias === "downtrend" ? qsTr("Trend: down") : qsTr("Range")))
                           : ""
                     color: card.biasColor(card.cd ? card.cd.bias : "")
-                    font.family: t.font
+                    font.family: Theme.font
                     font.pixelSize: 10
                     font.weight: Font.DemiBold
                 }
@@ -230,7 +230,7 @@ Item {
                     width: parent.width
                     height: 5
                     radius: 2.5
-                    color: t.track
+                    color: Theme.track
                 }
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
@@ -246,8 +246,8 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Strength")
-                color: t.textFaint
-                font.family: t.font
+                color: Theme.textFaint
+                font.family: Theme.font
                 font.pixelSize: 9
             }
         }
@@ -256,8 +256,8 @@ Item {
         Text {
             width: parent.width
             text: card.chartSummaryText()
-            color: t.textDim
-            font.family: t.font
+            color: Theme.textDim
+            font.family: Theme.font
             font.pixelSize: 11
             wrapMode: Text.WordWrap
             lineHeight: 1.2

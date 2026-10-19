@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 
 // The productivity card: a checkable list of plan items with progress, add, and
@@ -11,7 +12,6 @@ Item {
     property var items: []               // [{text, done}]
     property string day: ""              // ISO date the plan belongs to
 
-    Theme { id: t }
 
     function syncFromHost() {
         if (!host || !host.payload || !host.payload.items)
@@ -91,8 +91,8 @@ Item {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: card.day
-                color: t.textFaint
-                font.family: t.font
+                color: Theme.textFaint
+                font.family: Theme.font
                 font.pixelSize: 10
             }
 
@@ -104,7 +104,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 height: 5
                 radius: 2.5
-                color: t.track
+                color: Theme.track
 
                 readonly property real frac: card.frac
 
@@ -113,7 +113,7 @@ Item {
                     width: Math.max(3, parent.width * card.frac)
                     height: 5
                     radius: 2.5
-                    color: card.frac >= 1 ? t.success : t.accent
+                    color: card.frac >= 1 ? Theme.success : Theme.accent
                     Behavior on width { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
                 }
             }
@@ -123,8 +123,8 @@ Item {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 text: card.doneCount + " / " + card.items.length + qsTr(" done")
-                color: t.textDim
-                font.family: t.font
+                color: Theme.textDim
+                font.family: Theme.font
                 font.pixelSize: 10
                 font.weight: Font.DemiBold
             }
@@ -158,10 +158,10 @@ Item {
                     width: 18
                     height: 18
                     radius: 9
-                    color: row.modelData.done ? t.accent
-                          : (checkHit.containsMouse || checkHit.pressed ? t.tileActive : t.tile)
+                    color: row.modelData.done ? Theme.accent
+                          : (checkHit.containsMouse || checkHit.pressed ? Theme.tileActive : Theme.tile)
                     border.width: row.modelData.done ? 0 : 1.5
-                    border.color: checkHit.containsMouse ? t.textDim : t.borderStrong
+                    border.color: checkHit.containsMouse ? Theme.textDim : Theme.borderStrong
                     scale: checkHit.pressed ? 0.88 : 1
 
                     Glyph {
@@ -170,7 +170,7 @@ Item {
                         name: "check"
                         size: 10
                         stroke: 2.4
-                        color: t.surface
+                        color: Theme.surface
                     }
                     MouseArea {
                         id: checkHit
@@ -188,8 +188,8 @@ Item {
                     anchors.rightMargin: 4
                     anchors.verticalCenter: parent.verticalCenter
                     text: row.modelData.text
-                    color: row.modelData.done ? t.textFaint : t.text
-                    font.family: t.font
+                    color: row.modelData.done ? Theme.textFaint : Theme.text
+                    font.family: Theme.font
                     font.pixelSize: 12
                     elide: Text.ElideRight
                     opacity: row.modelData.done ? 0.62 : 1
@@ -210,7 +210,7 @@ Item {
                         name: "close"
                         size: 11
                         stroke: 2
-                        color: delHit.containsMouse ? t.danger : t.textFaint
+                        color: delHit.containsMouse ? Theme.danger : Theme.textFaint
                     }
                     MouseArea {
                         id: delHit
@@ -237,7 +237,7 @@ Item {
                 name: "plus"
                 size: 13
                 stroke: 1.8
-                color: addField.text.length === 0 ? t.textFaint : t.accent
+                color: addField.text.length === 0 ? Theme.textFaint : Theme.accent
             }
 
             TextInput {
@@ -247,8 +247,8 @@ Item {
                 anchors.right: clearDone.visible ? clearDone.left : parent.right
                 anchors.rightMargin: clearDone.visible ? 8 : 4
                 anchors.verticalCenter: parent.verticalCenter
-                color: t.ink
-                font.family: t.font
+                color: Theme.ink
+                font.family: Theme.font
                 font.pixelSize: 12
                 clip: true
                 selectByMouse: true
@@ -257,7 +257,7 @@ Item {
                     anchors.fill: parent
                     visible: parent.text.length === 0
                     text: qsTr("Add a task for today…")
-                    color: t.textFaint
+                    color: Theme.textFaint
                     font: parent.font
                     verticalAlignment: TextInput.AlignVCenter
                 }
@@ -273,8 +273,8 @@ Item {
                 anchors.rightMargin: 2
                 anchors.verticalCenter: parent.verticalCenter
                 text: qsTr("Clear done")
-                color: clearDoneHit.containsMouse ? t.ink : t.accent
-                font.family: t.font
+                color: clearDoneHit.containsMouse ? Theme.ink : Theme.accent
+                font.family: Theme.font
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
 
