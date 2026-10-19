@@ -1,5 +1,5 @@
 // Push-to-talk voice: audio conversion, the hold-to-talk key, and the
-// recording -> transcription flow (fake microphone, fake speech-to-text server).
+// recording -> transcription flow (fake microphone, scripted speech-to-text engine).
 #include <QtTest>
 #include <QAudioFormat>
 #include <QSignalSpy>
@@ -8,6 +8,7 @@
 #include <QTimer>
 #include <QtMath>
 
+#include "OrtRuntime.h"
 #include "PushToTalkKey.h"
 #include "VoiceAudio.h"
 #include "VoiceInput.h"
@@ -44,15 +45,18 @@ class TstVoice : public QObject
 {
     Q_OBJECT
 
-    // A VoiceInput that is on, set up for the fake server and given the fake microphone.
+    // A VoiceInput that is on, given the scripted engine and the fake microphone.
     struct Rig {
-        FakeStt stt;
         VoiceInput voice;
+        FakeTranscriber &stt;
         FakeCapture *mic = new FakeCapture;
-        Rig() {
+        static FakeTranscriber *install(VoiceInput &v) {
+            auto *t = new FakeTranscriber;
+            v.setTranscriber(std::unique_ptr<Transcriber>(t));
+            return t;
+        }
+        Rig() : stt(*install(voice)) {
             voice.setEnabled(true);
-            voice.setApiBase(stt.base());
-            voice.setApiKey("sk-test-key-0123456789");
             voice.setCapture(std::unique_ptr<AudioCapture>(mic));
         }
     };
@@ -288,62 +292,6 @@ private slots:
         QCOMPARE(released.size(), 0);
     }
 
-    // ---- the address ----------------------------------------------------------------------
-
-    void buildsTheTranscriptionUrl_data() {
-        QTest::addColumn<QString>("base");
-        QTest::addColumn<QString>("url");
-        QTest::newRow("host") << "https://api.openai.com" << "https://api.openai.com/v1/audio/transcriptions";
-        QTest::newRow("trailing slash") << "https://api.openai.com/" << "https://api.openai.com/v1/audio/transcriptions";
-        QTest::newRow("with v1") << "https://api.groq.com/openai/v1" << "https://api.groq.com/openai/v1/audio/transcriptions";
-        QTest::newRow("already full") << "https://x.example/v1/audio/transcriptions" << "https://x.example/v1/audio/transcriptions";
-        QTest::newRow("local http") << "http://localhost:8080" << "http://localhost:8080/v1/audio/transcriptions";
-        QTest::newRow("loopback") << "http://127.0.0.1:9000/v1" << "http://127.0.0.1:9000/v1/audio/transcriptions";
-    }
-    void buildsTheTranscriptionUrl() {
-        QFETCH(QString, base);
-        QFETCH(QString, url);
-        VoiceInput v;
-        v.setApiBase(base);
-        QCOMPARE(v.transcriptionUrl(), url);
-        QVERIFY(v.addressProblem().isEmpty());
-    }
-
-    void yourVoiceOnlyTravelsOverHttpsOrToThisComputer_data() {
-        QTest::addColumn<QString>("base");
-        QTest::addColumn<bool>("ok");
-        QTest::newRow("https") << "https://stt.example.com" << true;
-        QTest::newRow("local http") << "http://localhost:8000" << true;
-        QTest::newRow("loopback http") << "http://127.0.0.1" << true;
-        QTest::newRow("remote http") << "http://stt.example.com" << false;
-        QTest::newRow("lan http") << "http://192.168.1.20:8000" << false;
-        QTest::newRow("empty") << "" << false;
-        QTest::newRow("junk") << "not an address" << false;
-        QTest::newRow("file") << "file:///etc/passwd" << false;
-        QTest::newRow("ftp") << "ftp://stt.example.com" << false;
-    }
-    void yourVoiceOnlyTravelsOverHttpsOrToThisComputer() {
-        QFETCH(QString, base);
-        QFETCH(bool, ok);
-        VoiceInput v;
-        v.setApiBase(base);
-        QCOMPARE(v.addressProblem().isEmpty(), ok);
-        QCOMPARE(!v.transcriptionUrl().isEmpty(), ok);
-    }
-
-    void needsAKeyUnlessItIsLocal() {
-        VoiceInput v;
-        v.setApiBase("https://api.openai.com");
-        QVERIFY(!v.configured());
-        v.setApiKey("sk-x");
-        QVERIFY(v.configured());
-        v.setApiKey("");
-        v.setApiBase("http://localhost:8080");
-        QVERIFY(v.configured());          // a local whisper server needs no key
-        v.setModel("  ");
-        QVERIFY(!v.configured());
-    }
-
     // ---- recording and transcribing ---------------------------------------------------------------
 
     void isOffUntilTheUserTurnsItOn() {
@@ -357,17 +305,42 @@ private slots:
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
     }
 
-    void refusesToRecordWithNowhereSafeToSendIt() {
+    void refusesToRecordWhenTheModelIsMissing() {
         Rig r;
-        r.voice.setApiBase("http://stt.example.com");
+        r.stt.set([](FakeTranscriber &t) { t.problemText = QStringLiteral("The speech model is missing."); });
+        QVERIFY(!r.voice.configured());
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         QVERIFY(!r.voice.beginListening());
-        QVERIFY(failed.first().first().toString().contains("https"));
-        QCOMPARE(r.mic->starts, 0);
-        r.voice.setApiBase("https://stt.example.com");
-        r.voice.setApiKey("");
-        QVERIFY(!r.voice.beginListening());
-        QCOMPARE(r.mic->starts, 0);
+        QCOMPARE(failed.first().first().toString(), QStringLiteral("The speech model is missing."));
+        QCOMPARE(r.mic->starts, 0);                        // nothing is recorded that cannot be used
+        r.stt.set([](FakeTranscriber &t) { t.problemText.clear(); });
+        QVERIFY(r.voice.configured());
+        QVERIFY(r.voice.beginListening());
+        r.voice.cancel();
+    }
+
+    void theModelLoadsInTheBackgroundWhenVoiceIsTurnedOn() {
+        Rig r;
+        QTRY_VERIFY_WITH_TIMEOUT(r.voice.ready(), 3000);
+        QVERIFY(r.voice.configured());
+        QCOMPARE(r.voice.engine(), QStringLiteral("Fake"));
+    }
+
+    void aModelThatWillNotLoadIsReportedAndStopsRecording() {
+        VoiceInput v;
+        auto *t = new FakeTranscriber;
+        t->prepareError = QStringLiteral("The speech model did not load.");
+        v.setTranscriber(std::unique_ptr<Transcriber>(t));
+        auto *mic = new FakeCapture;
+        v.setCapture(std::unique_ptr<AudioCapture>(mic));
+        v.setEnabled(true);
+        QTRY_VERIFY_WITH_TIMEOUT(!v.configured(), 3000);
+        QCOMPARE(v.problem(), QStringLiteral("The speech model did not load."));
+        QVERIFY(!v.ready());
+        QSignalSpy failed(&v, &VoiceInput::failed);
+        QVERIFY(!v.beginListening());
+        QCOMPARE(failed.size(), 1);
+        QCOMPARE(mic->starts, 0);
     }
 
     void aMissingMicrophoneIsSaidClearly() {
@@ -385,7 +358,6 @@ private slots:
     void holdSpeakReleaseGivesTheWords() {
         Rig r;
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
-        QSignalSpy states(&r.voice, &VoiceInput::stateChanged);
         QVERIFY(r.voice.beginListening());
         QCOMPARE(r.voice.state(), QStringLiteral("listening"));
         QVERIFY(r.voice.listening() && r.voice.busy());
@@ -395,20 +367,17 @@ private slots:
         QVERIFY(qAbs(r.voice.seconds() - 1.0) < 0.02);
         r.voice.endListening();
         QCOMPARE(r.voice.state(), QStringLiteral("transcribing"));
-        QCOMPARE(r.mic->stops, 1);                         // the microphone is closed before the upload
+        QCOMPARE(r.mic->stops, 1);                         // the microphone is closed first
         QCOMPARE(r.voice.level(), 0.0);
         QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
         QCOMPARE(words.first().first().toString(), QStringLiteral("hello world"));
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
         QVERIFY(r.voice.error().isEmpty());
-        QCOMPARE(r.stt.requests, 1);
-        Q_UNUSED(states)
+        QCOMPARE(r.stt.requests.load(), 1);
     }
 
-    void theRequestIsAnAuthenticatedMultipartUploadOfAWavFile() {
+    void onlyTheSpokenPartIsTranscribed() {
         Rig r;
-        r.voice.setLanguage("de");
-        r.voice.setModel("gpt-4o-mini-transcribe");
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         QVERIFY(r.voice.beginListening());
         r.mic->feed(silence(0.5));
@@ -416,45 +385,12 @@ private slots:
         r.mic->feed(silence(0.5));
         r.voice.endListening();
         QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
-        QVERIFY(r.stt.requestLine.startsWith("POST /v1/audio/transcriptions"));
-        QVERIFY(r.stt.headers.contains("authorization: bearer sk-test-key-0123456789"));
-        QVERIFY(r.stt.headers.contains("content-type: multipart/form-data; boundary="));
-        const QByteArray b = r.stt.body;
-        QVERIFY(b.contains("name=\"model\"\r\n\r\ngpt-4o-mini-transcribe"));
-        QVERIFY(b.contains("name=\"response_format\"\r\n\r\njson"));
-        QVERIFY(b.contains("name=\"language\"\r\n\r\nde"));
-        QVERIFY(b.contains("name=\"file\"; filename=\"speech.wav\""));
-        QVERIFY(b.contains("audio/wav"));
-        const int riff = b.indexOf("RIFF");
-        QVERIFY(riff > 0);
-        QCOMPARE(b.mid(riff + 8, 4), QByteArray("WAVE"));
-        // The silence on both ends was trimmed before it was sent (2 s recorded, ~1.3 s sent).
-        const int dataBytes = int(le32(b, riff + 40));
-        QVERIFY2(dataBytes < 2 * voice::kBytesPerSecond * 0.75 && dataBytes > voice::kBytesPerSecond, qPrintable(QString::number(dataBytes)));
+        // The silence on both ends was trimmed (2 s recorded, ~1.3 s handed over), as plain PCM.
+        const int bytes = r.stt.pcm().size();
+        QVERIFY2(bytes < 2 * voice::kBytesPerSecond * 0.75 && bytes > voice::kBytesPerSecond, qPrintable(QString::number(bytes)));
     }
 
-    void noLanguageMeansTheServerDetectsIt() {
-        Rig r;
-        QSignalSpy words(&r.voice, &VoiceInput::transcript);
-        r.voice.beginListening();
-        r.mic->feed(tone(1.0));
-        r.voice.endListening();
-        QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
-        QVERIFY(!r.stt.body.contains("name=\"language\""));
-    }
-
-    void aLocalServerNeedsNoKey() {
-        Rig r;
-        r.voice.setApiKey("");
-        QSignalSpy words(&r.voice, &VoiceInput::transcript);
-        QVERIFY(r.voice.beginListening());
-        r.mic->feed(tone(1.0));
-        r.voice.endListening();
-        QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
-        QVERIFY(!r.stt.headers.contains("authorization"));
-    }
-
-    void tooShortAClipIsNotSent() {
+    void tooShortAClipIsNotTranscribed() {
         Rig r;
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         r.voice.beginListening();
@@ -463,10 +399,10 @@ private slots:
         QCOMPARE(failed.size(), 1);
         QVERIFY(failed.first().first().toString().contains("too short"));
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
     }
 
-    void aSilentClipIsNotSentAnywhere() {
+    void aSilentClipIsNotTranscribed() {
         Rig r;
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         r.voice.beginListening();
@@ -474,78 +410,52 @@ private slots:
         r.voice.endListening();
         QCOMPARE(failed.size(), 1);
         QVERIFY(failed.first().first().toString().contains("did not hear"));
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
     }
 
-    void serviceErrorsAreExplained_data() {
-        QTest::addColumn<int>("status");
-        QTest::addColumn<QByteArray>("body");
-        QTest::addColumn<QString>("contains");
-        QTest::newRow("bad key") << 401 << QByteArray("{\"error\":{\"message\":\"Incorrect API key provided: sk-...\"}}") << "key was refused";
-        QTest::newRow("forbidden") << 403 << QByteArray("{}") << "key was refused";
-        QTest::newRow("quota") << 429 << QByteArray("{\"error\":{\"message\":\"rate limit\"}}") << "busy or out of quota";
-        QTest::newRow("their message") << 400 << QByteArray("{\"error\":{\"message\":\"Invalid file format.\"}}") << "Invalid file format.";
-        QTest::newRow("string error") << 500 << QByteArray("{\"error\":\"model is loading\"}") << "model is loading";
-        QTest::newRow("no body") << 502 << QByteArray("") << "HTTP 502";
-    }
-    void serviceErrorsAreExplained() {
-        QFETCH(int, status);
-        QFETCH(QByteArray, body);
-        QFETCH(QString, contains);
+    void aFailingEngineIsExplainedAndTheNextTryWorks() {
         Rig r;
-        r.stt.status = status;
-        r.stt.reply = body;
+        r.stt.set([](FakeTranscriber &t) { t.errorText = QStringLiteral("Moonshine stopped while writing."); });
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         r.voice.beginListening();
         r.mic->feed(tone(1.0));
         r.voice.endListening();
         QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
-        QVERIFY2(failed.first().first().toString().contains(contains), qPrintable(failed.first().first().toString()));
+        QCOMPARE(failed.first().first().toString(), QStringLiteral("Moonshine stopped while writing."));
         QCOMPARE(words.size(), 0);
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
         QVERIFY(!r.voice.error().isEmpty());
-        // And the next try works again once the service does.
-        r.stt.status = 200;
-        r.stt.reply = "{\"text\":\"fine now\"}";
+        r.stt.set([](FakeTranscriber &t) { t.errorText.clear(); });
         QVERIFY(r.voice.beginListening());
-    }
-
-    void anUnreachableServerIsSaidSo() {
-        VoiceInput v;
-        v.setEnabled(true);
-        v.setApiBase("http://127.0.0.1:1");     // nothing listens there
-        auto *mic = new FakeCapture;
-        v.setCapture(std::unique_ptr<AudioCapture>(mic));
-        QSignalSpy failed(&v, &VoiceInput::failed);
-        v.beginListening();
-        mic->feed(tone(1.0));
-        v.endListening();
-        QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 8000);
-        QVERIFY(failed.first().first().toString().contains("reach"));
+        r.mic->feed(tone(1.0));
+        r.voice.endListening();
+        QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
+        QVERIFY(r.voice.error().isEmpty());            // success clears the old error
     }
 
     void anAnswerWithNoWordsIsAFailure() {
         Rig r;
-        r.stt.reply = "{\"text\":\"   \"}";
+        r.stt.set([](FakeTranscriber &t) { t.reply = QStringLiteral("   "); });
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         r.voice.beginListening();
         r.mic->feed(tone(1.0));
         r.voice.endListening();
         QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
+        QVERIFY(failed.first().first().toString().contains("make out any words"));
         QCOMPARE(words.size(), 0);
     }
 
-    void serversThatAnswerWithPlainTextWork() {
+    void whitespaceInTheAnswerIsTidied() {
         Rig r;
-        r.stt.reply = "just the words\n";
+        r.stt.set([](FakeTranscriber &t) { t.reply = QStringLiteral("  open   notepad \n"); });
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         r.voice.beginListening();
         r.mic->feed(tone(1.0));
         r.voice.endListening();
         QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
-        QCOMPARE(words.first().first().toString(), QStringLiteral("just the words"));
+        QCOMPARE(words.first().first().toString(), QStringLiteral("open notepad"));
     }
 
     void cancelWhileListeningDiscardsEverything() {
@@ -560,22 +470,50 @@ private slots:
         QCOMPARE(r.voice.seconds(), 0.0);
         r.voice.endListening();             // the key-up that follows is a no-op
         QTest::qWait(150);
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
         QCOMPARE(words.size() + failed.size(), 0);
     }
 
     void cancelWhileTranscribingDropsTheLateAnswer() {
         Rig r;
-        r.stt.delayMs = 400;
+        r.stt.set([](FakeTranscriber &t) { t.delayMs = 400; });
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         r.voice.beginListening();
         r.mic->feed(tone(1.0));
         r.voice.endListening();
-        QTRY_COMPARE_WITH_TIMEOUT(r.stt.requests, 1, 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(r.stt.requests.load(), 1, 3000);
         r.voice.cancel();
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
-        QTest::qWait(700);
+        QTest::qWait(800);
         QCOMPARE(words.size(), 0);          // the words that arrive afterwards are not used
+    }
+
+    void anAbortedRequestIsNeverAnswered() {
+        Rig r;
+        r.stt.set([](FakeTranscriber &t) { t.delayMs = 150; t.replies = { QStringLiteral("first"), QStringLiteral("second") }; });
+        QObject context;
+        QStringList got;
+        const quint64 a = r.voice.transcribe(tone(1.0), &context, [&](const VoiceInput::Transcription &t) { got << t.text; });
+        const quint64 b = r.voice.transcribe(tone(1.0), &context, [&](const VoiceInput::Transcription &t) { got << t.text; });
+        QVERIFY(a != b && a != 0 && b != 0);
+        r.voice.abort(a);
+        QTRY_COMPARE_WITH_TIMEOUT(got.size(), 1, 5000);
+        QCOMPARE(got.first(), QStringLiteral("second"));   // requests run in order; the aborted one is just dropped
+        QTest::qWait(200);
+        QCOMPARE(got.size(), 1);
+    }
+
+    void aDestroyedContextIsNeverCalled() {
+        Rig r;
+        r.stt.set([](FakeTranscriber &t) { t.delayMs = 100; });
+        int calls = 0;
+        {
+            QObject context;
+            r.voice.transcribe(tone(1.0), &context, [&](const VoiceInput::Transcription &) { ++calls; });
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(r.stt.requests.load(), 1, 3000);
+        QTest::qWait(300);
+        QCOMPARE(calls, 0);
     }
 
     void turningVoiceOffClosesTheMicrophoneAtOnce() {
@@ -605,7 +543,7 @@ private slots:
         r.mic->breakDown("The microphone was unplugged.");
         QCOMPARE(failed.size(), 1);
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
         QVERIFY(!r.mic->open);
     }
 
@@ -637,6 +575,33 @@ private slots:
         }
         QCOMPARE(r.mic->starts, 3);
         QCOMPARE(r.mic->stops, 3);
+    }
+
+    // The real engine, end to end: speech in, words out, nothing leaves the process.
+    // Needs ONNX Runtime (NOCH_ORT_LIBRARY) and the model (NOCH_MOONSHINE_DIR).
+    void realMoonshineTurnsRealSpeechIntoWords() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        if (qEnvironmentVariable("NOCH_MOONSHINE_DIR").isEmpty())
+            QSKIP("Set NOCH_MOONSHINE_DIR to a folder with encoder.onnx and decoder.onnx to run this.");
+        VoiceInput v;                                   // the default engine
+        auto *mic = new FakeCapture;
+        v.setCapture(std::unique_ptr<AudioCapture>(mic));
+        v.setEnabled(true);
+        QVERIFY2(v.configured(), qPrintable(v.problem()));
+        QTRY_VERIFY_WITH_TIMEOUT(v.ready(), 20000);
+        QSignalSpy words(&v, &VoiceInput::transcript);
+        QSignalSpy failed(&v, &VoiceInput::failed);
+        QFile f(QStringLiteral(NOCH_TEST_DATA_DIR "/screenshot_tts.wav"));
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        const QByteArray wav = f.readAll();
+        QVERIFY(v.beginListening());
+        mic->feed(wav.mid(wav.indexOf("data") + 8));
+        v.endListening();
+        QTRY_COMPARE_WITH_TIMEOUT(words.size() + failed.size(), 1, 20000);
+        QCOMPARE(failed.size(), 0);
+        QCOMPARE(words.first().first().toString(), QStringLiteral("Take a screenshot and show me my screen."));
     }
 
     void theMeterRisesFastAndFallsSlowly() {

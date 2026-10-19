@@ -26,8 +26,25 @@ bool load(const QStringList &dirs, QString *error);
 bool loaded();
 QString version();
 
-// One model with a single float input and a single float output (the three
-// models of the openWakeWord pipeline).
+// An input for Session::runNamed. `data` stays owned by the caller. A Bool tensor
+// is one byte per element (0 or 1). A tensor with a 0 in its shape (an empty
+// key/value cache) may pass any non-null pointer.
+enum class DType { Float32, Int64, Bool };
+struct TensorIn {
+    std::string name;
+    DType type = DType::Float32;
+    std::vector<int64_t> shape;
+    const void *data = nullptr;
+};
+// A float output, copied out of the runtime.
+struct TensorOut {
+    std::vector<int64_t> shape;
+    std::vector<float> data;
+};
+
+// One model. run() is the one-float-in, one-float-out case (the three models of
+// the openWakeWord pipeline); runNamed() takes any inputs by name (Moonshine's
+// decoder has 27) and returns the float outputs asked for.
 class Session
 {
 public:
@@ -44,6 +61,9 @@ public:
     // `out` with its shape in `outShape`.
     bool run(const float *data, const std::vector<int64_t> &shape, std::vector<float> *out,
              std::vector<int64_t> *outShape, QString *error);
+
+    bool runNamed(const std::vector<TensorIn> &inputs, const std::vector<std::string> &outputs,
+                  std::vector<TensorOut> *results, QString *error);
 
 private:
     struct Impl;

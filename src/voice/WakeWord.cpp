@@ -408,11 +408,6 @@ WakeWord::WakeWord(VoiceInput *voice, QObject *parent)
         leaveAwaiting();
         emit timedOut();
     });
-    m_backoffTimer.setSingleShot(true);
-    connect(&m_backoffTimer, &QTimer::timeout, this, [this] {
-        m_backingOff = false;
-        refresh();
-    });
     m_modelFolder = QDir(QFileInfo(QSettings().fileName()).absolutePath()).filePath(QStringLiteral("wakeword"));
     if (m_voice) {
         connect(m_voice, &VoiceInput::stateChanged, this, &WakeWord::refresh);
@@ -440,7 +435,6 @@ void WakeWord::setEnabled(bool on)
     m_enabled = on;
     if (on) {
         m_halted = false;
-        m_failures = 0;
         clearError();
     }
     refresh();
@@ -457,39 +451,18 @@ void WakeWord::setPhrase(const QString &phrase)
     emit configChanged();
 }
 
-void WakeWord::setAllowCloud(bool on)
-{
-    if (on == m_allowCloud)
-        return;
-    m_allowCloud = on;
-    refresh();
-    emit configChanged();
-}
-
 QString WakeWord::blockedReason() const
 {
     if (!m_enabled)
         return QString();
     if (!m_voice || !m_voice->enabled())
         return tr("Turn on voice input first.");
-    if (!m_voice->configured()) {
-        const QString problem = m_voice->addressProblem();
-        return problem.isEmpty() ? tr("Add a speech-to-text key first.") : problem;
-    }
-    // The local detector needs nothing more: the phrase is the model's, and only
-    // the request after it is sent to the speech service.
+    if (!m_voice->configured())
+        return m_voice->problem();
+    // The local detector needs nothing more: the phrase is the model's.
     if (usingLocal())
         return QString();
-    const QString bad = wake::phraseProblem(m_phrase);
-    if (!bad.isEmpty())
-        return bad;
-    if (!m_voice->localService() && !m_allowCloud) {
-        QString why = tr("The wake word sends everything it hears to your speech service. Allow that, or use a service on this computer.");
-        if (!m_localError.isEmpty())
-            why = tr("The local wake word detector is not available (%1). ").arg(m_localError) + why;
-        return why;
-    }
-    return QString();
+    return wake::phraseProblem(m_phrase);
 }
 
 QString WakeWord::state() const
@@ -536,7 +509,7 @@ void WakeWord::clearError()
 
 bool WakeWord::shouldListen() const
 {
-    return m_enabled && blockedReason().isEmpty() && !m_halted && !m_paused && !m_backingOff
+    return m_enabled && blockedReason().isEmpty() && !m_halted && !m_paused
         && !(m_voice && m_voice->busy())
         && (!usingLocal() || m_local == Local::Ready);
 }
@@ -587,10 +560,9 @@ bool WakeWord::openMic()
 void WakeWord::closeMic()
 {
     ++m_generation;
-    if (m_reply) {
-        QNetworkReply *r = m_reply;
-        m_reply = nullptr;
-        r->abort();
+    if (m_ticket) {
+        m_voice->abort(m_ticket);
+        m_ticket = 0;
     }
     if (m_capture && m_micOpen)
         m_capture->stop();
@@ -618,26 +590,11 @@ void WakeWord::onAudio(const QByteArray &pcm)
         onUtterance(u);
 }
 
-bool WakeWord::underRateLimit()
-{
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    while (!m_checkTimes.isEmpty() && now - m_checkTimes.first() > 60000)
-        m_checkTimes.removeFirst();
-    if (m_checkTimes.size() >= kMaxChecksPerMinute)
-        return false;
-    m_checkTimes.append(now);
-    return true;
-}
-
 void WakeWord::onUtterance(const QByteArray &pcm)
 {
     if (voice::isSilent(pcm))
         return;
-    if (m_reply) {                 // one check at a time; the rest is dropped, not queued up
-        ++m_dropped;
-        return;
-    }
-    if (m_mode == Mode::Listening && !underRateLimit()) {
+    if (m_ticket) {                // one check at a time; the rest is dropped, not queued up
         ++m_dropped;
         return;
     }
@@ -648,11 +605,11 @@ void WakeWord::check(const QByteArray &pcm, Mode mode)
 {
     ++m_checked;
     const quint64 gen = m_generation;
-    m_reply = m_voice->transcribe(voice::encodeWav(voice::trimSilence(pcm)), this,
-                                  [this, mode, gen](const VoiceInput::Transcription &t) {
+    m_ticket = m_voice->transcribe(voice::trimSilence(pcm), this,
+                                   [this, mode, gen](const VoiceInput::Transcription &t) {
         if (gen != m_generation)
             return;
-        m_reply = nullptr;
+        m_ticket = 0;
         onTranscript(t, mode);
     });
 }
@@ -669,7 +626,6 @@ void WakeWord::onTranscript(const VoiceInput::Transcription &t, Mode mode)
         failure(t, mode);
         return;
     }
-    m_failures = 0;
     if (mode == Mode::Awaiting) {
         leaveAwaiting();
         QString text = t.text;
@@ -697,7 +653,7 @@ void WakeWord::onTranscript(const VoiceInput::Transcription &t, Mode mode)
 
 void WakeWord::failure(const VoiceInput::Transcription &t, Mode mode)
 {
-    if (t.empty) {         // the service heard no words in it
+    if (t.empty) {         // the engine ran and heard no words in it
         if (mode == Mode::Awaiting) {
             leaveAwaiting();
             emit timedOut();
@@ -706,15 +662,8 @@ void WakeWord::failure(const VoiceInput::Transcription &t, Mode mode)
     }
     if (mode == Mode::Awaiting)
         leaveAwaiting();
-    ++m_failures;
     fail(t.error);
-    if (t.status == 401 || t.status == 403) {
-        m_halted = true;   // a refused key will not get better by asking again
-    } else {
-        const int secs = qMin(kBackoffMaxSec, m_backoffBaseSec << qMin(m_failures - 1, 10));
-        m_backingOff = true;
-        m_backoffTimer.start(secs * 1000);
-    }
+    m_halted = true;       // the model failed; asking again will not help until the settings change
     refresh();
 }
 
@@ -816,8 +765,8 @@ void WakeWord::onWorkerReady(bool ok, const QString &error)
     if (ok) {
         setLocalState(Local::Ready);
     } else {
-        // Falls back to checking each sentence with the speech service (which
-        // still asks for the user's consent before it listens to everything).
+        // Falls back to transcribing each sentence on this computer and comparing it
+        // with the phrase.
         qWarning().noquote() << "WakeWord: local detector unavailable:" << error;
         setLocalState(Local::Failed, error);
         emit configChanged();
@@ -865,7 +814,7 @@ void WakeWord::onWorkerScore(float best, quint64 generation)
     m_lastWakeMs = now;
     resetLocalDetector();       // what it just heard must not wake it a second time
     emit woke();
-    enterAwaiting();            // the request that follows is what goes to Whisper
+    enterAwaiting();            // the request that follows is what is transcribed by Moonshine
 }
 
 void WakeWord::fail(const QString &message)

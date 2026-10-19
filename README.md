@@ -202,14 +202,16 @@ calls, cancel mid-stream, stream error and truncation retries, specialist
 handoffs and their toolsets, session memory, and the per-run memory index.
 `tst_computeruse` covers the computer-use actions, screenshot scaling, held keys
 and the simulated backend. `tst_wakeword` (phrase matching, utterance detection,
-consent, rate limit, pausing, back-off, and the local detector's whole flow with a
-fake microphone and a fake Whisper server), `tst_wakedetector` (the openWakeWord
+pausing, failure handling, and the local detector's whole flow with a fake
+microphone and a fake speech engine), `tst_wakedetector` (the openWakeWord
 pipeline against the reference implementation's scores; needs ONNX Runtime, set
-`NOCH_ORT_LIBRARY` to its path, skipped otherwise) and `tst_speechout` cover the
-wake word and spoken reports. `tst_userquestions`, `tst_runjournal`,
+`NOCH_ORT_LIBRARY` to its path, skipped otherwise) and `tst_moonshine` (the real Moonshine Tiny model on recorded speech; needs ONNX Runtime
+and the model files, set `NOCH_ORT_LIBRARY` and `NOCH_MOONSHINE_DIR`, skipped otherwise)
+and `tst_speechout` (system, Google Cloud and Kokoro voices against a fake server) cover the
+wake word, transcription and spoken reports. `tst_userquestions`, `tst_runjournal`,
 `tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
 the question, undo, saved-rule, instruction/slash-command, chat-session and voice
-modules (the last one with a fake microphone and a fake speech server).
+modules (the last one with a fake microphone and a fake speech engine).
 `tst_buddyagent` also drives the official computer toolset and its fallbacks,
 batch trimming and cache markers, questions, undo, saved rules and session
 summaries. `tst_qml` (needs `qmltestrunner`; skipped otherwise) runs the QML

@@ -1,13 +1,17 @@
 #pragma once
 
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QThread>
 #include <QTimer>
 
 #include <functional>
 #include <memory>
+
+#include "Transcriber.h"
+
+class TranscribeWorker;
 
 // Where the microphone's audio comes from. The real one is Qt Multimedia;
 // tests use a fake that is fed bytes directly.
@@ -29,26 +33,28 @@ signals:
 std::unique_ptr<AudioCapture> makeMicrophoneCapture();
 
 // Push-to-talk voice input. Hold to talk: beginListening() opens the
-// microphone, endListening() closes it and sends the recording to an
-// OpenAI-compatible /v1/audio/transcriptions endpoint (OpenAI, Groq, a local
-// whisper server, ...); the words come back through transcript().
+// microphone, endListening() closes it and transcribes the recording on this
+// computer with Moonshine Tiny (see Moonshine.h); the words come back through
+// transcript().
 //
 // Privacy, because this is a microphone:
 //  * off until the user turns it on; nothing is recorded while it is off;
 //  * recording only while the key / button is held, capped at maxSeconds;
-//  * audio lives in memory, is sent once and then dropped - never written to disk;
-//  * a clip with nothing in it (muted mic) is not sent anywhere;
-//  * audio is only sent over https, or to this machine;
+//  * audio lives in memory and is transcribed by a model on this computer: it is
+//    never sent anywhere and never written to disk;
+//  * a clip with nothing in it (muted mic) is not transcribed;
 //  * the state is always visible (state, level) so the UI can show the mic is live.
 class VoiceInput : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY configChanged)
-    Q_PROPERTY(QString apiBase READ apiBase WRITE setApiBase NOTIFY configChanged)
-    Q_PROPERTY(QString apiKey READ apiKey WRITE setApiKey NOTIFY configChanged)
-    Q_PROPERTY(QString model READ model WRITE setModel NOTIFY configChanged)
-    Q_PROPERTY(QString language READ language WRITE setLanguage NOTIFY configChanged)
+    // The speech model's files are on this computer (see `problem` when not).
     Q_PROPERTY(bool configured READ configured NOTIFY configChanged)
+    Q_PROPERTY(QString problem READ problem NOTIFY configChanged)
+    // The model is loaded and ready; false while it starts (a moment after turning voice on).
+    Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
+    Q_PROPERTY(QString engine READ engine CONSTANT)
+    Q_PROPERTY(QString modelFolder READ modelFolder CONSTANT)
     // "idle" | "listening" | "transcribing"
     Q_PROPERTY(QString state READ state NOTIFY stateChanged)
     Q_PROPERTY(bool listening READ listening NOTIFY stateChanged)
@@ -66,15 +72,11 @@ public:
 
     bool enabled() const { return m_enabled; }
     void setEnabled(bool on);
-    QString apiBase() const { return m_apiBase; }
-    void setApiBase(const QString &b);
-    QString apiKey() const { return m_apiKey; }
-    void setApiKey(const QString &k);
-    QString model() const { return m_model; }
-    void setModel(const QString &m);
-    QString language() const { return m_language; }
-    void setLanguage(const QString &l);
     bool configured() const;
+    QString problem() const;
+    bool ready() const { return m_ready; }
+    QString engine() const;
+    QString modelFolder() const { return m_modelFolder; }
 
     QString state() const;
     bool listening() const { return m_state == State::Listening; }
@@ -85,25 +87,23 @@ public:
 
     void setCapture(std::unique_ptr<AudioCapture> capture);
     void setMaxSeconds(int s) { m_maxSeconds = qMax(1, s); }
-    // The full URL the audio is posted to (empty if the address is unusable).
-    Q_INVOKABLE QString transcriptionUrl() const;
-    // Why the address cannot be used ("" if it can).
-    Q_INVOKABLE QString addressProblem() const;
-    // Is the speech service on this computer (so audio never leaves it)?
-    Q_INVOKABLE bool localService() const;
+    // Another speech-to-text engine (tests use a scripted one). Takes effect for the next request.
+    void setTranscriber(std::unique_ptr<Transcriber> transcriber);
+    Q_INVOKABLE void openModelFolder() const;
 
-    // One transcription of a clip, by the same service and key as push-to-talk.
+    // One transcription of a clip (16 kHz mono 16-bit PCM), by the same engine as
+    // push-to-talk and without touching push-to-talk's state. `done` runs once on
+    // `context`'s thread (never, if `context` is destroyed first or the request is
+    // aborted). Returns a ticket for abort().
     struct Transcription {
         bool ok = false;
-        bool empty = false;      // the service answered, with no words in it
-        int status = 0;          // HTTP status (0: no answer)
+        bool empty = false;      // the engine ran and heard no words
         QString text;
         QString error;           // user-readable when !ok
     };
-    // Sends `wav` without touching push-to-talk's state. `done` runs once on
-    // `context`'s thread (never, if `context` is destroyed first). The reply can be aborted.
-    QPointer<QNetworkReply> transcribe(const QByteArray &wav, QObject *context,
-                                       std::function<void(const Transcription &)> done);
+    quint64 transcribe(const QByteArray &pcm16, QObject *context,
+                       std::function<void(const Transcription &)> done);
+    void abort(quint64 ticket);
 
     // Start recording. False, with `error` set, when voice is off or not set up or the mic will not open.
     Q_INVOKABLE bool beginListening();
@@ -120,20 +120,30 @@ signals:
     void levelChanged();
     void errorChanged();
     void configChanged();
+    void readyChanged();
 
 private:
     enum class State { Idle, Listening, Transcribing };
+    struct Pending {
+        QPointer<QObject> context;
+        std::function<void(const Transcription &)> done;
+    };
     void setState(State s);
     void fail(const QString &message);
     void onAudio(const QByteArray &pcm);
-    void onReply();
-    void send(const QByteArray &wav);
-    QNetworkReply *post(const QByteArray &wav);
-    static Transcription parse(QNetworkReply *reply);
-    static bool isLocalAddress(const QString &base);
+    void ensureWorker();
+    void onPrepared(const QString &error);
+    void onFinished(quint64 ticket, const QString &text, const QString &error);
 
-    QNetworkAccessManager m_nam;
-    QPointer<QNetworkReply> m_reply;
+    std::unique_ptr<Transcriber> m_transcriber;
+    QThread m_thread;
+    TranscribeWorker *m_worker = nullptr;
+    QHash<quint64, Pending> m_pending;
+    quint64 m_nextTicket = 1;
+    quint64 m_clipTicket = 0;          // push-to-talk's request in flight
+    bool m_ready = false;
+    QString m_prepareError;
+    QString m_modelFolder;
     std::unique_ptr<AudioCapture> m_capture;
     QTimer m_maxTimer;
     QByteArray m_pcm;
@@ -141,10 +151,5 @@ private:
     double m_level = 0;
     QString m_error;
     bool m_enabled = false;
-    QString m_apiBase = QStringLiteral("https://api.openai.com");
-    QString m_apiKey;
-    QString m_model = QStringLiteral("whisper-1");
-    QString m_language;
     int m_maxSeconds = kDefaultMaxSeconds;
-    quint64 m_generation = 0;
 };

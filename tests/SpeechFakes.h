@@ -9,6 +9,13 @@
 #include <QTimer>
 #include <QtMath>
 
+#include <QMutex>
+#include <QMutexLocker>
+#include <QThread>
+
+#include <atomic>
+
+#include "Transcriber.h"
 #include "VoiceAudio.h"
 #include "VoiceInput.h"
 
@@ -95,6 +102,49 @@ private:
             + QByteArray::number(answer.size()) + "\r\nConnection: close\r\n\r\n" + answer;
         QTimer::singleShot(delayMs, this, [sp, out] { if (sp) { sp->write(out); sp->disconnectFromHost(); } });
     }
+};
+
+// A speech-to-text engine that answers as told. It runs on VoiceInput's worker
+// thread, so what the test changes is read under a lock.
+class FakeTranscriber : public Transcriber
+{
+public:
+    std::atomic<int> requests{0};
+    QString reply = QStringLiteral("hello world");
+    QStringList replies;          // used first, in order, before `reply`
+    QString errorText;            // set: every request fails with this
+    QString problemText;          // set: the engine cannot be used ("model missing")
+    QString prepareError;         // set: loading the model fails
+    int delayMs = 0;
+
+    QString name() const override { return QStringLiteral("Fake"); }
+    QString problem() const override { QMutexLocker l(&m_mutex); return problemText; }
+    QString prepare() override { QMutexLocker l(&m_mutex); return prepareError; }
+    QString transcribe(const QByteArray &pcm16, QString *error) override
+    {
+        QString answer, fail;
+        int delay;
+        {
+            QMutexLocker l(&m_mutex);
+            ++requests;
+            lastPcm = pcm16;
+            answer = replies.isEmpty() ? reply : replies.takeFirst();
+            fail = errorText;
+            delay = delayMs;
+        }
+        if (delay > 0)
+            QThread::msleep(unsigned(delay));
+        if (!fail.isEmpty())
+            *error = fail;
+        return fail.isEmpty() ? answer : QString();
+    }
+    QByteArray pcm() const { QMutexLocker l(&m_mutex); return lastPcm; }
+    // Changes made while the worker may be running go through here.
+    void set(const std::function<void(FakeTranscriber &)> &change) { QMutexLocker l(&m_mutex); change(*this); }
+
+private:
+    mutable QMutex m_mutex;
+    QByteArray lastPcm;
 };
 
 } // namespace

@@ -1,6 +1,7 @@
 // Wake word: phrase matching, finding utterances in audio, spoken summaries, and
 // the whole listen -> check -> command flow (fake microphone, fake speech server).
 #include <QtTest>
+#include <QTemporaryDir>
 #include <QSignalSpy>
 
 #include "OrtRuntime.h"
@@ -15,10 +16,8 @@ namespace {
 QByteArray speech(double seconds) { return tone(seconds, 250, 0.35); }
 QByteArray hum(double seconds, double amp) { return tone(seconds, 50, amp); }
 
-QByteArray reply(const QString &text)
-{
-    return QByteArray("{\"text\":\"") + text.toUtf8() + "\"}";
-}
+// What the scripted speech-to-text engine answers.
+QString reply(const QString &text) { return text; }
 
 // 16 kHz mono 16-bit PCM out of a canonical 44-byte-header WAV fixture.
 QByteArray fixturePcm(const QString &name)
@@ -54,22 +53,27 @@ class TstWakeWord : public QObject
     Q_OBJECT
 
     struct Rig {
-        FakeStt stt;
         VoiceInput voice;
+        FakeTranscriber &stt;
         FakeCapture *voiceMic = new FakeCapture;
+        static FakeTranscriber *install(VoiceInput &v) {
+            auto *t = new FakeTranscriber;
+            v.setTranscriber(std::unique_ptr<Transcriber>(t));
+            return t;
+        }
         WakeWord wake{ &voice };
+        QTemporaryDir noModels;   // an empty folder: the phrase is found by the speech engine, whatever this machine has installed
         FakeCapture *mic = new FakeCapture;
         QSignalSpy woke{ &wake, &WakeWord::woke };
         QSignalSpy command{ &wake, &WakeWord::command };
         QSignalSpy timedOut{ &wake, &WakeWord::timedOut };
         QSignalSpy failed{ &wake, &WakeWord::failed };
-        Rig(bool on = true) {
+        Rig(bool on = true) : stt(*install(voice)) {
             voice.setEnabled(true);
-            voice.setApiBase(stt.base());
-            voice.setApiKey("sk-test-key-0123456789");
             voice.setCapture(std::unique_ptr<AudioCapture>(voiceMic));
             wake.setCapture(std::unique_ptr<AudioCapture>(mic));
             wake.setCooldownMs(0);
+            wake.setModelFolder(noModels.path());
             if (on)
                 wake.setEnabled(true);
         }
@@ -276,7 +280,7 @@ private slots:
         QCOMPARE(r.mic->starts, 0);
         r.say();
         QTest::qWait(150);
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
     }
 
     void listensOnceEnabledAndSaysSo() {
@@ -300,16 +304,14 @@ private slots:
         QCOMPARE(r.wake.state(), QStringLiteral("listening"));
     }
 
-    void whatIsSentIsAProperWavOfTheUtterance() {
+    void whatIsTranscribedIsJustTheUtterance() {
         Rig r;
         r.stt.reply = reply("hey buddy go");
         r.say(1.0);
-        QTRY_COMPARE(r.stt.requests, 1);
-        QVERIFY(r.stt.requestLine.contains("/v1/audio/transcriptions"));
-        QVERIFY(r.stt.body.contains("RIFF"));
-        QVERIFY(r.stt.headers.contains("authorization: bearer sk-test-key-0123456789"));
-        QVERIFY(r.stt.body.size() > 16000);       // about a second of audio, not empty
-        QVERIFY(r.stt.body.size() < 16000 * 2 * 3); // and not everything since the microphone opened
+        QTRY_COMPARE(r.stt.requests.load(), 1);
+        const int bytes = r.stt.pcm().size();
+        QVERIFY(bytes > 16000);                    // about a second of audio, not empty
+        QVERIFY(bytes < 16000 * 2 * 3);            // and not everything since the microphone opened
     }
 
     void phraseAloneThenTheRequestInTheNextBreath() {
@@ -333,7 +335,7 @@ private slots:
         // 1 s of quiet in the middle would split a normal utterance; a request is allowed longer.
         r.mic->feed(speech(0.8) + silence(1.0) + speech(0.8) + silence(1.5));
         QTRY_COMPARE(r.command.count(), 1);
-        QCOMPARE(r.stt.requests, 2);   // one request, not two halves
+        QCOMPARE(r.stt.requests.load(), 2);   // one request, not two halves
     }
 
     void phraseAloneAndThenNothingTimesOut() {
@@ -364,7 +366,7 @@ private slots:
         Rig r;
         r.stt.reply = reply("I was telling my buddy that hey buddy is a good greeting");
         r.say();
-        QTRY_COMPARE(r.stt.requests, 1);
+        QTRY_COMPARE(r.stt.requests.load(), 1);
         QTest::qWait(100);
         QCOMPARE(r.woke.count(), 0);
         QCOMPARE(r.command.count(), 0);
@@ -379,7 +381,7 @@ private slots:
         r.mic->feed(hum(5, 0.01));
         r.mic->feed(speech(0.1) + silence(1.5));   // a click
         QTest::qWait(150);
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
     }
 
     void aSecondUtteranceWhileOneIsBeingCheckedIsDroppedNotQueued() {
@@ -390,24 +392,23 @@ private slots:
         r.say();
         r.say();
         QTest::qWait(600);
-        QCOMPARE(r.stt.requests, 1);
+        QCOMPARE(r.stt.requests.load(), 1);
         QCOMPARE(r.wake.droppedUtterances(), 2);
     }
 
-    void checksPerMinuteAreCapped() {
+    void everySentenceIsCheckedNothingIsCapped() {
+        // The old speech-service check had to cap itself at 12 a minute, which made it
+        // deaf to the phrase in a talkative room. On this computer there is no cap.
         Rig r;
         r.stt.reply = reply("just talking");
-        const int tries = WakeWord::kMaxChecksPerMinute + 4;
+        const int tries = 16;
         for (int i = 0; i < tries; ++i) {
-            const int before = r.stt.requests;
+            const int before = r.stt.requests.load();
             r.say(0.6);
-            if (i < WakeWord::kMaxChecksPerMinute)
-                QTRY_COMPARE(r.stt.requests, before + 1);
-            else
-                QTest::qWait(60);
+            QTRY_COMPARE(r.stt.requests.load(), before + 1);
         }
-        QCOMPARE(r.stt.requests, WakeWord::kMaxChecksPerMinute);
-        QVERIFY(r.wake.droppedUtterances() >= 4);
+        QCOMPARE(r.stt.requests.load(), tries);
+        QCOMPARE(r.wake.droppedUtterances(), 0);
     }
 
     void aSecondWakeRightAfterTheFirstIsIgnored() {
@@ -417,7 +418,7 @@ private slots:
         r.say();
         QTRY_COMPARE(r.command.count(), 1);
         r.say();
-        QTRY_COMPARE(r.stt.requests, 2);
+        QTRY_COMPARE(r.stt.requests.load(), 2);
         QTest::qWait(100);
         QCOMPARE(r.command.count(), 1);
         QTest::qWait(600);
@@ -442,12 +443,12 @@ private slots:
         QCOMPARE(r.command.first().first().toString(), QStringLiteral("lights on"));
         r.stt.reply = reply("hey buddy lights off");
         r.say();
-        QTRY_COMPARE(r.stt.requests, 2);
+        QTRY_COMPARE(r.stt.requests.load(), 2);
         QTest::qWait(80);
         QCOMPARE(r.command.count(), 1);   // the old phrase no longer works
     }
 
-    // ---- consent and blocking -----------------------------------------------------------
+    // ---- blocking -----------------------------------------------------------------------
 
     void needsVoiceInputFirst() {
         Rig r(false);
@@ -461,36 +462,20 @@ private slots:
         QCOMPARE(r.mic->starts, 1);
     }
 
-    void needsAKeyForARemoteServiceAndAnAddressThatIsUsable() {
+    void needsTheSpeechModel() {
         Rig r(false);
-        r.voice.setApiBase("http://example.com");   // plain http to a remote machine: refused
+        r.stt.set([](FakeTranscriber &t) { t.problemText = QStringLiteral("The speech model is missing."); });
         r.wake.setEnabled(true);
         QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
-        QCOMPARE(r.mic->starts, 0);
+        QCOMPARE(r.wake.blockedReason(), QStringLiteral("The speech model is missing."));
+        QCOMPARE(r.mic->starts, 0);                  // the microphone never opens for something that cannot work
     }
 
-    void aServiceOnTheInternetNeedsExplicitConsent() {
-        Rig r(false);
-        r.voice.setApiBase("https://api.example.com");
-        r.wake.setEnabled(true);
-        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
-        QVERIFY2(r.wake.blockedReason().contains("everything it hears"), qPrintable(r.wake.blockedReason()));
-        QCOMPARE(r.mic->starts, 0);    // the microphone never opened
-        r.say();
-        QCOMPARE(r.stt.requests, 0);
-        r.wake.setAllowCloud(true);
-        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
-        QCOMPARE(r.mic->starts, 1);
-        r.wake.setAllowCloud(false);   // taking it back closes the microphone at once
-        QCOMPARE(r.mic->stops, 1);
-        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
-    }
-
-    void aServiceOnThisComputerNeedsNoConsent() {
-        Rig r;                           // the fake server is on 127.0.0.1
-        QVERIFY(r.voice.localService());
+    void nothingIsEverSentAnywhereSoThereIsNothingToConsentTo() {
+        Rig r;
         QVERIFY(r.wake.blockedReason().isEmpty());
         QVERIFY(r.wake.active());
+        QCOMPARE(r.voice.engine(), QStringLiteral("Fake"));
     }
 
     void badPhraseBlocks() {
@@ -524,7 +509,7 @@ private slots:
         QCOMPARE(r.wake.state(), QStringLiteral("paused"));
         r.mic->feed(utterance());     // nothing is listening
         QTest::qWait(100);
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
         r.wake.setPaused(false);
         QCOMPARE(r.mic->starts, 2);
     }
@@ -534,7 +519,7 @@ private slots:
         r.stt.delayMs = 250;
         r.stt.reply = reply("hey buddy open notepad");
         r.say();
-        QTRY_COMPARE(r.stt.requests, 1);
+        QTRY_COMPARE(r.stt.requests.load(), 1);
         r.wake.setEnabled(false);
         QTest::qWait(500);
         QCOMPARE(r.command.count(), 0);
@@ -551,10 +536,12 @@ private slots:
         QCOMPARE(r.failed.count(), 1);
         QVERIFY(r.wake.error().contains("microphone", Qt::CaseInsensitive));
         QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
-        r.voice.setModel("another-model");     // settings changed: one more try
+        r.voice.setEnabled(false);             // the voice settings changed: one more try
+        r.voice.setEnabled(true);
         QCOMPARE(r.mic->starts, 2);
         r.mic->startOk = true;
-        r.voice.setLanguage("en");
+        r.voice.setEnabled(false);
+        r.voice.setEnabled(true);
         QCOMPARE(r.wake.state(), QStringLiteral("listening"));
     }
 
@@ -566,34 +553,20 @@ private slots:
         QVERIFY(!r.wake.active());
     }
 
-    void aFailingServiceClosesTheMicrophoneAndBacksOff() {
+    void aFailingEngineClosesTheMicrophoneUntilTheSettingsChange() {
         Rig r;
-        r.wake.setBackoffBaseSeconds(1);
-        r.stt.status = 500;
-        r.stt.reply = "{\"error\":{\"message\":\"boom\"}}";
+        r.stt.set([](FakeTranscriber &t) { t.errorText = QStringLiteral("Moonshine stopped while writing."); });
         r.say();
         QTRY_COMPARE(r.failed.count(), 1);
-        QCOMPARE(r.wake.state(), QStringLiteral("paused"));      // no microphone while it backs off
-        QVERIFY(!r.wake.active());
-        r.say();                                                   // nothing hears this
-        QTest::qWait(100);
-        QCOMPARE(r.stt.requests, 1);
-        r.stt.status = 200;
-        QTRY_VERIFY_WITH_TIMEOUT(r.wake.active(), 3000);          // back after the pause
-        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
-    }
-
-    void aRefusedKeyStopsUntilTheKeyChanges() {
-        Rig r;
-        r.stt.status = 401;
-        r.stt.reply = "{\"error\":{\"message\":\"bad key\"}}";
-        r.say();
-        QTRY_COMPARE(r.failed.count(), 1);
-        QVERIFY(r.wake.error().contains("refused"));
+        QVERIFY(r.wake.error().contains("Moonshine"));
         QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
-        QVERIFY(!r.wake.active());
-        r.stt.status = 200;
-        r.voice.setApiKey("sk-a-new-key-0123456789");
+        QVERIFY(!r.wake.active());                 // no microphone left open on something that cannot work
+        r.say();                                    // nothing hears this
+        QTest::qWait(100);
+        QCOMPARE(r.stt.requests.load(), 1);
+        r.stt.set([](FakeTranscriber &t) { t.errorText.clear(); });
+        r.voice.setEnabled(false);                  // a change in the voice settings tries again
+        r.voice.setEnabled(true);
         QCOMPARE(r.wake.state(), QStringLiteral("listening"));
         QVERIFY(r.wake.active());
     }
@@ -602,7 +575,7 @@ private slots:
         Rig r;
         r.stt.reply = reply("");
         r.say();
-        QTRY_COMPARE(r.stt.requests, 1);
+        QTRY_COMPARE(r.stt.requests.load(), 1);
         QTest::qWait(80);
         QCOMPARE(r.failed.count(), 0);
         QVERIFY(r.wake.active());
@@ -632,7 +605,7 @@ private slots:
         Rig r;
         r.stt.reply = reply("some private conversation about a surprise party");
         r.say();
-        QTRY_COMPARE(r.stt.requests, 1);
+        QTRY_COMPARE(r.stt.requests.load(), 1);
         QTest::qWait(80);
         const QMetaObject *mo = r.wake.metaObject();
         for (int i = mo->propertyOffset(); i < mo->propertyCount(); ++i) {
@@ -643,7 +616,7 @@ private slots:
 
     // ---- the local detector (needs ONNX Runtime; skipped without it) ---------------------
 
-    void localDetectorWakesOnThePhraseAndOnlyTheRequestGoesToWhisper() {
+    void localDetectorWakesOnThePhraseAndTranscribesOnlyTheRequest() {
         QString why;
         if (!ortrt::load({}, &why))
             QSKIP(qPrintable("ONNX Runtime is not available: " + why));
@@ -658,12 +631,12 @@ private slots:
         play(r.mic, silence(1.0) + fixturePcm("hey_buddy_tts.wav"));
         QTRY_COMPARE_WITH_TIMEOUT(r.woke.count(), 1, 10000);
         QCOMPARE(r.wake.state(), QStringLiteral("awaiting"));
-        QCOMPARE(r.stt.requests, 0);              // the phrase itself was never sent anywhere
+        QCOMPARE(r.stt.requests.load(), 0);              // the phrase itself was never transcribed
 
         play(r.mic, speech(1.0) + silence(1.6));  // "open notepad", then the pause that ends a request
         QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 10000);
         QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
-        QCOMPARE(r.stt.requests, 1);              // only the request
+        QCOMPARE(r.stt.requests.load(), 1);              // only the request
     }
 
     void localDetectorIgnoresOrdinarySpeechWithoutSendingIt() {
@@ -680,7 +653,7 @@ private slots:
             play(r.mic, fixturePcm("other_phrase_tts.wav"));
         QTest::qWait(1500);
         QCOMPARE(r.woke.count(), 0);
-        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.stt.requests.load(), 0);
         QCOMPARE(r.wake.state(), QStringLiteral("listening"));
     }
 

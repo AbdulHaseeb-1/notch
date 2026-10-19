@@ -111,12 +111,18 @@ set(NOCH_SOURCES
 
     src/voice/BuddySfx.cpp
     src/voice/BuddySfx.h
+    src/voice/Moonshine.cpp
+    src/voice/Moonshine.h
+    src/voice/MoonshineTranscriber.cpp
     src/voice/OrtRuntime.cpp
     src/voice/OrtRuntime.h
     src/voice/PushToTalkKey.cpp
     src/voice/PushToTalkKey.h
     src/voice/SpeechOut.cpp
     src/voice/SpeechOut.h
+    src/voice/SpeechPlayer.cpp
+    src/voice/SpeechPlayer.h
+    src/voice/Transcriber.h
     src/voice/VoiceAudio.cpp
     src/voice/VoiceAudio.h
     src/voice/VoiceInput.cpp
@@ -241,13 +247,14 @@ file(GLOB NOCH_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/
 # "Hey Buddy" classifier, ~2.8 MB). They are read from the resources at start-up;
 # a model dropped into %APPDATA%\noch\wakeword takes their place.
 file(GLOB NOCH_WAKEWORD_MODELS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS resources/wakeword/*.onnx)
+set(NOCH_MOONSHINE_VOCAB resources/moonshine/vocab.json)
 
 qt_add_qml_module(noch
     URI noch
     VERSION 1.0
     DEPENDENCIES QtQuick
     QML_FILES ${NOCH_QML_FILES}
-    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS}
+    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS} ${NOCH_MOONSHINE_VOCAB}
 )
 
 # Lets the generated QML type registration find src/app/QmlSingletons.h.
@@ -308,6 +315,47 @@ if(WIN32 AND NOCH_FETCH_ONNXRUNTIME)
     if(EXISTS ${NOCH_ORT_DLL})
         add_custom_command(TARGET noch POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NOCH_ORT_DLL} $<TARGET_FILE_DIR:noch>)
+    endif()
+endif()
+
+# Speech to text: Moonshine Tiny (MIT licence), the quantized ONNX export from
+# onnx-community/moonshine-tiny-ONNX, run on this computer by ONNX Runtime. The two
+# model files (about 28 MB) are downloaded once at configure time, hash-checked,
+# and copied next to the executable (models/moonshine-tiny). Without them voice
+# input says what is missing; they can also be put in %APPDATA%\noch\models\moonshine-tiny.
+option(NOCH_FETCH_MOONSHINE "Download the Moonshine Tiny speech model (about 28 MB)" ON)
+if(NOCH_FETCH_MOONSHINE)
+    set(NOCH_MOONSHINE_REV a6da1241cd305dcd64eab1edbd615f2bb9aabb95)
+    set(NOCH_MOONSHINE_URL https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/${NOCH_MOONSHINE_REV}/onnx)
+    set(NOCH_MOONSHINE_DEPS ${CMAKE_BINARY_DIR}/_deps/moonshine-tiny)
+    file(MAKE_DIRECTORY ${NOCH_MOONSHINE_DEPS})
+    set(_moonshine_files
+        "encoder.onnx|encoder_model_quantized.onnx|c6fc4b7bc5af75c0591fd157a1f3829b533d18e9769a888fd95a62e470dd4f4a"
+        "decoder.onnx|decoder_model_merged_quantized.onnx|eed87831c3a6103534aae7d47a5d485025c659a1323901513961c39fe8a1a367")
+    set(_moonshine_ok TRUE)
+    foreach(_item IN LISTS _moonshine_files)
+        string(REPLACE "|" ";" _parts "${_item}")
+        list(GET _parts 0 _local)
+        list(GET _parts 1 _remote)
+        list(GET _parts 2 _hash)
+        if(NOT EXISTS ${NOCH_MOONSHINE_DEPS}/${_local})
+            message(STATUS "Downloading Moonshine Tiny (${_local})...")
+            file(DOWNLOAD ${NOCH_MOONSHINE_URL}/${_remote} ${NOCH_MOONSHINE_DEPS}/${_local}
+                 EXPECTED_HASH SHA256=${_hash} STATUS _status)
+            list(GET _status 0 _code)
+            if(NOT _code EQUAL 0)
+                file(REMOVE ${NOCH_MOONSHINE_DEPS}/${_local})
+                message(WARNING "Could not download the Moonshine model (${_status}). Voice input will ask for it: "
+                                "put encoder.onnx and decoder.onnx in %APPDATA%\\noch\\models\\moonshine-tiny.")
+                set(_moonshine_ok FALSE)
+            endif()
+        endif()
+    endforeach()
+    if(_moonshine_ok)
+        add_custom_command(TARGET noch POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:noch>/models/moonshine-tiny
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NOCH_MOONSHINE_DEPS}/encoder.onnx
+                    ${NOCH_MOONSHINE_DEPS}/decoder.onnx $<TARGET_FILE_DIR:noch>/models/moonshine-tiny)
     endif()
 endif()
 

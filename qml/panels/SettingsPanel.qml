@@ -1853,7 +1853,7 @@ Item {
                     SettingsGroupCard {
                         SettingsToggleRow {
                             label: qsTr("Push-to-talk")
-                            sub: qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold, kept in memory, and sent to the speech service below, over https or to this computer only. Nothing is stored.")
+                            sub: qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold and turned into text by a model on this computer. It is kept in memory only, never sent anywhere and never stored.")
                             checked: panel.prefs.buddyVoiceEnabled
                             onToggled: (c) => panel.prefs.buddyVoiceEnabled = c
                         }
@@ -1882,49 +1882,39 @@ Item {
 
                         SettingsCardDivider { visible: panel.prefs.buddyVoiceEnabled }
 
-                        SettingsFieldBox {
+                        Column {
                             visible: panel.prefs.buddyVoiceEnabled
                             width: parent.width
-                            label: qsTr("Speech service address")
-                            placeholder: "https://api.openai.com/v1"
-                            hint: Voice.addressProblem().length > 0 ? Voice.addressProblem()
-                                  : qsTr("Any OpenAI-style transcription service, or one on this computer.")
-                            mono: true
-                            text: panel.prefs.buddyVoiceBase
-                            onEdited: (v) => panel.prefs.buddyVoiceBase = v
-                        }
+                            spacing: 6
 
-                        SettingsFieldBox {
-                            visible: panel.prefs.buddyVoiceEnabled
-                            width: parent.width
-                            label: qsTr("Speech service key")
-                            placeholder: qsTr("Not needed for a local service")
-                            hint: qsTr("Kept only for this service. Your chat key is never sent to it.")
-                            secret: true
-                            mono: true
-                            text: panel.prefs.buddyVoiceKey
-                            onEdited: (v) => panel.prefs.buddyVoiceKey = v
-                        }
-
-                        SettingsFieldBox {
-                            visible: panel.prefs.buddyVoiceEnabled
-                            width: parent.width
-                            label: qsTr("Model")
-                            placeholder: "whisper-1"
-                            mono: true
-                            text: panel.prefs.buddyVoiceModel
-                            onEdited: (v) => panel.prefs.buddyVoiceModel = v
-                        }
-
-                        SettingsFieldBox {
-                            visible: panel.prefs.buddyVoiceEnabled
-                            width: parent.width
-                            label: qsTr("Language (optional)")
-                            placeholder: qsTr("Detect automatically")
-                            hint: qsTr("A code like en or de makes recognition faster.")
-                            mono: true
-                            text: panel.prefs.buddyVoiceLanguage
-                            onEdited: (v) => panel.prefs.buddyVoiceLanguage = v
+                            Text {
+                                width: parent.width
+                                text: qsTr("Speech to text: %1, on this computer").arg(Voice.engine)
+                                color: Theme.ink
+                                font.family: Theme.font
+                                font.pixelSize: Theme.fontBase
+                                font.weight: Font.Medium
+                                wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                width: parent.width
+                                text: !Voice.configured ? Voice.problem
+                                      : Voice.ready ? qsTr("Ready. English only. Nothing you say leaves this computer.")
+                                      : qsTr("Starting the speech model…")
+                                color: Voice.configured ? Theme.textDim : Theme.warning
+                                font.family: Theme.font
+                                font.pixelSize: Theme.fontSm
+                                wrapMode: Text.WordWrap
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+                                SettingsPillButton {
+                                    icon: "folder"
+                                    label: qsTr("Open models folder")
+                                    onClicked: Voice.openModelFolder()
+                                }
+                            }
                         }
 
                         SettingsCardDivider { visible: panel.prefs.buddyVoiceEnabled }
@@ -1933,8 +1923,8 @@ Item {
                             visible: panel.prefs.buddyVoiceEnabled
                             label: qsTr("Wake word")
                             sub: Wake.detector === "speech"
-                                 ? qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is checked against the phrase by your speech service, then forgotten.")
-                                 : qsTr("Say “Hey Buddy” and Buddy starts listening, then does what you ask and reports back. The phrase is recognised on this computer; only the request after it is sent to your speech service. The microphone stays open while this is on (Windows shows its microphone icon).")
+                                 ? qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is turned into text on this computer, compared with the phrase and forgotten.")
+                                 : qsTr("Say “Hey Buddy” and Buddy starts listening, then does what you ask and reports back. The phrase and your request are both recognised on this computer: nothing is sent anywhere. The microphone stays open while this is on (Windows shows its microphone icon).")
                             checked: panel.prefs.buddyWakeEnabled
                             onToggled: (c) => panel.prefs.buddyWakeEnabled = c
                         }
@@ -1969,14 +1959,6 @@ Item {
                             onEdited: (v) => panel.prefs.buddyWakePhrase = v
                         }
 
-                        SettingsToggleRow {
-                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector === "speech" && !Voice.localService()
-                            label: qsTr("Allow sending everything it hears")
-                            sub: qsTr("Your speech service is on the internet, so every sentence spoken near the microphone is sent there to check for the phrase. Nothing is kept by Noch, but your service may keep it. A speech service on this computer avoids this. Capped at 12 checks a minute.")
-                            checked: panel.prefs.buddyWakeCloudOk
-                            onToggled: (c) => panel.prefs.buddyWakeCloudOk = c
-                        }
-
                         Text {
                             visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled
                             width: parent.width
@@ -2005,14 +1987,149 @@ Item {
                             wrapMode: Text.WordWrap
                         }
 
-                        SettingsCardDivider { visible: panel.prefs.buddyVoiceEnabled && Speech.available }
+                        SettingsCardDivider { visible: panel.prefs.buddyVoiceEnabled }
 
                         SettingsToggleRow {
-                            visible: panel.prefs.buddyVoiceEnabled && Speech.available
-                            label: qsTr("Read reports aloud")
+                            visible: panel.prefs.buddyVoiceEnabled
+                            label: qsTr("Read answers aloud")
                             sub: qsTr("When a request started by voice finishes, needs your approval or fails, Buddy says a short summary out loud. Never code or links.")
                             checked: panel.prefs.buddySpeakReports
                             onToggled: (c) => panel.prefs.buddySpeakReports = c
+                        }
+
+                        Column {
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddySpeakReports
+                            width: parent.width
+                            spacing: 10
+
+                            SettingsToggleRow {
+                                label: qsTr("Read every answer")
+                                sub: qsTr("Also read answers to requests you typed.")
+                                checked: panel.prefs.buddyTtsSpeakAll
+                                onToggled: (c) => panel.prefs.buddyTtsSpeakAll = c
+                            }
+
+                            Text {
+                                text: qsTr("Voice")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: Theme.fontSm
+                                font.weight: Font.DemiBold
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+                                Repeater {
+                                    model: [
+                                        { id: "system", name: qsTr("This computer") },
+                                        { id: "google", name: qsTr("Google Cloud") },
+                                        { id: "kokoro", name: qsTr("Kokoro") }
+                                    ]
+                                    delegate: SettingsChip {
+                                        required property var modelData
+                                        text: modelData.name
+                                        selected: panel.prefs.buddyTtsEngine === modelData.id
+                                        onPicked: panel.prefs.buddyTtsEngine = modelData.id
+                                    }
+                                }
+                            }
+
+                            Text {
+                                visible: panel.prefs.buddyTtsEngine === "system"
+                                width: parent.width
+                                text: Speech.available
+                                      ? qsTr("Uses the voice built into this computer. Nothing leaves it.")
+                                      : Speech.problem
+                                color: Speech.available ? Theme.textDim : Theme.warning
+                                font.family: Theme.font
+                                font.pixelSize: Theme.fontSm
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Column {
+                                visible: panel.prefs.buddyTtsEngine === "google"
+                                width: parent.width
+                                spacing: 10
+                                SettingsFieldBox {
+                                    width: parent.width
+                                    label: qsTr("Google Cloud API key")
+                                    placeholder: qsTr("Paste your API key")
+                                    hint: qsTr("Needs the Cloud Text-to-Speech API enabled. The spoken text is sent to Google. Stored locally in Noch settings.")
+                                    secret: true
+                                    mono: true
+                                    text: panel.prefs.buddyTtsGoogleKey
+                                    onEdited: (v) => panel.prefs.buddyTtsGoogleKey = v
+                                }
+                                SettingsFieldBox {
+                                    width: parent.width
+                                    label: qsTr("Voice")
+                                    placeholder: "en-US-Neural2-F"
+                                    hint: qsTr("Any Google voice name, such as en-US-Studio-O or en-GB-Neural2-A.")
+                                    mono: true
+                                    text: panel.prefs.buddyTtsGoogleVoice
+                                    onEdited: (v) => panel.prefs.buddyTtsGoogleVoice = v
+                                }
+                            }
+
+                            Column {
+                                visible: panel.prefs.buddyTtsEngine === "kokoro"
+                                width: parent.width
+                                spacing: 10
+                                SettingsFieldBox {
+                                    width: parent.width
+                                    label: qsTr("Kokoro server")
+                                    placeholder: "http://127.0.0.1:8880"
+                                    hint: qsTr("A Kokoro TTS server running on this computer (for example Kokoro-FastAPI). Speech is only sent to this computer or over https.")
+                                    mono: true
+                                    text: panel.prefs.buddyTtsKokoroBase
+                                    onEdited: (v) => panel.prefs.buddyTtsKokoroBase = v
+                                }
+                                SettingsFieldBox {
+                                    width: parent.width
+                                    label: qsTr("Voice")
+                                    placeholder: "af_heart"
+                                    mono: true
+                                    text: panel.prefs.buddyTtsKokoroVoice
+                                    onEdited: (v) => panel.prefs.buddyTtsKokoroVoice = v
+                                }
+                            }
+
+                            SettingsLabeledSlider {
+                                visible: panel.prefs.buddyTtsEngine !== "system"
+                                label: qsTr("Speed")
+                                decimals: 2
+                                // 0.7 .. 1.5
+                                value: (panel.prefs.buddyTtsSpeed - 0.7) / 0.8
+                                onMoved: (v) => panel.prefs.buddyTtsSpeed = Math.round((0.7 + 0.8 * v) * 100) / 100
+                            }
+
+                            Text {
+                                visible: panel.prefs.buddyTtsEngine !== "system" && !Speech.available
+                                width: parent.width
+                                text: Speech.problem
+                                color: Theme.warning
+                                font.family: Theme.font
+                                font.pixelSize: Theme.fontSm
+                                wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                visible: Speech.error.length > 0
+                                width: parent.width
+                                text: Speech.error
+                                color: Theme.warning
+                                font.family: Theme.font
+                                font.pixelSize: Theme.fontSm
+                                wrapMode: Text.WordWrap
+                            }
+                            Flow {
+                                width: parent.width
+                                spacing: 8
+                                SettingsPillButton {
+                                    icon: "volume"
+                                    label: Speech.speaking ? qsTr("Stop") : qsTr("Test voice")
+                                    onClicked: Speech.speaking ? Speech.stop() : Speech.test()
+                                }
+                            }
                         }
                     }
 

@@ -228,13 +228,19 @@ it can do.
 ## Voice input
 
 Hold the microphone button (or Ctrl+Alt+V; Ctrl+Alt+Shift+V if that is taken) and
-speak. Off by default, and it needs a speech-to-text service you provide: any
-OpenAI-style `/audio/transcriptions` endpoint, over https or on this computer
-only. Audio is recorded only while you hold, kept in memory (60 s at most, never
-written to disk), sent to that service and then discarded; the key you enter for
-it is used for nothing else and your chat key is never sent there. What comes
-back is text: it goes into the input field to check, or is sent straight away
+speak. Off by default. Speech is turned into text **on this computer** by
+[Moonshine Tiny](https://github.com/moonshine-ai/moonshine) (English, MIT licence,
+about 30 MB quantized, run through ONNX Runtime), so nothing you say is sent to any
+service and there is no key to enter. Audio is recorded only while you hold, kept in
+memory (60 s at most, never written to disk), transcribed and then discarded. What
+comes back is text: it goes into the input field to check, or is sent straight away
 with *Send right away*. Dictation does not bypass any approval.
+
+The model files (`encoder.onnx`, `decoder.onnx`) are downloaded once when Noch is
+built and placed beside it in `models\moonshine-tiny`. To use your own copy, put
+them in `%APPDATA%\noch\models\moonshine-tiny` (Settings, *Open models folder*) or
+point `NOCH_MOONSHINE_DIR` at the folder. If they are missing, Settings says so and
+nothing is recorded.
 
 ## Error recovery
 
@@ -311,8 +317,8 @@ Buddy listens for your request; or add the request in the same breath: "hey budd
 open notepad". Buddy then does the work like any typed request and reports back:
 the answer pops up as usual, and with *Read reports aloud* a short summary is also
 spoken when the run finishes, needs your approval, asks a question or fails.
-(Spoken reports are Windows' built-in voice, or espeak-ng elsewhere; never code,
-links or Markdown, at most about 280 characters.)
+(Spoken reports are a short summary, never code, links or Markdown, at most about
+280 characters; see *Spoken answers* below for the voices.)
 
 This is the one feature with an open microphone, so it is built to hold less than
 it could.
@@ -323,10 +329,8 @@ through ONNX Runtime on its own thread. It listens to the microphone in 80 ms st
 (about 1.5 ms of CPU each) and scores how much the last 1.3 seconds sounded like the
 phrase. Nothing is sent anywhere while it listens. When the score passes the
 *Sensitivity* setting (the model's own default of 0.5), Buddy perks up and records
-**only the request that follows**, which goes to your speech-to-text service
-(Whisper, or any OpenAI-style `/audio/transcriptions` endpoint; a local Whisper
-server keeps even that on this computer). Say it and nothing more and Buddy gives
-up after 7 s. If the request itself starts with the phrase again, it is stripped.
+**only the request that follows**, which is transcribed on this computer by
+Moonshine. Say it and nothing more and Buddy gives up after 7 s. If the request itself starts with the phrase again, it is stripped.
 
 - **Different wake word.** Drop an openWakeWord `.onnx` classifier into
   `%APPDATA%\noch\wakeword\` (Settings, *Open models folder*); it replaces the
@@ -335,18 +339,15 @@ up after 7 s. If the request itself starts with the phrase again, it is stripped
 - **The runtime.** Noch loads `onnxruntime.dll` when needed instead of linking it,
   so a missing or broken runtime never stops Noch from starting. The Windows build
   downloads it once (hash-checked) and puts it beside `noch.exe`.
-- **Fallback.** If the runtime or a model cannot be loaded, Settings says why and
-  Noch falls back to the older method: a small local detector cuts the sound into
-  sentences, and each one is transcribed by your speech service to look for a phrase
-  you type. That sends *everything said near the microphone* to the service, so
-  in this mode Noch refuses to run until you tick *Allow sending everything it
-  hears* (a service on this computer needs no consent), checks at most 12 sentences
-  a minute, and the phrase only counts at the very start of a sentence. A failing
-  service closes the microphone and backs off (10 s, doubling to 5 min); a refused
-  key stops it until the key is changed.
+- **Fallback.** If the runtime or a wake model cannot be loaded, Settings says why
+  and Noch falls back to a method that needs only Moonshine: a small detector cuts
+  the sound into sentences and each one is transcribed on this computer to look for
+  a phrase you type (it only counts at the very start of a sentence). It is heavier
+  on the CPU than the openWakeWord model, but nothing leaves the computer. If the
+  speech model itself fails, the microphone is closed until the settings change.
 - **What is kept.** Nothing. The detector keeps ten seconds of its own working
-  numbers in memory; audio is never written anywhere, and what the service
-  transcribes is only used if it follows the phrase.
+  numbers in memory; audio is never written anywhere, and what is transcribed
+  is only used if it follows the phrase.
 - **False wake-ups.** A second wake within 1.5 s is ignored, and after a wake the
   detector forgets what it heard so the same words cannot wake it twice. Raise
   *Sensitivity* towards *strict* if it wakes on TV or music. A single TTS-voiced
@@ -361,6 +362,33 @@ up after 7 s. If the request itself starts with the phrase again, it is stripped
   hard stops and the instruction-file protection apply unchanged. Because sound
   from speakers or a video could say the phrase too, keep the permission mode on
   *Ask* if you leave the wake word on in a room with other audio.
+
+## Spoken answers
+
+*Read answers aloud* (Settings, Buddy, Voice input; off by default) makes Buddy say a
+short summary of a reply out loud: the first few sentences, with code, links and
+Markdown removed, at most about 280 characters (adjustable in code, 120 to 2000). It
+reads the answers to requests started by voice, or every answer with *Read every
+answer*. Three voices can be chosen:
+
+- **This computer**: Windows' built-in voice (System.Speech), or `espeak-ng`/`espeak`
+  elsewhere. The text goes to the speech program on its standard input, never into a
+  command line, so nothing in a reply can run as a command. Nothing leaves the
+  computer.
+- **Google Cloud**: Cloud Text-to-Speech (`texttospeech.googleapis.com`). You provide
+  an API key (with the Text-to-Speech API enabled) and a voice name such as
+  `en-US-Neural2-F`. **The spoken summary is sent to Google**; the key goes in a request
+  header, never in the address, and is stored in Noch's settings like your chat key.
+- **Kokoro**: a [Kokoro](https://github.com/hexgrad/Kokoro-82M) TTS server that you run,
+  for example Kokoro-FastAPI, reached through its OpenAI-style
+  `/v1/audio/speech`. It is meant to run on this computer, so the text stays here;
+  plain http is only accepted for `localhost`/`127.0.0.1`, anything else needs https.
+
+If the chosen voice cannot be used (no key, a refused request, the server is not
+running, unplayable audio) the system voice reads the text instead and Settings
+shows why, so a reply is never lost silently. A new reading replaces the old one,
+*Test voice* works even while reading aloud is off, and the wake word stays paused
+while Buddy talks so it cannot wake itself.
 
 ## Screenshots in chat
 

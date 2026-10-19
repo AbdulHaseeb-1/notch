@@ -1537,7 +1537,8 @@ Item {
                 return
             }
         }
-        spokenRun = voiceStarted
+        // Spoken back when asked for by voice, or always when "read every answer" is on.
+        spokenRun = voiceStarted || Speech.speakAll
         lastRequest = trimmed
         forgetAnswer()
         autoPopPending = true

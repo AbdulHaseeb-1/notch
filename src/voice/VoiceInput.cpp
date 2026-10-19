@@ -3,11 +3,9 @@
 #include <QAudioDevice>
 #include <QAudioFormat>
 #include <QAudioSource>
-#include <QHttpMultiPart>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <QDesktopServices>
+#include <QDir>
 #include <QMediaDevices>
-#include <QNetworkRequest>
 #include <QUrl>
 
 #include "VoiceAudio.h"
@@ -93,10 +91,39 @@ std::unique_ptr<AudioCapture> makeMicrophoneCapture()
     return std::make_unique<MicrophoneCapture>();
 }
 
+// ---- the speech-to-text thread ---------------------------------------------------------------
+
+// Loading the model and transcribing both take a while, so they happen here and not on
+// the thread that draws the UI. It only ever runs one request at a time, in order.
+class TranscribeWorker : public QObject
+{
+    Q_OBJECT
+public:
+    explicit TranscribeWorker(Transcriber *engine) : m_engine(engine) {}
+
+public slots:
+    void prepare() { emit prepared(m_engine->prepare()); }
+    void run(quint64 ticket, const QByteArray &pcm)
+    {
+        QString error;
+        const QString text = m_engine->transcribe(pcm, &error);
+        emit finished(ticket, text, error);
+    }
+
+signals:
+    void prepared(const QString &error);
+    void finished(quint64 ticket, const QString &text, const QString &error);
+
+private:
+    Transcriber *m_engine;
+};
+
 // ---- VoiceInput -------------------------------------------------------------------------
 
 VoiceInput::VoiceInput(QObject *parent)
     : QObject(parent)
+    , m_transcriber(makeMoonshineTranscriber(defaultMoonshineFolder()))
+    , m_modelFolder(defaultMoonshineFolder())
 {
     m_maxTimer.setSingleShot(true);
     connect(&m_maxTimer, &QTimer::timeout, this, [this] {
@@ -109,6 +136,76 @@ VoiceInput::~VoiceInput()
 {
     if (m_capture)
         m_capture->stop();
+    if (m_worker) {
+        m_thread.quit();
+        m_thread.wait();
+    }
+}
+
+QString VoiceInput::engine() const
+{
+    return m_transcriber ? m_transcriber->name() : QString();
+}
+
+QString VoiceInput::problem() const
+{
+    if (!m_transcriber)
+        return tr("There is no speech-to-text engine.");
+    if (!m_prepareError.isEmpty())
+        return m_prepareError;
+    return m_transcriber->problem();
+}
+
+bool VoiceInput::configured() const
+{
+    return problem().isEmpty();
+}
+
+void VoiceInput::openModelFolder() const
+{
+    QDir().mkpath(m_modelFolder);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(m_modelFolder));
+}
+
+void VoiceInput::setTranscriber(std::unique_ptr<Transcriber> transcriber)
+{
+    if (m_worker) {
+        m_thread.quit();
+        m_thread.wait();
+        m_worker = nullptr;     // deleted with the thread
+    }
+    m_pending.clear();
+    m_clipTicket = 0;
+    m_ready = false;
+    m_prepareError.clear();
+    m_transcriber = std::move(transcriber);
+    emit readyChanged();
+    emit configChanged();
+    if (m_enabled)
+        ensureWorker();
+}
+
+void VoiceInput::ensureWorker()
+{
+    if (m_worker || !m_transcriber)
+        return;
+    m_worker = new TranscribeWorker(m_transcriber.get());
+    m_worker->moveToThread(&m_thread);
+    connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
+    connect(m_worker, &TranscribeWorker::prepared, this, &VoiceInput::onPrepared);
+    connect(m_worker, &TranscribeWorker::finished, this, &VoiceInput::onFinished);
+    m_thread.start();
+    // Load the model now, in the background, so the first request does not wait for it.
+    if (m_transcriber->problem().isEmpty())
+        QMetaObject::invokeMethod(m_worker, &TranscribeWorker::prepare, Qt::QueuedConnection);
+}
+
+void VoiceInput::onPrepared(const QString &error)
+{
+    m_ready = error.isEmpty();
+    m_prepareError = error;
+    emit readyChanged();
+    emit configChanged();
 }
 
 void VoiceInput::setEnabled(bool on)
@@ -118,82 +215,9 @@ void VoiceInput::setEnabled(bool on)
     m_enabled = on;
     if (!on)
         cancel();   // turning it off closes the microphone at once
+    else
+        ensureWorker();
     emit configChanged();
-}
-
-void VoiceInput::setApiBase(const QString &b)
-{
-    if (b == m_apiBase)
-        return;
-    m_apiBase = b;
-    emit configChanged();
-}
-
-void VoiceInput::setApiKey(const QString &k)
-{
-    if (k == m_apiKey)
-        return;
-    m_apiKey = k;
-    emit configChanged();
-}
-
-void VoiceInput::setModel(const QString &m)
-{
-    if (m == m_model)
-        return;
-    m_model = m;
-    emit configChanged();
-}
-
-void VoiceInput::setLanguage(const QString &l)
-{
-    if (l == m_language)
-        return;
-    m_language = l;
-    emit configChanged();
-}
-
-bool VoiceInput::isLocalAddress(const QString &base)
-{
-    const QString host = QUrl::fromUserInput(base).host().toLower();
-    return host == QLatin1String("localhost") || host == QLatin1String("127.0.0.1") || host == QLatin1String("::1")
-        || host == QLatin1String("[::1]");
-}
-
-QString VoiceInput::addressProblem() const
-{
-    const QString base = m_apiBase.trimmed();
-    if (base.isEmpty())
-        return tr("Add the address of a speech-to-text service.");
-    const QUrl u = QUrl::fromUserInput(base);
-    if (!u.isValid() || u.host().isEmpty())
-        return tr("That address does not look right.");
-    if (u.scheme() == QLatin1String("https"))
-        return QString();
-    if (u.scheme() == QLatin1String("http") && isLocalAddress(base))
-        return QString();
-    return tr("Your voice is only sent over https, or to this computer.");
-}
-
-bool VoiceInput::configured() const
-{
-    if (!addressProblem().isEmpty() || m_model.trimmed().isEmpty())
-        return false;
-    return !m_apiKey.trimmed().isEmpty() || isLocalAddress(m_apiBase);
-}
-
-QString VoiceInput::transcriptionUrl() const
-{
-    if (!addressProblem().isEmpty())
-        return QString();
-    QString base = QUrl::fromUserInput(m_apiBase.trimmed()).toString();
-    while (base.endsWith(QLatin1Char('/')))
-        base.chop(1);
-    if (base.endsWith(QLatin1String("/audio/transcriptions")))
-        return base;
-    if (base.endsWith(QLatin1String("/v1")))
-        return base + QStringLiteral("/audio/transcriptions");
-    return base + QStringLiteral("/v1/audio/transcriptions");
 }
 
 QString VoiceInput::state() const
@@ -251,10 +275,10 @@ bool VoiceInput::beginListening()
         return false;
     }
     if (!configured()) {
-        const QString problem = addressProblem();
-        fail(problem.isEmpty() ? tr("Add a speech-to-text key in Settings > Buddy.") : problem);
+        fail(problem());
         return false;
     }
+    ensureWorker();
     if (!m_capture)
         m_capture = makeMicrophoneCapture();
     QString why;
@@ -315,21 +339,26 @@ void VoiceInput::endListening()
         return;
     }
     setState(State::Transcribing);
-    send(voice::encodeWav(voice::trimSilence(clip)));
+    m_clipTicket = transcribe(voice::trimSilence(clip), this, [this](const Transcription &t) {
+        m_clipTicket = 0;
+        setState(State::Idle);
+        if (!t.ok) {
+            fail(t.error);
+            return;
+        }
+        clearError();
+        emit transcript(t.text);
+    });
 }
 
 void VoiceInput::cancel()
 {
-    ++m_generation;
     m_maxTimer.stop();
     if (m_capture && m_state == State::Listening)
         m_capture->stop();
-    if (m_reply) {
-        QNetworkReply *r = m_reply;
-        m_reply = nullptr;
-        r->disconnect(this);
-        r->abort();
-        r->deleteLater();
+    if (m_clipTicket) {
+        abort(m_clipTicket);
+        m_clipTicket = 0;
     }
     m_pcm.clear();
     if (m_level != 0) {
@@ -339,116 +368,52 @@ void VoiceInput::cancel()
     setState(State::Idle);
 }
 
-QNetworkReply *VoiceInput::post(const QByteArray &wav)
+quint64 VoiceInput::transcribe(const QByteArray &pcm16, QObject *context,
+                               std::function<void(const Transcription &)> done)
 {
-    QNetworkRequest request{ QUrl(transcriptionUrl()) };
-    request.setTransferTimeout(60000);
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
-    if (!m_apiKey.trimmed().isEmpty())
-        request.setRawHeader("Authorization", "Bearer " + m_apiKey.trimmed().toUtf8());
-
-    auto *multi = new QHttpMultiPart(QHttpMultiPart::FormDataType);
-    auto field = [multi](const QString &name, const QString &value) {
-        QHttpPart part;
-        part.setHeader(QNetworkRequest::ContentDispositionHeader,
-                       QStringLiteral("form-data; name=\"%1\"").arg(name));
-        part.setBody(value.toUtf8());
-        multi->append(part);
-    };
-    field(QStringLiteral("model"), m_model.trimmed());
-    field(QStringLiteral("response_format"), QStringLiteral("json"));
-    field(QStringLiteral("temperature"), QStringLiteral("0"));
-    if (!m_language.trimmed().isEmpty())
-        field(QStringLiteral("language"), m_language.trimmed());
-    QHttpPart file;
-    file.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("audio/wav"));
-    file.setHeader(QNetworkRequest::ContentDispositionHeader,
-                   QStringLiteral("form-data; name=\"file\"; filename=\"speech.wav\""));
-    file.setBody(wav);
-    multi->append(file);
-
-    QNetworkReply *reply = m_nam.post(request, multi);
-    multi->setParent(reply);   // deleted with the reply
-    return reply;
-}
-
-VoiceInput::Transcription VoiceInput::parse(QNetworkReply *reply)
-{
-    Transcription out;
-    const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    out.status = status;
-    const QByteArray body = reply->isOpen() ? reply->readAll() : QByteArray();   // an abandoned request is closed
-    const bool transportOk = reply->error() == QNetworkReply::NoError;
-
-    if (!transportOk || status < 200 || status >= 300) {
-        const QJsonObject o = QJsonDocument::fromJson(body).object();
-        QString msg = o.value(QStringLiteral("error")).isObject()
-            ? o.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString()
-            : o.value(QStringLiteral("error")).toString();
-        if (status == 401 || status == 403)
-            msg = tr("The speech-to-text key was refused.");
-        else if (status == 429)
-            msg = tr("The speech-to-text service is busy or out of quota. Try again in a moment.");
-        else if (msg.isEmpty())
-            msg = status > 0 ? tr("The speech-to-text service answered HTTP %1.").arg(status)
-                             : tr("Could not reach the speech-to-text service.");
-        out.error = msg.left(300);
-        return out;
+    ensureWorker();
+    const quint64 ticket = m_nextTicket++;
+    m_pending.insert(ticket, Pending{ QPointer<QObject>(context), std::move(done) });
+    if (!m_worker) {
+        Transcription t;
+        t.error = problem();
+        QMetaObject::invokeMethod(this, [this, ticket, t] {
+            const Pending p = m_pending.take(ticket);
+            if (p.done && p.context)
+                p.done(t);
+        }, Qt::QueuedConnection);
+        return ticket;
     }
-    // {"text": "..."} (json); some servers answer plain text.
-    QString text = QJsonDocument::fromJson(body).object().value(QStringLiteral("text")).toString();
-    if (text.isEmpty() && !body.trimmed().startsWith('{'))
-        text = QString::fromUtf8(body);
-    text = text.simplified();
-    if (text.isEmpty()) {
-        out.error = tr("I could not make out any words.");
-        out.empty = true;
-        return out;
-    }
-    out.ok = true;
-    out.text = text;
-    return out;
+    QMetaObject::invokeMethod(m_worker, [w = m_worker, ticket, pcm16] { w->run(ticket, pcm16); }, Qt::QueuedConnection);
+    return ticket;
 }
 
-void VoiceInput::send(const QByteArray &wav)
+void VoiceInput::abort(quint64 ticket)
 {
-    m_reply = post(wav);
-    const quint64 gen = m_generation;
-    connect(m_reply, &QNetworkReply::finished, this, [this, gen] {
-        if (gen == m_generation)
-            onReply();
-    });
+    m_pending.remove(ticket);   // the engine may still finish it; the answer is dropped
 }
 
-void VoiceInput::onReply()
+void VoiceInput::onFinished(quint64 ticket, const QString &text, const QString &error)
 {
-    QNetworkReply *reply = m_reply;
-    m_reply = nullptr;
-    if (!reply)
+    const auto it = m_pending.find(ticket);
+    if (it == m_pending.end())
+        return;                 // aborted
+    const Pending p = it.value();
+    m_pending.erase(it);
+    if (!p.done || !p.context)
         return;
-    reply->deleteLater();
-    const Transcription t = parse(reply);
-    setState(State::Idle);
-    if (!t.ok) {
-        fail(t.error);
-        return;
+    Transcription t;
+    const QString words = text.simplified();
+    if (!error.isEmpty()) {
+        t.error = error.left(300);
+    } else if (words.isEmpty()) {
+        t.empty = true;
+        t.error = tr("I could not make out any words.");
+    } else {
+        t.ok = true;
+        t.text = words;
     }
-    clearError();
-    emit transcript(t.text);
+    p.done(t);
 }
 
-QPointer<QNetworkReply> VoiceInput::transcribe(const QByteArray &wav, QObject *context,
-                                               std::function<void(const Transcription &)> done)
-{
-    QNetworkReply *reply = post(wav);
-    connect(reply, &QNetworkReply::finished, context, [reply, done = std::move(done)] {
-        reply->deleteLater();
-        done(parse(reply));
-    });
-    return reply;
-}
-
-bool VoiceInput::localService() const
-{
-    return isLocalAddress(m_apiBase);
-}
+#include "VoiceInput.moc"

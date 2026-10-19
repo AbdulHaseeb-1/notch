@@ -201,11 +201,11 @@ bool Session::open(const QByteArray &model, QString *error)
     if (const QString e = take(api, api->SessionGetInputName(d->session, 0, alloc, &in)); !e.isEmpty())
         return fail(e);
     d->inName = in;
-    api->AllocatorFree(alloc, in);
+    (void)take(api, api->AllocatorFree(alloc, in));
     if (const QString e = take(api, api->SessionGetOutputName(d->session, 0, alloc, &out)); !e.isEmpty())
         return fail(e);
     d->outName = out;
-    api->AllocatorFree(alloc, out);
+    (void)take(api, api->AllocatorFree(alloc, out));
     if (const QString e = take(api, api->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &d->memory));
         !e.isEmpty())
         return fail(e);
@@ -261,6 +261,77 @@ bool Session::run(const float *data, const std::vector<int64_t> &shape, std::vec
         !e.isEmpty() || !values)
         return done(false, QStringLiteral("no output"));
     out->assign(values, values + elements);
+    return done(true, QString());
+}
+
+bool Session::runNamed(const std::vector<TensorIn> &inputs, const std::vector<std::string> &outputs,
+                       std::vector<TensorOut> *results, QString *error)
+{
+    const OrtApi *api = g().api;
+    if (!api || !isOpen())
+        return false;
+    static const float kEmpty = 0.0f;
+    std::vector<OrtValue *> in(inputs.size(), nullptr);
+    std::vector<OrtValue *> out(outputs.size(), nullptr);
+    auto done = [&](bool ok, const QString &why) {
+        for (OrtValue *v : out)
+            if (v)
+                api->ReleaseValue(v);
+        for (OrtValue *v : in)
+            if (v)
+                api->ReleaseValue(v);
+        if (!ok && error)
+            *error = why;
+        return ok;
+    };
+
+    std::vector<const char *> inNames, outNames;
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        const TensorIn &t = inputs[i];
+        size_t count = 1;
+        for (int64_t dim : t.shape)
+            count *= size_t(dim);
+        size_t bytes = count;
+        ONNXTensorElementDataType type = ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
+        switch (t.type) {
+        case DType::Float32: bytes = count * sizeof(float); type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT; break;
+        case DType::Int64: bytes = count * sizeof(int64_t); type = ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64; break;
+        case DType::Bool: break;
+        }
+        void *data = const_cast<void *>(count == 0 || !t.data ? static_cast<const void *>(&kEmpty) : t.data);
+        if (const QString e = take(api, api->CreateTensorWithDataAsOrtValue(d->memory, data, bytes, t.shape.data(),
+                                                                            t.shape.size(), type, &in[i]));
+            !e.isEmpty())
+            return done(false, QStringLiteral("%1: %2").arg(QString::fromStdString(t.name), e));
+        inNames.push_back(t.name.c_str());
+    }
+    for (const std::string &name : outputs)
+        outNames.push_back(name.c_str());
+
+    if (const QString e = take(api, api->Run(d->session, nullptr, inNames.data(), in.data(), in.size(),
+                                             outNames.data(), outNames.size(), out.data()));
+        !e.isEmpty())
+        return done(false, e);
+
+    results->assign(outputs.size(), TensorOut());
+    for (size_t i = 0; i < outputs.size(); ++i) {
+        OrtTensorTypeAndShapeInfo *info = nullptr;
+        if (const QString e = take(api, api->GetTensorTypeAndShape(out[i], &info)); !e.isEmpty())
+            return done(false, e);
+        size_t rank = 0;
+        size_t elements = 0;
+        (void)take(api, api->GetDimensionsCount(info, &rank));
+        (*results)[i].shape.assign(rank, 0);
+        (void)take(api, api->GetDimensions(info, (*results)[i].shape.data(), rank));
+        (void)take(api, api->GetTensorShapeElementCount(info, &elements));
+        api->ReleaseTensorTypeAndShapeInfo(info);
+        float *values = nullptr;
+        if (const QString e = take(api, api->GetTensorMutableData(out[i], reinterpret_cast<void **>(&values)));
+            !e.isEmpty())
+            return done(false, e);
+        if (values)
+            (*results)[i].data.assign(values, values + elements);
+    }
     return done(true, QString());
 }
 

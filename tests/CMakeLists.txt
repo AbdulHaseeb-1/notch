@@ -24,6 +24,18 @@ set(NOCH_COMPUTER_USE_SOURCES
     src/agent/ComputerUseWin.cpp
 )
 
+# Speech to text: VoiceInput, its Moonshine engine and the ONNX Runtime binding.
+set(NOCH_SPEECH_TO_TEXT_SOURCES
+    src/voice/VoiceInput.cpp
+    src/voice/VoiceInput.h
+    src/voice/Transcriber.h
+    src/voice/MoonshineTranscriber.cpp
+    src/voice/Moonshine.cpp
+    src/voice/Moonshine.h
+    src/voice/OrtRuntime.cpp
+    src/voice/OrtRuntime.h
+)
+
 if(WIN32)
     set(NOCH_WIN_LIBS user32)
 else()
@@ -58,18 +70,19 @@ noch_add_unit_test(tst_userquestions
 noch_add_unit_test(tst_voice
     SOURCES tests/tst_voice.cpp
             src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            src/voice/VoiceInput.cpp src/voice/VoiceInput.h
+            ${NOCH_SPEECH_TO_TEXT_SOURCES}
             src/voice/PushToTalkKey.cpp src/voice/PushToTalkKey.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia ${NOCH_WIN_LIBS})
+    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia ${NOCH_WIN_LIBS}
+    DEFS NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
 
 noch_add_unit_test(tst_wakeword
     SOURCES tests/tst_wakeword.cpp
             src/voice/WakeWord.cpp src/voice/WakeWord.h
             src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h
+            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
             src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            src/voice/VoiceInput.cpp src/voice/VoiceInput.h
+            ${NOCH_SPEECH_TO_TEXT_SOURCES}
     LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia
     DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
          NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
@@ -82,14 +95,22 @@ noch_add_unit_test(tst_wakedetector
     DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
          NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
 
+noch_add_unit_test(tst_moonshine
+    SOURCES tests/tst_moonshine.cpp
+            src/voice/Moonshine.cpp src/voice/Moonshine.h
+            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
+    LIBS Qt6::Core
+    DEFS NOCH_MOONSHINE_VOCAB="${PROJECT_SOURCE_DIR}/resources/moonshine/vocab.json"
+         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+
 noch_add_unit_test(tst_speechout
     SOURCES tests/tst_speechout.cpp
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h
+            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
             src/voice/WakeWord.cpp src/voice/WakeWord.h
             src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
             src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            src/voice/VoiceInput.cpp src/voice/VoiceInput.h
+            ${NOCH_SPEECH_TO_TEXT_SOURCES}
     LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
 
 noch_add_unit_test(tst_chatsessions
