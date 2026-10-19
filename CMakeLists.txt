@@ -48,6 +48,8 @@ qt_add_executable(noch
     src/UserQuestions.h
     src/RunJournal.cpp
     src/RunJournal.h
+    src/SavedRules.cpp
+    src/SavedRules.h
     src/ComputerUse.cpp
     src/ComputerUse.h
     src/ComputerUseWin.cpp
@@ -191,6 +193,10 @@ if(NOCH_BUILD_TESTS)
         src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_userquestions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME tst_userquestions COMMAND tst_userquestions)
+    qt_add_executable(tst_savedrules tests/tst_savedrules.cpp
+        src/SavedRules.cpp src/SavedRules.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_savedrules PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_savedrules COMMAND tst_savedrules)
     qt_add_executable(tst_runjournal tests/tst_runjournal.cpp
         src/RunJournal.cpp src/RunJournal.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_runjournal PRIVATE Qt6::Core Qt6::Network Qt6::Test)
@@ -198,6 +204,7 @@ if(NOCH_BUILD_TESTS)
     qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
         src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
         src/UserQuestions.cpp src/UserQuestions.h src/RunJournal.cpp src/RunJournal.h
+        src/SavedRules.cpp src/SavedRules.h
         src/StreamAccumulator.cpp src/StreamAccumulator.h
         src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
     target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)

@@ -358,9 +358,11 @@ class TstBuddyAgent : public QObject
     BuddyProvider *bp = nullptr;
     QTemporaryDir ws;
     QTemporaryDir undoStore;
+    QTemporaryDir rulesStore;
+    int callCounter = 0;
 
 private slots:
-    void initTestCase() { QStandardPaths::setTestModeEnabled(true); QVERIFY(ws.isValid() && undoStore.isValid()); }
+    void initTestCase() { QStandardPaths::setTestModeEnabled(true); QVERIFY(ws.isValid() && undoStore.isValid() && rulesStore.isValid()); }
 
     void init() {
         fake = new FakeAnthropic;
@@ -377,6 +379,8 @@ private slots:
         QDir(undoStore.path()).removeRecursively();
         QDir().mkpath(undoStore.path());
         bp->setUndoPath(undoStore.path());
+        QFile::remove(rulesStore.filePath("rules.json"));
+        bp->setSavedRulesPath(rulesStore.filePath("rules.json"));
     }
     void cleanup() { delete bp; bp = nullptr; delete fake; fake = nullptr; }
 
@@ -1890,6 +1894,189 @@ private slots:
             return pol.evaluate("str_replace_editor", QJsonObject{ { "command", "create" }, { "path", path + "/x/journal.json" } });
         }();
         QCOMPARE(d.verdict, AgentPolicy::Verdict::Deny);
+    }
+
+
+    // ---- saved "always allow" rules ----------------------------------------------------
+
+    // Runs one bash call to completion, answering its approval card if it asks.
+    // Returns whether a card was shown.
+    bool runBash(const QString &command, bool approve = true, bool always = false, const QString &workDir = QString()) {
+        QJsonObject input{ { "command", command } };
+        if (!workDir.isEmpty())
+            input["working_dir"] = workDir;
+        fake->requests.clear();
+        fake->queue = { { 200, toolUseNamed(QStringLiteral("b%1").arg(++callCounter), "bash", input) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("run it");
+        bool asked = false;
+        for (int i = 0; i < 200 && ready.isEmpty(); ++i) {
+            QTest::qWait(25);
+            if (!bp->pendingApproval().isEmpty()) {
+                asked = true;
+                bp->resolveApproval(approve, always);
+            }
+        }
+        if (ready.isEmpty())
+            QTest::qWait(1500);
+        return asked;
+    }
+    void alwaysAllowSavesANarrowRuleNotAWholeTool() {
+        fake->queue = { { 200, toolUseNamed("g1", "bash", QJsonObject{ { "command", "git add notes.txt" } }) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("stage it");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        // The card says what "Always allow" will really do.
+        QVERIFY(bp->pendingApproval().value("alwaysSaved").toBool());
+        QVERIFY2(bp->pendingApproval().value("alwaysLabel").toString().contains("git add"),
+                 qPrintable(bp->pendingApproval().value("alwaysLabel").toString()));
+        bp->resolveApproval(true, true);
+        QVERIFY(ready.wait(8000));
+        const QVariantList rules = bp->savedRules();
+        QCOMPARE(rules.size(), 1);
+        QCOMPARE(rules.first().toMap().value("kind").toString(), QStringLiteral("prefix"));
+        QCOMPARE(rules.first().toMap().value("pattern").toString(), QStringLiteral("git add"));
+        QCOMPARE(bp->toolSteps().first().toMap().value("policy").toString(), QStringLiteral("approved-rule"));
+
+        // The same kind of command now runs without asking ...
+        QVERIFY(!runBash("git add other.txt"));
+        QCOMPARE(bp->toolSteps().first().toMap().value("policy").toString(), QStringLiteral("saved-rule"));
+        // ... another command still asks (it was not "all of bash").
+        QVERIFY(runBash("git commit -m later"));
+        QVERIFY(runBash("touch something.txt"));
+    }
+
+    void rulesPersistAcrossRestarts() {
+        QVERIFY(runBash("git add a.txt", true, true));
+        QCOMPARE(bp->savedRules().size(), 1);
+        BuddyProvider later;
+        later.setSavedRulesPath(rulesStore.filePath("rules.json"));   // the same file, a fresh process
+        QCOMPARE(later.savedRules().size(), 1);
+        QCOMPARE(later.savedRules().first().toMap().value("pattern").toString(), QStringLiteral("git add"));
+    }
+
+    void aShellPipelineCannotBeSavedOnlyGrantedForTheSession() {
+        fake->queue = { { 200, toolUseNamed("p1", "bash", QJsonObject{ { "command", "touch one.txt && touch two.txt" } }) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("chain");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        QVERIFY(!bp->pendingApproval().value("alwaysSaved").toBool());
+        QVERIFY(bp->pendingApproval().value("alwaysLabel").toString().contains("restart"));
+        bp->resolveApproval(true, true);
+        QVERIFY(ready.wait(8000));
+        QVERIFY(bp->savedRules().isEmpty());   // nothing written to disk
+        QVERIFY(!QFileInfo::exists(rulesStore.filePath("rules.json")));
+        // The session grant it falls back to is the old behaviour: the tool is trusted until restart.
+        QVERIFY(!runBash("touch granted.txt"));
+        QCOMPARE(bp->toolSteps().first().toMap().value("policy").toString(), QStringLiteral("session-grant"));
+    }
+
+    void aSavedRuleDoesNotApplyInAnotherFolder() {
+        QVERIFY(runBash("git add a.txt", true, true));
+        QTemporaryDir elsewhere;
+        QVERIFY(runBash("git add a.txt", true, false, elsewhere.path()));   // asks again: it was approved here, not there
+    }
+
+    void removingARuleMakesItAskAgain() {
+        QVERIFY(runBash("git add a.txt", true, true));
+        QVERIFY(!runBash("git add b.txt"));
+        QSignalSpy changed(bp, &BuddyProvider::savedRulesChanged);
+        bp->removeSavedRule(bp->savedRules().first().toMap().value("id").toString());
+        QCOMPARE(changed.size(), 1);
+        QVERIFY(bp->savedRules().isEmpty());
+        QVERIFY(runBash("git add c.txt"));
+        bp->clearSavedRules();   // harmless when empty
+        QCOMPARE(changed.size(), 1);
+    }
+
+    void clearingTheRulesRemovesThemAll() {
+        QVERIFY(runBash("git add a.txt", true, true));
+        QVERIFY(runBash("cargo build", true, true));
+        QCOMPARE(bp->savedRules().size(), 2);
+        bp->clearSavedRules();
+        QVERIFY(bp->savedRules().isEmpty());
+        QVERIFY(runBash("cargo build"));
+    }
+
+    void rulesSurviveAModeChangeUnlikeSessionGrants() {
+        QVERIFY(runBash("git add a.txt", true, true));
+        bp->setPermissionMode("acceptEdits");
+        bp->setPermissionMode("default");
+        QCOMPARE(bp->savedRules().size(), 1);
+        QVERIFY(!runBash("git add b.txt"));
+    }
+
+    void aSavedRuleStillLosesToPlanMode() {
+        QVERIFY(runBash("git add a.txt", true, true));
+        bp->setPermissionMode("plan");
+        QVERIFY(!runBash("git add b.txt"));   // no card: denied outright
+        QCOMPARE(bp->toolSteps().first().toMap().value("status").toString(), QStringLiteral("denied"));
+    }
+
+    void declinedApprovalSavesNothing() {
+        QVERIFY(runBash("git add a.txt", false, true));
+        QVERIFY(bp->savedRules().isEmpty());
+    }
+
+    void editsOfferAFolderRule() {
+        QDir().mkpath(wsFile("src"));
+        QDir().mkpath(wsFile("docs"));
+        auto edit = [&](const QString &file, bool always) -> bool {
+            fake->requests.clear();
+            fake->queue = { { 200, toolUseNamed(QStringLiteral("f%1").arg(++callCounter), "str_replace_editor",
+                              QJsonObject{ { "command", "create" }, { "path", file }, { "file_text", "x" } }) }, { 200, text("ok") } };
+            QSignalSpy ready(bp, &BuddyProvider::responseReady);
+            bp->sendMessage("write a file");
+            bool asked = false;
+            for (int i = 0; i < 200 && ready.isEmpty(); ++i) {
+                QTest::qWait(25);
+                if (!bp->pendingApproval().isEmpty()) {
+                    asked = true;
+                    if (always && !bp->pendingApproval().value("alwaysLabel").toString().contains("src"))
+                        QTest::qFail("the card should name the src folder", __FILE__, __LINE__);
+                    bp->resolveApproval(true, always);
+                }
+            }
+            return asked;
+        };
+        QVERIFY(edit(wsFile("src/a.txt"), true));
+        QCOMPARE(bp->savedRules().first().toMap().value("kind").toString(), QStringLiteral("dir"));
+        QVERIFY(!edit(wsFile("src/b.txt"), false));       // same folder: no card
+        QVERIFY(!edit(wsFile("src/deep/c.txt"), false));  // below it too
+        QVERIFY(edit(wsFile("docs/d.txt"), false));       // a sibling folder asks
+        QVERIFY(edit(wsFile("src/.env"), false));         // secrets always ask
+    }
+
+    void secretsAreNeverOfferedAStandingRule() {
+        fake->queue = { { 200, toolUseNamed("s1", "str_replace_editor",
+                          QJsonObject{ { "command", "create" }, { "path", wsFile(".env") }, { "file_text", "KEY=1" } }) }, { 200, text("ok") } };
+        bp->sendMessage("write secrets");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        QVERIFY(!bp->pendingApproval().value("alwaysSaved").toBool());
+        bp->resolveApproval(false);
+    }
+
+    void computerControlIsNeverOfferedAStandingRule() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        fake->queue = { { 200, toolUseBatch({ member("c1", "left_click", { { "coordinate", QJsonArray{ 10, 10 } } }) }) }, { 200, text("ok") } };
+        bp->sendMessage("click");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        QVERIFY(!bp->pendingApproval().value("alwaysSaved").toBool());
+        bp->resolveApproval(false);
+    }
+
+    void theRulesFileIsOutOfTheAgentsReach() {
+        BuddyProvider other;
+        const QString path = other.savedRulesPath();
+        QVERIFY(path.endsWith("permission-rules.json"));
+        AgentPolicy pol;
+        pol.setWorkspaceRoots({ ws.path() });
+        pol.setPrivatePaths({ QFileInfo(path).absolutePath() });
+        // The model cannot write itself a standing permission ...
+        QCOMPARE(pol.evaluate("str_replace_editor", QJsonObject{ { "command", "create" }, { "path", path } }).verdict,
+                 AgentPolicy::Verdict::Deny);
+        QCOMPARE(pol.evaluate("bash", QJsonObject{ { "command", "echo {} > \"" + path + "\"" } }).verdict,
+                 AgentPolicy::Verdict::Deny);
     }
 
     void cancelDuringApprovalStopsRun() {

@@ -367,6 +367,8 @@ BuddyProvider::BuddyProvider(QObject *parent)
         }
     });
     m_journal.setRoot(undoPath());
+    m_savedRules.setPath(savedRulesPath());
+    m_policy.setSavedRules(m_savedRules.rules());
 
     m_approvalTimer.setInterval(1000);
     connect(&m_approvalTimer, &QTimer::timeout, this, &BuddyProvider::onApprovalTick);
@@ -752,6 +754,40 @@ void BuddyProvider::syncPrivatePaths()
     m_policy.setPrivatePaths(priv);
 }
 
+// ---- saved "always allow" rules ------------------------------------------------
+
+QString BuddyProvider::savedRulesPath() const
+{
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty())
+        base = QDir::homePath() + QStringLiteral("/.noch");
+    return QDir(base).filePath(QStringLiteral("permission-rules.json"));
+}
+
+void BuddyProvider::setSavedRulesPath(const QString &path)
+{
+    m_savedRules.setPath(path);
+    m_policy.setSavedRules(m_savedRules.rules());
+    emit savedRulesChanged();
+}
+
+void BuddyProvider::removeSavedRule(const QString &id)
+{
+    if (!m_savedRules.remove(id))
+        return;
+    m_policy.setSavedRules(m_savedRules.rules());
+    emit savedRulesChanged();
+}
+
+void BuddyProvider::clearSavedRules()
+{
+    if (m_savedRules.rules().isEmpty())
+        return;
+    m_savedRules.clear();
+    m_policy.setSavedRules(m_savedRules.rules());
+    emit savedRulesChanged();
+}
+
 // ---- undo for a whole run ------------------------------------------------------
 
 QString BuddyProvider::undoPath() const
@@ -881,6 +917,7 @@ void BuddyProvider::setStepFields(int stepIndex, const QVariantMap &fields)
 
 void BuddyProvider::clearPendingApproval()
 {
+    m_approvalRule = AgentPolicy::SavedRule();
     m_approvalTimer.stop();
     m_approvalSecondsLeft = 0;
     if (m_pendingApproval.isEmpty())
@@ -920,16 +957,32 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
     if (m_pendingApproval.isEmpty())
         return;
     const PendingToolCall call = m_approvalCall;
+    const AgentPolicy::SavedRule rule = m_approvalRule;
     clearPendingApproval();
+    // "Always allow" saves the narrow rule the card showed when there is one;
+    // otherwise (shell syntax, secrets, computer control ...) it can only be
+    // a grant for this session, as it always was.
+    bool saved = false;
+    if (approve && always && rule.valid()) {
+        m_savedRules.add(rule);
+        saved = m_savedRules.contains(rule);
+        if (saved) {
+            m_policy.setSavedRules(m_savedRules.rules());
+            emit savedRulesChanged();
+        }
+    }
+    const bool sessionGrant = approve && always && !saved;
     addSpan(QJsonObject{ { "type", "approval" }, { "tool", call.name },
-                         { "decision", approve ? (always ? "approved-session" : "approved") : "rejected" } });
+                         { "decision", !approve ? "rejected" : saved ? "approved-rule" : sessionGrant ? "approved-session" : "approved" } });
     if (approve) {
-        if (always)
+        if (sessionGrant)
             m_policy.allowForSession(call.name);
         setStepFields(call.stepIndex, {
             { QStringLiteral("status"), QStringLiteral("running") },
-            { QStringLiteral("policy"), always ? QStringLiteral("approved-session") : QStringLiteral("approved") },
-            { QStringLiteral("policyNote"), always ? tr("Approved for this session") : tr("Approved by you") } });
+            { QStringLiteral("policy"), saved ? QStringLiteral("approved-rule")
+                                              : sessionGrant ? QStringLiteral("approved-session") : QStringLiteral("approved") },
+            { QStringLiteral("policyNote"), saved ? tr("Saved: always allow “%1”").arg(redact(rule.label))
+                                                  : sessionGrant ? tr("Approved for this session") : tr("Approved by you") } });
         m_stepTimer.start();
         setActiveToolState(call.name, summarizeToolCall(call.name, call.input));
         executeToolCall(call);
@@ -3416,6 +3469,11 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
     if (d.verdict == AgentPolicy::Verdict::Ask && !direct) {
         // Human in the loop: pause this call until the user decides.
         m_approvalCall = call;
+        // Only a plain "this changes files" question can become a standing
+        // rule; the special asks (secrets, opaque commands, private network,
+        // screen content ...) stay questions every time.
+        m_approvalRule = (d.rule == QLatin1String("ask:shell") || d.rule == QLatin1String("ask:edit"))
+            ? m_policy.suggestRule(call.name, call.input) : AgentPolicy::SavedRule();
         QVariantMap step = (call.stepIndex >= 0 && call.stepIndex < m_toolSteps.size())
             ? m_toolSteps.at(call.stepIndex).toMap() : QVariantMap();
         setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("pending") },
@@ -3433,6 +3491,11 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
             { QStringLiteral("reason"), d.reason },
             { QStringLiteral("rule"), d.rule },
             { QStringLiteral("secondsLeft"), m_approvalSecondsLeft },
+            // What "Always allow" would do: save this rule, or (no safe rule
+            // exists) allow the tool until Noch is restarted.
+            { QStringLiteral("alwaysSaved"), m_approvalRule.valid() },
+            { QStringLiteral("alwaysLabel"), m_approvalRule.valid() ? redact(m_approvalRule.label)
+                                                                    : tr("this tool until you restart Noch") },
         };
         m_approvalTimer.start();
         setActiveToolState(call.name, tr("Waiting for your approval…"));

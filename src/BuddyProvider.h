@@ -19,6 +19,7 @@
 #include "AgentPolicy.h"
 #include "ComputerUse.h"
 #include "RunJournal.h"
+#include "SavedRules.h"
 #include "StreamAccumulator.h"
 #include "UserQuestions.h"
 
@@ -117,6 +118,9 @@ class BuddyProvider : public QObject
     // { runId, count, created, modified, deleted, files: [{ path, action }],
     //   untracked: [{ path, reason }] }. Empty when it changed nothing.
     Q_PROPERTY(QVariantMap lastRunChanges READ lastRunChanges NOTIFY lastRunChangesChanged)
+    // The "always allow" rules the user saved (see AgentPolicy::SavedRule), for
+    // the settings list: [{ id, tool, kind, pattern, scope, label, createdAt }].
+    Q_PROPERTY(QVariantList savedRules READ savedRules NOTIFY savedRulesChanged)
 
     Q_PROPERTY(QVariantList toolSteps READ toolSteps NOTIFY toolStepsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
@@ -212,6 +216,11 @@ public:
     QVariantMap pendingApproval() const { return m_pendingApproval; }
     QVariantMap pendingQuestion() const { return m_pendingQuestion; }
     QVariantMap lastRunChanges() const { return m_lastRunChanges; }
+    QVariantList savedRules() const { return m_savedRules.toVariant(); }
+    Q_INVOKABLE void removeSavedRule(const QString &id);
+    Q_INVOKABLE void clearSavedRules();
+    Q_INVOKABLE QString savedRulesPath() const;
+    void setSavedRulesPath(const QString &path);
 
     QVariantList toolSteps() const { return m_toolSteps; }
     QString activeTool() const { return m_activeTool; }
@@ -274,6 +283,7 @@ signals:
     void pendingApprovalChanged();
     void pendingQuestionChanged();
     void lastRunChangesChanged();
+    void savedRulesChanged();
     void streamTextChanged();
     void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
@@ -336,6 +346,8 @@ private:
     QTimer m_approvalTimer;      // 1 s ticks for the countdown, auto-deny at 0
     int m_approvalSecondsLeft = 0;
     // The question being asked (ask_user_question) and its countdown.
+    SavedRules m_savedRules;
+    AgentPolicy::SavedRule m_approvalRule;   // what "Always allow" on the pending card would save
     RunJournal m_journal;
     QVariantMap m_lastRunChanges;
     QVariantMap m_pendingQuestion;
