@@ -95,8 +95,9 @@ QtObject {
     readonly property color loveSoft: "#f0d2d8"
     readonly property color running: "#d9d2c7"       // live tool steps: lit stone
 
-    // The buddy's halo: four stops around the ring, in stone and warm silver.
-    readonly property var ringColors: ["#efe9df", "#9b938a", "#fbf7f0", "#6f6860"]
+    // The buddy's neon halo keeps its own colours (SystemAppearance.ringColors,
+    // chosen in Settings > Buddy > Ring colour); it is the one deliberately
+    // colourful element on the stone UI.
 
     // Which monochrome app-icon variant suits the (always dark) background.
     readonly property string iconMono: "mono"

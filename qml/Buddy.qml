@@ -219,7 +219,7 @@ Item {
     property real dragVelY: 0
     property real neon: 0              // 0..1: neon gradient halo, the buddy's "happy glow"
     // The halo's gradient stops, chosen in Settings > Buddy > Ring colour.
-    readonly property var ringColors: Theme.ringColors
+    readonly property var ringColors: SystemAppearance.ringColors
 
     Timer {
         id: moodResetTimer
@@ -935,7 +935,7 @@ Item {
         id: ring
         property real midR: 30          // centre line of the stroke
         property real thickness: 2
-        property var stops: Theme.ringColors
+        property var stops: ["#3ee8ff", "#8b6cff", "#ff4fd8", "#ffb36b"]
         readonly property real outerR: midR + thickness / 2
         preferredRendererType: Shape.CurveRenderer
         ShapePath {

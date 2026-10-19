@@ -1092,6 +1092,15 @@ Window {
         : root.shownY
 
 
+    // Settings > Buddy > Ring colour: let the buddy show off the new halo.
+    function previewBuddyRing() {
+        if (!cfg.buddyEnabled)
+            return
+        buddy.setMood("happy", 2200)
+        buddy.hop(90)
+        buddy.neonBurst(true)
+    }
+
     Buddy {
         id: buddy
         visible: cfg.buddyEnabled

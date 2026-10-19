@@ -177,6 +177,11 @@ if(NOCH_BUILD_TESTS)
     qt_add_executable(tst_stream tests/tst_stream.cpp src/StreamAccumulator.cpp src/StreamAccumulator.h)
     target_link_libraries(tst_stream PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME tst_stream COMMAND tst_stream)
+    find_package(Qt6 REQUIRED COMPONENTS Multimedia)
+    qt_add_executable(tst_buddysfx tests/tst_buddysfx.cpp src/BuddySfx.cpp src/BuddySfx.h)
+    target_link_libraries(tst_buddysfx PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Test)
+    add_test(NAME tst_buddysfx COMMAND tst_buddysfx)
+    set_tests_properties(tst_buddysfx PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
     find_package(Qt6 REQUIRED COMPONENTS Network)
     qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
         src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
