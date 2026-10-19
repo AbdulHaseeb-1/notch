@@ -33,8 +33,10 @@
 #include "NightLight.h"
 #include "OverlayController.h"
 #include "PowerActions.h"
+#include "PushToTalkKey.h"
 #include "Radios.h"
 #include "RunningApps.h"
+#include "VoiceInput.h"
 
 // Shared create(): hands QML the instance main.cpp made (C++ keeps ownership).
 template <typename T>
@@ -135,6 +137,29 @@ struct SessionsSingleton
 public:
     inline static ChatSessions *s_singletonInstance = nullptr;
     static ChatSessions *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+// Push-to-talk: the microphone / speech-to-text state machine and the key you hold.
+struct VoiceSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(VoiceInput)
+    QML_NAMED_ELEMENT(Voice)
+    QML_SINGLETON
+public:
+    inline static VoiceInput *s_singletonInstance = nullptr;
+    static VoiceInput *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+struct TalkKeySingleton
+{
+    Q_GADGET
+    QML_FOREIGN(PushToTalkKey)
+    QML_NAMED_ELEMENT(TalkKey)
+    QML_SINGLETON
+public:
+    inline static PushToTalkKey *s_singletonInstance = nullptr;
+    static PushToTalkKey *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
 struct BuddySoundSingleton

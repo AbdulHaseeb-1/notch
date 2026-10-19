@@ -57,6 +57,12 @@ qt_add_executable(noch
     src/SessionLink.cpp
     src/SessionLink.h
     src/SessionFormat.h
+    src/VoiceAudio.cpp
+    src/VoiceAudio.h
+    src/VoiceInput.cpp
+    src/VoiceInput.h
+    src/PushToTalkKey.cpp
+    src/PushToTalkKey.h
     src/ComputerUse.cpp
     src/ComputerUse.h
     src/ComputerUseWin.cpp
@@ -200,6 +206,15 @@ if(NOCH_BUILD_TESTS)
         src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_userquestions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME tst_userquestions COMMAND tst_userquestions)
+    qt_add_executable(tst_voice tests/tst_voice.cpp
+        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h
+        src/PushToTalkKey.cpp src/PushToTalkKey.h)
+    target_link_libraries(tst_voice PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
+    if(WIN32)
+        target_link_libraries(tst_voice PRIVATE user32)
+    endif()
+    add_test(NAME tst_voice COMMAND tst_voice)
+    set_tests_properties(tst_voice PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
     qt_add_executable(tst_chatsessions tests/tst_chatsessions.cpp
         src/ChatSessions.cpp src/ChatSessions.h src/SessionFormat.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_chatsessions PRIVATE Qt6::Core Qt6::Network Qt6::Test)

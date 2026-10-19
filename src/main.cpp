@@ -34,10 +34,12 @@
 #include "NightLight.h"
 #include "OverlayController.h"
 #include "PowerActions.h"
+#include "PushToTalkKey.h"
 #include "Radios.h"
 #include "RunningApps.h"
 #include "SessionLink.h"
 #include "SmtcMedia.h"
+#include "VoiceInput.h"
 
 namespace {
 
@@ -131,6 +133,11 @@ int main(int argc, char *argv[])
     auto *chatSessions = new ChatSessions(&app);
     chatSessions->setRoot(chatSessions->sessionsPath());   // loads the saved chats
     new SessionLink(chatSessions, buddyProvider, &app);     // long chats get a rolling summary
+    auto *voiceInput = new VoiceInput(&app);
+    auto *talkKey = new PushToTalkKey(&app);
+    // Hold the key: the microphone is open; let go: what was said is transcribed.
+    QObject::connect(talkKey, &PushToTalkKey::pressed, voiceInput, [voiceInput] { voiceInput->beginListening(); });
+    QObject::connect(talkKey, &PushToTalkKey::released, voiceInput, &VoiceInput::endListening);
     auto *glass = new GlassBackdrop(&app);
     auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
@@ -159,6 +166,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("buddyProvider"), buddyProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("buddySfx"), buddySfx);
     engine.rootContext()->setContextProperty(QStringLiteral("chatSessions"), chatSessions);
+    engine.rootContext()->setContextProperty(QStringLiteral("voiceInput"), voiceInput);
+    engine.rootContext()->setContextProperty(QStringLiteral("talkKey"), talkKey);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
     engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
@@ -181,6 +190,8 @@ int main(int argc, char *argv[])
     AgentControlSingleton::s_singletonInstance = buddyProvider->computer();
     BuddySoundSingleton::s_singletonInstance = buddySfx;
     SessionsSingleton::s_singletonInstance = chatSessions;
+    VoiceSingleton::s_singletonInstance = voiceInput;
+    TalkKeySingleton::s_singletonInstance = talkKey;
     BackdropSingleton::s_singletonInstance = glass;
     OpenAppsSingleton::s_singletonInstance = openApps;
     ClipboardSingleton::s_singletonInstance = clipboard;
@@ -201,6 +212,7 @@ int main(int argc, char *argv[])
     overlay->setWindow(window);
     glass->setWindow(window);
     hotkey->setWindow(window);
+    talkKey->setWindow(window);
 
     dock->syncStateSnapshot();
     QObject::connect(&app, &QCoreApplication::aboutToQuit, dock, &DockController::syncStateSnapshot);
