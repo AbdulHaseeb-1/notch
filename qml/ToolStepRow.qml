@@ -78,6 +78,7 @@ Item {
         text: row.isRunning ? qsTr("running")
             : row.status === "denied" ? qsTr("not run")
             : row.status === "pending" ? qsTr("waiting")
+            : row.status === "skipped" ? qsTr("skipped")
             : row.isError ? qsTr("failed")
             : (Theme.formatDuration(row.step.durationMs) || qsTr("done"))
         color: row.isError ? Theme.danger : row.isAttention ? Theme.warning : Theme.textFaint

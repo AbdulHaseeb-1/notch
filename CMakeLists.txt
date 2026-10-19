@@ -147,6 +147,7 @@ qt_add_qml_module(noch
         qml/BuddyResearchCard.qml
         qml/BuddyTasksCard.qml
         qml/BuddyHelpCard.qml
+        qml/BuddyQuestionCard.qml
         qml/ToolStatusIcon.qml
         qml/ToolStepRow.qml
         qml/ToolStepCard.qml
@@ -252,4 +253,15 @@ if(NOCH_BUILD_TESTS)
     add_test(NAME tst_computeruse COMMAND tst_computeruse)
     set_tests_properties(tst_computeruse PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     set_tests_properties(tst_buddyagent PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # QML component tests (tests/qml): run with Qt's qmltestrunner when it is installed.
+    find_program(NOCH_QMLTESTRUNNER NAMES qmltestrunner qmltestrunner-qt6
+                 HINTS "${Qt6_DIR}/../../../bin" "${QT6_INSTALL_PREFIX}/bin" /usr/lib/qt6/bin)
+    if(NOCH_QMLTESTRUNNER AND NOT WIN32)
+        add_test(NAME tst_qml
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/run_qml_tests.sh
+                         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/qmltests ${NOCH_QMLTESTRUNNER})
+    else()
+        message(STATUS "qmltestrunner not found (or Windows): QML tests are not registered")
+    endif()
 endif()

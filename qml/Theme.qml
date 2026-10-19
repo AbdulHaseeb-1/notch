@@ -157,12 +157,14 @@ QtObject {
              : status === "running" ? running
              : status === "denied" ? warning
              : status === "pending" ? warning
+             : status === "skipped" ? textFaint
              : success
     }
     function statusIcon(status) {
         return status === "error" ? "x-circle"
              : status === "denied" ? "shield-alert"
              : status === "pending" ? "hand"
+             : status === "skipped" ? "minus"
              : "check-circle"
     }
 

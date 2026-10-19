@@ -81,6 +81,10 @@ Item {
     signal activationRequested()
     signal planEdited(var plan)
     signal historySaved(string json)
+    // /mode asks the host to change the saved setting, so Settings stays in step.
+    signal permissionModeRequested(string mode)
+    // Send what was dictated right away, instead of leaving it in the field to check.
+    property bool voiceAutoSend: false
 
     // ---- history & conversation -------------------------------------------------
     // Every answer is kept (newest first) so it can be reopened later; the
@@ -122,11 +126,12 @@ Item {
         return s.length <= historyAnswerChars ? s : s.slice(0, historyAnswerChars) + " …"
     }
     function rememberTurn(question, answer) {
-        // The whole answer goes along: BuddyAgent shortens long turns itself,
-        // keeping their ending, instead of a blind 4000-char cut here.
-        const c = conversation.concat([{ role: "user", content: question },
-                                       { role: "assistant", content: String(answer) }])
-        conversation = c.slice(-8)
+        // The turn is saved to the current chat on disk (so it can be resumed
+        // after Noch is closed); what goes with the next question comes back
+        // from there: the chat's summary, then the newest turns word for word.
+        // BuddyAgent shortens very long turns itself, keeping their ending.
+        Sessions.appendTurn(question, String(answer))
+        conversation = Sessions.context()
     }
     // Reopen a past answer. Chat answers come straight from the record;
     // local cards (chart, research, plan, help) are rebuilt by the router.
@@ -136,6 +141,7 @@ Item {
         cancelPending()
         lastRequest = entry.q
         replyToPanel = false
+        Sessions.newChat()
         conversation = []
         if (entry.kind === "chat") {
             rememberTurn(entry.q, entry.a)
@@ -1350,10 +1356,200 @@ Item {
             setMood("listening", 0)
     }
 
-    function submit(text) {
+    // ---- slash commands ---------------------------------------------------------
+    // "/name args". Built-ins act on Buddy itself and answer locally (nothing is
+    // sent to the model, nothing lands in the chat or the history); a user's
+    // own command is expanded into its prompt and sent like any other request.
+    // Text that only looks like a path ("/usr/bin") is not a command.
+    function showLocal(title, text) {
+        awaitingReply = false
+        autoPopPending = true
+        lastRequest = title
+        const payload = { response: String(text) }
+        if (resultPanel && resultPanel.open) {
+            replyToPanel = true
+            setPanel("chat", title, payload, false)
+            return
+        }
+        replyToPanel = false
+        forgetAnswer()
+        thought.showAnswer("chat", title, payload, false)
+        session = "result"
+        setMood("happy", 1600)
+        popForward()
+    }
+    function whenText(ms) {
+        const d = new Date(Number(ms))
+        return isNaN(d.getTime()) ? "" : Qt.formatDateTime(d, "d MMM, hh:mm")
+    }
+    function slashHelp() {
+        const lines = [qsTr("**Commands**")]
+        const list = BuddyAgent.slashCommands("")
+        for (let i = 0; i < list.length; ++i) {
+            const c = list[i]
+            lines.push("- `/" + c.name + (c.argumentHint ? " " + c.argumentHint : "") + "` — " + c.description
+                       + (c.source === "builtin" ? "" : (c.source === "project" ? qsTr(" (this workspace)") : qsTr(" (yours)"))))
+        }
+        lines.push("")
+        lines.push(qsTr("Your own commands are Markdown files in `.noch/commands` of the workspace, or in Noch's data folder under `commands`."))
+        return lines.join("\n")
+    }
+    function chatList() {
+        const all = Sessions.sessions
+        if (all.length === 0)
+            return qsTr("There are no saved chats yet.")
+        const lines = [qsTr("**Chats** — type `/resume 2` to pick one up, or `/branch 2` to continue from it in a new chat.")]
+        for (let i = 0; i < all.length && i < 12; ++i) {
+            const c = all[i]
+            lines.push((i + 1) + ". " + c.title + " — " + qsTr("%n turn(s)", "", c.turns) + ", " + whenText(c.updated)
+                       + (c.current ? qsTr("  ← current") : "") + (c.parentTitle ? qsTr("  (branch of %1)").arg(c.parentTitle) : ""))
+        }
+        return lines.join("\n")
+    }
+    // "2", or the start of an id or title. Returns the chat's id, or "".
+    function chatByArg(arg) {
+        const all = Sessions.sessions
+        const a = String(arg || "").trim().toLowerCase()
+        if (a.length === 0)
+            return ""
+        if (/^\d+$/.test(a)) {
+            const n = parseInt(a, 10) - 1
+            return n >= 0 && n < all.length ? all[n].id : ""
+        }
+        for (let i = 0; i < all.length; ++i)
+            if (String(all[i].id).toLowerCase().indexOf(a) === 0 || String(all[i].title).toLowerCase().indexOf(a) === 0)
+                return all[i].id
+        return ""
+    }
+    // Show where a chat stands: its last exchange, so it is clear what was picked up.
+    function showResumed(prefix) {
+        conversation = Sessions.context()
+        const last = Sessions.lastTurn()
+        if (!last || !last.q) {
+            showLocal(Sessions.currentTitle, prefix)
+            return
+        }
+        showLocal(Sessions.currentTitle, prefix + "\n\n**" + last.q + "**\n\n" + last.a)
+        lastRequest = last.q
+    }
+    function instructionsText() {
+        const ins = BuddyAgent.projectInstructions()
+        if (ins.empty)
+            return qsTr("Buddy is not reading any instruction files here. `/init` creates a NOCH.md in this workspace.")
+        const lines = [qsTr("**Buddy is reading**")]
+        for (let i = 0; i < ins.sources.length; ++i) {
+            const src = ins.sources[i]
+            lines.push("- " + src.name + " — " + Math.round(src.bytes / 102.4) / 10 + " KB" + (src.truncated ? qsTr(" (cut short)") : ""))
+        }
+        if (ins.truncated)
+            lines.push(qsTr("Some of it was too long and is cut short."))
+        return lines.join("\n")
+    }
+    function runSlash(cmd, typed) {
+        if (cmd.kind === "prompt") {
+            submit(cmd.prompt, true)
+            return
+        }
+        if (cmd.kind === "unknown") {
+            showLocal(typed, cmd.message)
+            return
+        }
+        const args = String(cmd.args || "").trim()
+        switch (cmd.name) {
+        case "help":
+            showLocal(qsTr("Commands"), slashHelp())
+            break
+        case "new":
+            cancelPending()
+            Sessions.newChat()
+            conversation = []
+            note(qsTr("New chat"), "spark")
+            break
+        case "resume": {
+            if (args.length === 0) {
+                showLocal(qsTr("Chats"), chatList())
+                break
+            }
+            const id = chatByArg(args)
+            if (id.length === 0 || !Sessions.open(id)) {
+                showLocal(typed, qsTr("I couldn't find that chat.") + "\n\n" + chatList())
+                break
+            }
+            showResumed(qsTr("Picked up where you left off."))
+            break
+        }
+        case "branch": {
+            const from = args.length > 0 ? chatByArg(args) : ""
+            if (args.length > 0 && from.length === 0) {
+                showLocal(typed, qsTr("I couldn't find that chat.") + "\n\n" + chatList())
+                break
+            }
+            if (from.length === 0 && Sessions.currentTurns === 0) {
+                showLocal(typed, qsTr("There is nothing to branch from yet. Ask something first, or pick a chat: `/branch 2`."))
+                break
+            }
+            if (Sessions.branch(from).length === 0) {
+                showLocal(typed, qsTr("I couldn't branch that chat."))
+                break
+            }
+            showResumed(qsTr("Branched into a new chat. The original is unchanged."))
+            break
+        }
+        case "compact":
+            if (Sessions.requestSummary())
+                note(qsTr("Summarizing this chat…"), "spark")
+            else
+                note(qsTr("Nothing to summarize yet"), "check")
+            break
+        case "undo": {
+            const force = args.toLowerCase() === "force"
+            const r = BuddyAgent.undoLastRun(force)
+            let msg = r.message
+            if (!force && r.conflicts && r.conflicts.length > 0)
+                msg += "\n\n" + qsTr("Files you changed since are left as they are. `/undo force` puts the old versions back anyway.")
+            showLocal(typed, msg)
+            break
+        }
+        case "mode": {
+            const names = { "ask": "default", "default": "default", "auto-edit": "acceptEdits", "acceptedits": "acceptEdits",
+                            "plan": "plan", "trusted": "bypass", "bypass": "bypass" }
+            const labels = { "default": qsTr("Ask first"), "acceptEdits": qsTr("Auto-edit"), "plan": qsTr("Plan only"), "bypass": qsTr("Trusted — no prompts") }
+            if (args.length === 0) {
+                showLocal(typed, qsTr("Buddy is in **%1** mode. Change it with `/mode ask`, `/mode auto-edit`, `/mode plan` or `/mode trusted`.")
+                          .arg(labels[BuddyAgent.permissionMode] || BuddyAgent.permissionMode))
+                break
+            }
+            const target = names[args.toLowerCase()]
+            if (!target) {
+                showLocal(typed, qsTr("Modes are: ask, auto-edit, plan, trusted."))
+                break
+            }
+            permissionModeRequested(target)
+            note(qsTr("Mode: %1").arg(labels[target]), "check")
+            break
+        }
+        case "init":
+            showLocal(typed, BuddyAgent.initProjectInstructions().message)
+            break
+        case "instructions":
+            showLocal(typed, instructionsText())
+            break
+        default:
+            showLocal(typed, qsTr("I don't know how to run /%1.").arg(cmd.name))
+        }
+    }
+
+    function submit(text, plain) {
         const trimmed = String(text || "").trim()
         if (trimmed.length === 0 || session === "thinking")
             return
+        if (!plain && trimmed.charAt(0) === "/" && BuddyAgent) {
+            const cmd = BuddyAgent.resolveSlash(trimmed)
+            if (cmd.kind !== "none") {
+                runSlash(cmd, trimmed)
+                return
+            }
+        }
         lastRequest = trimmed
         forgetAnswer()
         autoPopPending = true
@@ -1848,6 +2044,37 @@ Item {
     }
 
     // ---- real chat provider -------------------------------------------------
+    // Push-to-talk. What was said goes into the field, ready to check and send;
+    // with "send right away" on, it is sent as it is. The words are only ever
+    // text from here on: the audio stays inside VoiceInput.
+    function voiceHeard(text) {
+        const said = String(text || "").trim()
+        if (said.length === 0)
+            return
+        // While a request is running the words have nowhere to go; a note would
+        // cut that request's reply off, so they are dropped.
+        if (busy || session === "thinking") {
+            if (BuddySound)
+                BuddySound.play("dismiss")
+            return
+        }
+        if (voiceAutoSend) {
+            submit(said)
+            return
+        }
+        if (!(thought.visible && thought.phase === "input"))
+            openPrompt()
+        Qt.callLater(function () { thought.insertText(said) })
+    }
+    Connections {
+        target: Voice
+        function onTranscript(text) { buddy.voiceHeard(text) }
+        function onFailed(message) {
+            if (message.length > 0 && !buddy.busy)
+                buddy.note(message, "mic-off")
+        }
+    }
+
     // Only the request the buddy is still waiting for may answer; a reply to
     // a question that was closed or superseded is dropped.
     Connections {
@@ -1886,7 +2113,25 @@ Item {
                 if (BuddySound)
                     BuddySound.play("pop")
             }
-            approvalNudge.running = waiting && buddy.visible && !buddy.motionPaused
+            buddy.refreshNudge()
+        }
+        // Buddy has a question for the user: the same perk-up and nudging as
+        // for an approval, once per question (the countdown republishes it
+        // every second).
+        function onPendingQuestionChanged() {
+            const p = BuddyAgent.pendingQuestion
+            const asking = !!(p && p.id !== undefined)
+            if (asking && !buddy.questionShown) {
+                buddy.questionShown = true
+                buddy.wake()
+                buddy.react("curious", 1100, 4, 70)
+                buddy.lookAtBubble(24, 4)
+                if (BuddySound)
+                    BuddySound.play("pop")
+            } else if (!asking) {
+                buddy.questionShown = false
+            }
+            buddy.refreshNudge()
         }
         function onToolStepsChanged() {
             const steps = BuddyAgent.toolSteps || []
@@ -1910,6 +2155,14 @@ Item {
     }
 
     property string lastErrorStep: ""
+    property bool questionShown: false
+    // Nudge every few seconds while something waits on the user.
+    function refreshNudge() {
+        const a = BuddyAgent ? BuddyAgent.pendingApproval : null
+        const q = BuddyAgent ? BuddyAgent.pendingQuestion : null
+        const waiting = !!((a && a.id !== undefined) || (q && q.id !== undefined))
+        approvalNudge.running = waiting && buddy.visible && !buddy.motionPaused
+    }
     Timer {
         id: approvalNudge
         interval: 6000

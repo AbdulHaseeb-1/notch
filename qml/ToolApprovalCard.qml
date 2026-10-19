@@ -228,6 +228,23 @@ Rectangle {
             elide: Text.ElideRight
         }
 
+        // What "Always allow" would really do: save this narrow rule, or (when
+        // no safe rule exists) allow the tool until Noch is restarted.
+        Text {
+            width: parent.width
+            visible: String(card.request.alwaysLabel || "").length > 0
+            text: card.request.alwaysSaved
+                  ? qsTr("“Always allow” saves: %1").arg(String(card.request.alwaysLabel))
+                  : qsTr("“Always allow” covers %1").arg(String(card.request.alwaysLabel))
+            color: Theme.textFaint
+            font.family: Theme.font
+            font.pixelSize: Theme.fontXs
+            wrapMode: Text.WrapAnywhere
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+        }
+
         Row {
             anchors.right: parent.right
             spacing: 6

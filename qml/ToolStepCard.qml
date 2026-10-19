@@ -101,6 +101,7 @@ Rectangle {
                     text: card.isRunning ? qsTr("running")
                         : card.isPending ? qsTr("needs approval")
                         : card.status === "denied" ? qsTr("not run")
+                        : card.status === "skipped" ? qsTr("skipped")
                         : Theme.formatDuration(card.step.durationMs)
                     color: Theme.textFaint
                     font.family: Theme.monoFont

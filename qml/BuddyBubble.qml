@@ -47,6 +47,9 @@ Item {
     readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
     readonly property var pendingApproval: (BuddyAgent) ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    // Buddy is asking the user a multiple-choice question (ask_user_question).
+    readonly property var pendingQuestion: (BuddyAgent) ? BuddyAgent.pendingQuestion : ({})
+    readonly property bool awaitingQuestion: pendingQuestion && pendingQuestion.id !== undefined
     // Specialist currently in charge (handoffs), "" for Buddy itself.
     readonly property string specialist: (BuddyAgent
                                           && BuddyAgent.activeAgent !== "buddy")
@@ -131,6 +134,17 @@ Item {
         noteTimer.stop()
         present("input")
         Qt.callLater(focusInput)
+    }
+    // Dictated words go where the caret is, with a space between them and what was typed.
+    function insertText(t) {
+        const add = String(t || "").trim()
+        if (add.length === 0)
+            return
+        const before = field.text.slice(0, field.cursorPosition)
+        const lead = before.length > 0 && !/\s$/.test(before) ? " " : ""
+        field.insert(field.cursorPosition, lead + add)
+        field.forceActiveFocus()
+        field.deselect()
     }
     function focusInput() {
         field.forceActiveFocus()
@@ -281,7 +295,7 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: (awaitingApproval || hasLive || (hasTools && specialist.length > 0)) ? 460
+    readonly property real thinkW: (awaitingApproval || awaitingQuestion || hasLive || (hasTools && specialist.length > 0)) ? 460
                                  : (hasTools || activeToolSummary.length > 0)
                                  ? 420
                                  : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
@@ -289,6 +303,7 @@ Item {
                                  ? (rowH + Math.min(toolSteps.length, 4) * 31 + 10)
                                  : rowH)
                                  + (awaitingApproval ? approvalCard.implicitHeight + 10 : 0)
+                                 + (awaitingQuestion ? questionCard.implicitHeight + 10 : 0)
                                  + (hasLive ? liveH + 6 : 0)
     readonly property real noteW: 46 + noteLabel.implicitWidth + 18
     readonly property real errorH: 16 + errText.implicitHeight + 12 + 28 + 14
@@ -744,6 +759,52 @@ Item {
         }
     }
 
+    // Press and hold to dictate; the words land in the text field. The ring
+    // follows how loud you are, so it is clear the microphone is listening.
+    component MicButton: Item {
+        id: mb
+        readonly property bool listening: Voice.listening
+        readonly property bool working: Voice.busy
+        visible: Voice.enabled
+        width: visible ? 28 : 0
+        height: 28
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 26
+            height: 26
+            radius: 13
+            color: mb.listening ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.22)
+                                : (micHit.containsMouse ? Theme.hover : "transparent")
+            border.width: mb.listening ? 1 : 0
+            border.color: Theme.danger
+            scale: mb.listening ? 1 + 0.35 * Math.min(1, Voice.level) : 1
+            Behavior on scale { NumberAnimation { duration: 90 } }
+            Behavior on color { ColorAnimation { duration: 120 } }
+        }
+        Glyph {
+            anchors.centerIn: parent
+            name: Voice.configured ? "mic" : "mic-off"
+            size: 14
+            stroke: 1.7
+            color: mb.listening ? Theme.danger : (mb.working ? Theme.accent : (micHit.containsMouse ? Theme.ink : Theme.textFaint))
+            opacity: mb.working ? 0.55 : 1
+        }
+        MouseArea {
+            id: micHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Hold to talk")
+            Accessible.description: Voice.error.length > 0 ? Voice.error
+                                    : (Voice.configured ? "" : qsTr("Voice input needs a speech service: Settings > Buddy"))
+            onPressed: Voice.beginListening()
+            onReleased: Voice.endListening()
+            onCanceled: Voice.cancel()
+        }
+    }
+
     component SendButton: Item {
         id: sb
         property bool active: false
@@ -960,7 +1021,7 @@ Item {
                     id: field
                     anchors.left: parent.left
                     anchors.leftMargin: 38
-                    anchors.right: histBtn.left
+                    anchors.right: micBtn.left
                     anchors.rightMargin: 2
                     anchors.verticalCenter: parent.verticalCenter
                     color: Theme.ink
@@ -1003,6 +1064,12 @@ Item {
                     }
                 }
 
+                // Hold to talk. Only there once voice input is switched on in Settings.
+                MicButton {
+                    id: micBtn
+                    anchors.right: histBtn.left
+                    anchors.verticalCenter: parent.verticalCenter
+                }
                 IconButton {
                     id: histBtn
                     anchors.right: sendBtn.left
@@ -1528,6 +1595,25 @@ Item {
                             BuddyAgent.resolveApproval(approve, always)
                     }
                 }
+
+                // Buddy would rather ask than guess.
+                BuddyQuestionCard {
+                    id: questionCard
+                    x: 10
+                    y: tb.hasTools ? tb.rowH + 4 + Math.min(tb.toolSteps.length, 4) * 31 + 4 : tb.rowH
+                    width: parent.width - 20
+                    maxCardHeight: Math.max(160, tb.maxH - 120)
+                    visible: tb.awaitingQuestion && tb.phase === "thinking"
+                    request: tb.pendingQuestion
+                    onAnswered: (answers) => {
+                        if (BuddyAgent)
+                            BuddyAgent.answerQuestion(answers)
+                    }
+                    onSkipped: {
+                        if (BuddyAgent)
+                            BuddyAgent.skipQuestion()
+                    }
+                }
             }
 
             // ---- chat answer ---------------------------------------------------
@@ -1553,6 +1639,7 @@ Item {
                     ToolTraceBar {
                         id: toolSummaryBar
                         width: parent.width
+                        undoSource: BuddyAgent
                         steps: tb.toolSteps
                         icons: tb.distinctToolIcons
                         durationMs: tb.responseMeta ? Number(tb.responseMeta.durationMs || 0) : 0

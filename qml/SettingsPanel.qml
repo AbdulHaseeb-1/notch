@@ -2014,6 +2014,53 @@ Item {
 
                         ToggleRow {
                             visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
+                            label: qsTr("Use Claude's own computer tools")
+                            sub: qsTr("The tools Claude was trained on: more reliable, several actions per step, sharper screenshots. No extra fee, but they add about 4,500 input tokens to each request while computer use is on (cached after the first). Older models fall back to the previous tools by themselves.")
+                            checked: panel.prefs.buddyOfficialComputer
+                            onToggled: (c) => panel.prefs.buddyOfficialComputer = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer }
+
+                        Column {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
+                            width: parent.width
+                            spacing: 6
+
+                            Text {
+                                width: parent.width
+                                text: qsTr("Screenshot detail")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+                            Segmented {
+                                width: parent.width
+                                height: 34
+                                options: [
+                                    { label: qsTr("Sharp"), value: "sharp" },
+                                    { label: qsTr("Standard"), value: "standard" }
+                                ]
+                                value: panel.prefs.buddyComputerDetail
+                                onPicked: (v) => panel.prefs.buddyComputerDetail = v
+                            }
+                            Text {
+                                width: parent.width
+                                text: panel.prefs.buddyComputerDetail === "standard"
+                                      ? qsTr("Smaller screenshots: cheaper and faster, harder to read fine print.")
+                                      : qsTr("Larger screenshots (up to 1920×1080): small text and icons are easier to read, at a few thousand more tokens per screenshot.")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowComputer
                             label: qsTr("Show Buddy's cursor")
                             sub: qsTr("Draw Buddy's own pointer gliding to each target, with click ripples, drag trails and a typing indicator. It never takes focus or blocks your own pointer.")
                             checked: panel.prefs.buddyCuShowCursor
@@ -2106,6 +2153,278 @@ Item {
                             sub: qsTr("Anthropic TodoWrite live task tracker, Windows clipboard read/write, and live CPU/RAM/display telemetry.")
                             checked: panel.prefs.buddyAllowTodoTask
                             onToggled: (c) => panel.prefs.buddyAllowTodoTask = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Ask me questions")
+                            sub: qsTr("When a request is unclear, Buddy can show a few choices to tap instead of guessing. Unanswered questions are skipped after a couple of minutes.")
+                            checked: panel.prefs.buddyAllowAskUser
+                            onToggled: (c) => panel.prefs.buddyAllowAskUser = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyAgentMode }
+
+                        Column {
+                            visible: panel.prefs.buddyAgentMode
+                            width: parent.width
+                            spacing: 6
+
+                            Text {
+                                width: parent.width
+                                text: qsTr("Steps per task")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+                            Segmented {
+                                width: parent.width
+                                height: 34
+                                options: [
+                                    { label: "20", value: 20 },
+                                    { label: "40", value: 40 },
+                                    { label: "70", value: 70 },
+                                    { label: "100", value: 100 }
+                                ]
+                                value: panel.prefs.buddyMaxSteps
+                                onPicked: (v) => panel.prefs.buddyMaxSteps = v
+                            }
+                            Text {
+                                width: parent.width
+                                text: qsTr("How many tool steps Buddy may take for one request before it stops and reports back. Repeating the same action over and over is stopped sooner.")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    // ---- saved "always allow" rules ------------------------------
+                    SectionHeader {
+                        visible: panel.prefs.buddyAgentMode
+                        title: qsTr("Always-allow rules")
+                        rightText: BuddyAgent && BuddyAgent.savedRules.length > 0
+                                   ? qsTr("%n saved", "", BuddyAgent.savedRules.length) : ""
+                    }
+
+                    GroupCard {
+                        visible: panel.prefs.buddyAgentMode
+
+                        Text {
+                            width: parent.width
+                            text: BuddyAgent && BuddyAgent.savedRules.length > 0
+                                  ? qsTr("These run without asking. Choosing “Always allow” on an approval adds a rule here; it covers only what it says. Hard stops, such as destructive commands and system folders, are never skipped.")
+                                  : qsTr("Nothing saved yet. When Buddy asks first, “Always allow” can remember a narrow rule here, such as “run git status” or “edit files in this folder”.")
+                            color: Theme.textDim
+                            font.family: Theme.font
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: BuddyAgent ? BuddyAgent.savedRules : []
+
+                            Item {
+                                id: ruleRow
+                                required property var modelData
+                                width: parent.width
+                                implicitHeight: Math.max(34, ruleText.implicitHeight + 10)
+
+                                Text {
+                                    id: ruleText
+                                    anchors.left: parent.left
+                                    anchors.right: ruleRemove.left
+                                    anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: ruleRow.modelData.label
+                                    color: Theme.ink
+                                    font.family: Theme.font
+                                    font.pixelSize: 12
+                                    font.weight: Font.Medium
+                                    wrapMode: Text.WordWrap
+                                }
+                                SmallPillButton {
+                                    id: ruleRemove
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    label: qsTr("Remove")
+                                    icon: "trash"
+                                    onClicked: BuddyAgent.removeSavedRule(ruleRow.modelData.id)
+                                }
+                            }
+                        }
+
+                        SmallPillButton {
+                            visible: BuddyAgent && BuddyAgent.savedRules.length > 1
+                            label: qsTr("Remove all")
+                            danger: true
+                            onClicked: BuddyAgent.clearSavedRules()
+                        }
+                    }
+
+                    // ---- instruction files and slash commands --------------------
+                    SectionHeader {
+                        visible: panel.prefs.buddyAgentMode
+                        title: qsTr("Instructions & commands")
+                    }
+
+                    GroupCard {
+                        id: instructionsCard
+                        visible: panel.prefs.buddyAgentMode
+                        property var found: ({ empty: true, sources: [] })
+                        property string note: ""
+                        function refresh() {
+                            if (BuddyAgent)
+                                found = BuddyAgent.projectInstructions()
+                        }
+                        Component.onCompleted: refresh()
+                        // The workspace can change while Settings is open.
+                        Connections {
+                            target: panel.prefs
+                            function onBuddyWorkspaceRootChanged() { instructionsCard.refresh() }
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: instructionsCard.found.empty
+                                  ? qsTr("Buddy is not reading any instruction file in this workspace.")
+                                  : qsTr("Buddy reads, on every run:")
+                            color: Theme.ink
+                            font.family: Theme.font
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: instructionsCard.found.sources || []
+
+                            Text {
+                                required property var modelData
+                                width: parent.width
+                                text: "• " + modelData.name + (modelData.truncated ? qsTr(" (cut short)") : "")
+                                color: Theme.textDim
+                                font.family: Theme.font
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            text: qsTr("Put standing instructions in a NOCH.md in the workspace folder (AGENTS.md and CLAUDE.md work too). Your own commands are Markdown files in .noch/commands; type / in the chat to list them. Buddy always asks before changing one of these files.")
+                            color: Theme.textDim
+                            font.family: Theme.font
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            visible: instructionsCard.note.length > 0
+                            width: parent.width
+                            text: instructionsCard.note
+                            color: Theme.textDim
+                            font.family: Theme.font
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+
+                        SmallPillButton {
+                            visible: instructionsCard.found.empty
+                            label: qsTr("Create NOCH.md")
+                            icon: "plus"
+                            onClicked: {
+                                instructionsCard.note = BuddyAgent.initProjectInstructions().message
+                                instructionsCard.refresh()
+                            }
+                        }
+                    }
+
+                    // ---- push-to-talk voice --------------------------------------
+                    SectionHeader {
+                        title: qsTr("Voice input")
+                        rightText: Voice.enabled ? (Voice.configured ? qsTr("Ready") : qsTr("Needs setup")) : qsTr("Off")
+                    }
+
+                    GroupCard {
+                        ToggleRow {
+                            label: qsTr("Push-to-talk")
+                            sub: qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold, kept in memory, and sent to the speech service below, over https or to this computer only. Nothing is stored.")
+                            checked: panel.prefs.buddyVoiceEnabled
+                            onToggled: (c) => panel.prefs.buddyVoiceEnabled = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyVoiceEnabled }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            label: qsTr("Shortcut: hold %1").arg(TalkKey.shortcut.length > 0 ? TalkKey.shortcut : "Ctrl+Alt+Space")
+                            sub: TalkKey.registered || !panel.prefs.buddyVoiceHotkey
+                                 ? qsTr("Talk without clicking, from any app.")
+                                 : qsTr("Another app is using this shortcut, or this system does not support it. The microphone button still works.")
+                            checked: panel.prefs.buddyVoiceHotkey
+                            onToggled: (c) => panel.prefs.buddyVoiceHotkey = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyVoiceEnabled }
+
+                        ToggleRow {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            label: qsTr("Send right away")
+                            sub: qsTr("Send what you said without waiting for you to check it first.")
+                            checked: panel.prefs.buddyVoiceAutoSend
+                            onToggled: (c) => panel.prefs.buddyVoiceAutoSend = c
+                        }
+
+                        CardDivider { visible: panel.prefs.buddyVoiceEnabled }
+
+                        FieldBox {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            width: parent.width
+                            label: qsTr("Speech service address")
+                            placeholder: "https://api.openai.com/v1"
+                            hint: Voice.addressProblem().length > 0 ? Voice.addressProblem()
+                                  : qsTr("Any service with an OpenAI-style /audio/transcriptions endpoint, including one running on this computer.")
+                            mono: true
+                            text: panel.prefs.buddyVoiceBase
+                            onEdited: (v) => panel.prefs.buddyVoiceBase = v
+                        }
+
+                        FieldBox {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            width: parent.width
+                            label: qsTr("Speech service key")
+                            placeholder: qsTr("Needed unless the service runs on this computer")
+                            hint: qsTr("Kept only for this service. Your chat key is never sent to it.")
+                            secret: true
+                            mono: true
+                            text: panel.prefs.buddyVoiceKey
+                            onEdited: (v) => panel.prefs.buddyVoiceKey = v
+                        }
+
+                        FieldBox {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            width: parent.width
+                            label: qsTr("Model")
+                            placeholder: "whisper-1"
+                            mono: true
+                            text: panel.prefs.buddyVoiceModel
+                            onEdited: (v) => panel.prefs.buddyVoiceModel = v
+                        }
+
+                        FieldBox {
+                            visible: panel.prefs.buddyVoiceEnabled
+                            width: parent.width
+                            label: qsTr("Language (optional)")
+                            placeholder: qsTr("Detect automatically")
+                            hint: qsTr("A two-letter code such as en or de makes recognition faster and steadier.")
+                            mono: true
+                            text: panel.prefs.buddyVoiceLanguage
+                            onEdited: (v) => panel.prefs.buddyVoiceLanguage = v
                         }
                     }
 

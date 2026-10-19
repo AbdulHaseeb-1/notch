@@ -41,11 +41,13 @@ Item {
     property real bodyH: 356
     readonly property var pendingApproval: BuddyAgent ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    readonly property var pendingQuestion: BuddyAgent ? BuddyAgent.pendingQuestion : ({})
+    readonly property bool awaitingQuestion: pendingQuestion && pendingQuestion.id !== undefined
     readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
                                        ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "loading"
     // Room the loading view gives up for approval cards or live text.
-    readonly property bool compactLoading: awaitingApproval || hasLive
+    readonly property bool compactLoading: awaitingApproval || awaitingQuestion || hasLive
     property bool userResized: false
     readonly property bool interacting: dragHit.pressed || resizeHit.pressed
 
@@ -351,7 +353,7 @@ Item {
                     width: parent.width
                     visible: panel.kind === "chat"
                     text: panel.phase === "loading"
-                          ? (panel.awaitingApproval ? qsTr("Paused on one step")
+                          ? (panel.awaitingQuestion ? qsTr("Waiting for your answer") : panel.awaitingApproval ? qsTr("Paused on one step")
                              : panel.hasLive ? qsTr("Answering live")
                              : (BuddyAgent.activeAgent !== "buddy" && BuddyAgent.activeAgentTitle.length > 0)
                                ? qsTr("%1 is on it").arg(BuddyAgent.activeAgentTitle)
@@ -390,7 +392,7 @@ Item {
                     id: chipLabel
                     anchors.centerIn: parent
                     text: panel.phase === "error" ? qsTr("Failed")
-                        : (panel.phase === "loading" ? (panel.awaitingApproval ? qsTr("Needs you") : panel.hasLive ? qsTr("Writing…") : qsTr("Thinking…"))
+                        : (panel.phase === "loading" ? (panel.awaitingApproval || panel.awaitingQuestion ? qsTr("Needs you") : panel.hasLive ? qsTr("Writing…") : qsTr("Thinking…"))
                         : (panel.isStreaming ? qsTr("Live") : qsTr("Ready")))
                     color: panel.phase === "error" ? Theme.danger
                         : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.success)
@@ -652,6 +654,17 @@ Item {
                         request: panel.pendingApproval
                         onDecided: (approve, always) => BuddyAgent.resolveApproval(approve, always)
                     }
+
+                    // Buddy would rather ask than guess.
+                    BuddyQuestionCard {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: panel.width_ - 48
+                        maxCardHeight: Math.max(160, panel.bodyH - 60)
+                        visible: panel.awaitingQuestion
+                        request: panel.pendingQuestion
+                        onAnswered: (answers) => BuddyAgent.answerQuestion(answers)
+                        onSkipped: BuddyAgent.skipQuestion()
+                    }
                 }
             }
 
@@ -801,6 +814,7 @@ Item {
 
                         ToolTraceBar {
                             width: parent.width
+                            undoSource: BuddyAgent
                             steps: panel.toolSteps
                             icons: panel.distinctToolIcons
                             durationMs: panel.responseMeta ? Number(panel.responseMeta.durationMs || 0) : 0

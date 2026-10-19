@@ -11,6 +11,22 @@ Rectangle {
     property bool expanded: false
     signal toggled()
 
+    // Undo for the files the run changed. `undoSource` is the agent (anything
+    // with lastRunChanges and undoLastRun(force)); without one there is no button.
+    property var undoSource: null
+    readonly property var changes: undoSource && undoSource.lastRunChanges ? undoSource.lastRunChanges : ({})
+    readonly property int changedCount: changes && changes.count ? Number(changes.count) : 0
+    // What the last undo said ("Restored 2 files."), and whether some files were left alone.
+    property string undoNote: ""
+    property bool undoLeftFiles: false
+    function undo() {
+        if (!undoSource)
+            return
+        const r = undoSource.undoLastRun(undoLeftFiles)
+        undoNote = String(r.message || "")
+        undoLeftFiles = !!(r.conflicts && r.conflicts.length > 0)
+    }
+
     readonly property int failed: {
         let n = 0
         for (let i = 0; i < (steps ? steps.length : 0); ++i)
@@ -21,6 +37,13 @@ Rectangle {
         let n = 0
         for (let i = 0; i < (steps ? steps.length : 0); ++i)
             if (steps[i].status === "denied") ++n
+        return n
+    }
+
+    readonly property int skipped: {
+        let n = 0
+        for (let i = 0; i < (steps ? steps.length : 0); ++i)
+            if (steps[i].status === "skipped") ++n
         return n
     }
 
@@ -51,17 +74,20 @@ Rectangle {
     Text {
         anchors.left: lead.right
         anchors.leftMargin: 9
-        anchors.right: tail.left
+        anchors.right: undoChip.visible ? undoChip.left : tail.left
         anchors.rightMargin: 8
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
         text: {
+            if (bar.undoNote.length > 0 && bar.changedCount === 0)
+                return bar.undoNote
             const n = bar.steps ? bar.steps.length : 0
             let s = n === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(n)
             const d = Theme.formatDuration(bar.durationMs)
             if (d.length) s += "  ·  " + d
             if (bar.failed > 0) s += "  ·  " + qsTr("%1 failed").arg(bar.failed)
             if (bar.blocked > 0) s += "  ·  " + qsTr("%1 not run").arg(bar.blocked)
+            if (bar.skipped > 0) s += "  ·  " + qsTr("%1 skipped").arg(bar.skipped)
             return s
         }
         color: bar.failed + bar.blocked > 0 ? Theme.inkSoft : Theme.textDim
@@ -69,6 +95,44 @@ Rectangle {
         font.pixelSize: Theme.fontSm
         font.weight: Font.Medium
         elide: Text.ElideRight
+    }
+
+    // "Undo 3 files": puts back what this run changed. If you changed some of
+    // them since, they are left alone and the button offers to override that.
+    Rectangle {
+        id: undoChip
+        objectName: "undoChip"
+        visible: bar.undoSource !== null && bar.changedCount > 0
+        z: 1          // above the bar's own click area, which is declared after it
+        anchors.right: tail.left
+        anchors.rightMargin: 8
+        anchors.verticalCenter: parent.verticalCenter
+        height: 20
+        width: undoLabel.implicitWidth + 16
+        radius: 10
+        color: undoHit.pressed ? Theme.press : (undoHit.containsMouse ? Theme.hover : "transparent")
+        border.width: 1
+        border.color: Theme.glassBorderStrong
+        Text {
+            id: undoLabel
+            anchors.centerIn: parent
+            text: bar.undoLeftFiles ? qsTr("Undo anyway")
+                  : (bar.changedCount === 1 ? qsTr("Undo 1 file") : qsTr("Undo %1 files").arg(bar.changedCount))
+            color: Theme.ink
+            font.family: Theme.font
+            font.pixelSize: Theme.fontSm
+            font.weight: Font.DemiBold
+        }
+        MouseArea {
+            id: undoHit
+            objectName: "undoHit"
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.Button
+            Accessible.name: undoLabel.text
+            onClicked: bar.undo()
+        }
     }
 
     Row {
