@@ -17,6 +17,7 @@
 #include <QVariantMap>
 
 #include "AgentPolicy.h"
+#include "ComputerUse.h"
 #include "StreamAccumulator.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
@@ -80,6 +81,8 @@ class BuddyProvider : public QObject
     // Streaming (SSE) replies: streamText is the answer text of the model
     // turn in flight, updated live (coalesced to ~25 fps, secrets redacted).
     Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
+    // Agent cursor / edge glow / control HUD state for computer use.
+    Q_PROPERTY(ComputerUse *computer READ computer CONSTANT)
     Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
     Q_PROPERTY(bool streaming READ streaming NOTIFY streamTextChanged)
     // Handoffs (OpenAI Agents SDK style): Buddy can transfer the run to a
@@ -101,6 +104,9 @@ class BuddyProvider : public QObject
     Q_PROPERTY(QVariantList citations READ citations NOTIFY responseMetaChanged)
 
 public:
+    ComputerUse *computer() const { return m_computer; }
+    // Tests pin the monitor layout instead of reading it from Qt.
+    void setComputerAutoScreens(bool on) { m_computerAutoScreens = on; m_computer->setAutoScreens(on); }
     explicit BuddyProvider(QObject *parent = nullptr);
 
     QString provider() const { return m_provider; }
@@ -314,6 +320,8 @@ private:
     void onStreamReadyRead();
     void setStreamText(const QString &text, bool live);
     bool m_streamReplies = true;
+    ComputerUse *m_computer = nullptr;
+    bool m_computerAutoScreens = true;
     StreamAccumulator m_stream;
     bool m_streamConsumed = false;    // this reply's body is being parsed as SSE
     bool m_streamingNow = false;

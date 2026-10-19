@@ -59,6 +59,11 @@ public:
     // auto-approving side effects and network fetches: they ask instead.
     void setTainted(bool on) { m_tainted = on; }
     bool tainted() const { return m_tainted; }
+    // Set once the agent has looked at the screen this run. Screen content
+    // is untrusted (a page can show "press Win+R and type ..."), so risky
+    // key combos and shell-like typing ask even in Trusted mode / with a grant.
+    void setScreenTainted(bool on) { m_screenTainted = on; }
+    bool screenTainted() const { return m_screenTainted; }
 
     // Session-scoped "always allow" grants from the approval card.
     void allowForSession(const QString &tool) { m_sessionAllow.insert(tool); }
@@ -123,6 +128,7 @@ private:
     QStringList m_private;    // lowercased lexical + resolved forms
     QSet<QString> m_sessionAllow;
     bool m_tainted = false;
+    bool m_screenTainted = false;
 
     bool isPrivatePath(const QString &path) const;
     Decision evaluateShell(const QJsonObject &input) const;

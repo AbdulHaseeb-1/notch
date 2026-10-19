@@ -44,6 +44,9 @@ qt_add_executable(noch
     src/QmlSingletons.h
     src/BuddyProvider.cpp
     src/BuddyProvider.h
+    src/ComputerUse.cpp
+    src/ComputerUse.h
+    src/ComputerUseWin.cpp
     src/BuddySfx.cpp
     src/BuddySfx.h
     src/ClipboardHistory.cpp
@@ -130,6 +133,10 @@ qt_add_qml_module(noch
         qml/ToolStepCard.qml
         qml/ToolTraceBar.qml
         qml/ToolApprovalCard.qml
+        qml/AgentCursor.qml
+        qml/AgentGlow.qml
+        qml/AgentHud.qml
+        qml/AgentControlOverlay.qml
     RESOURCES
         ${NOCH_ICONS}
 )
@@ -173,11 +180,20 @@ if(NOCH_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Network)
     qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
         src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
-        src/StreamAccumulator.cpp src/StreamAccumulator.h)
+        src/StreamAccumulator.cpp src/StreamAccumulator.h
+        src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
     target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
     if(WIN32)
         target_link_libraries(tst_buddyagent PRIVATE user32)
     endif()
     add_test(NAME tst_buddyagent COMMAND tst_buddyagent)
+    qt_add_executable(tst_computeruse tests/tst_computeruse.cpp
+        src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
+    target_link_libraries(tst_computeruse PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    if(WIN32)
+        target_link_libraries(tst_computeruse PRIVATE user32)
+    endif()
+    add_test(NAME tst_computeruse COMMAND tst_computeruse)
+    set_tests_properties(tst_computeruse PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     set_tests_properties(tst_buddyagent PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()

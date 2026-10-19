@@ -23,8 +23,8 @@ Modelled on the Claude Agent SDK permission flow
    `.git/hooks`. Symlinks are followed before the path check.
 4. **Read-only fast path.** Read-only shell commands (`ls`, `dir`, `cat`,
    `git status/log/diff`, `Get-ChildItem`, … with no redirects, substitution
-   or `tee`), editor `view`, observing computer actions (screenshot, cursor
-   position, wait), memory, search, todo and advisor run without asking.
+   or `tee`), editor `view`, observing computer actions (screenshot, zoom,
+   cursor position, wait), memory, search, todo and advisor run without asking.
    Opaque commands (`bash -c`, `python -c`, encoded PowerShell, a variable as
    the program) always ask, even in Trusted mode, because the gate cannot see
    what they will run.
@@ -140,6 +140,42 @@ The provider retries HTTP 408/409/425/429/500/502/503/504/529 and dropped or
 timed-out connections up to 3 times. Backoff is 1 s, 2 s, then 4 s plus
 jitter, and a `retry-after` header is honoured (capped at 20 s). A failed tool
 returns `is_error: true` to the model, so the model can recover.
+
+## Computer use
+
+Buddy's `computer` tool follows Claude's computer-use action set: `screenshot`,
+`zoom`, `mouse_move`, `left_click`, `right_click`, `middle_click`,
+`double_click`, `triple_click`, `left_click_drag`, `scroll`, `type`, `key`,
+`wait` and `cursor_position`. Screenshots are scaled to fit within 1280×800
+with the aspect ratio kept, and coordinates are mapped back to the real
+display, so DPI scaling and multiple monitors work (`display` picks a screen).
+On Windows the input goes through `SendInput`. Other platforms get a simulated
+backend that only logs actions.
+
+Guardrails:
+
+- Clicks, drags, scrolling, typing and keys ask in Ask and Auto-edit mode and
+  are denied in Plan mode. Only screenshot, zoom, cursor position and wait run
+  without asking.
+- Every screenshot marks the run as having seen untrusted screen content.
+  After that, risky key combos (Win+R, Ctrl+Alt+Del, Alt+F4, …) and text
+  that looks like a shell command ask even in Trusted mode or with a session
+  grant.
+- Unknown actions, out-of-range coordinates and text over 2000 characters
+  are rejected. Input actions are rate limited to a burst of 40 per minute,
+  at least 80 ms apart.
+- Buddy never types into a password field. On Windows it checks the focused
+  control for `ES_PASSWORD` / `EM_GETPASSWORDCHAR` and checks for the Windows
+  Security credential prompt. A UI Automation `IsPassword` check for browser
+  and WinUI fields is a planned follow-up.
+- While Buddy is in control, a glow runs around every screen and a HUD under
+  the notch shows the current action and a Stop button. Ctrl+Alt+Esc, or
+  holding Esc, stops the run. Any real mouse movement or key press pauses it
+  until you press Resume. The overlays never take focus, the glow and cursor
+  are click-through, and all of them are excluded from screen capture
+  (`WDA_EXCLUDEFROMCAPTURE`), so the model never sees them.
+- Each action shows in the trace with a small thumbnail of the screen around
+  the target.
 
 ## Traces
 

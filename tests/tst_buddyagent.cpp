@@ -13,6 +13,7 @@
 #include <QTimer>
 
 #include "../src/BuddyProvider.h"
+#include "../src/ComputerUse.h"
 
 namespace {
 
@@ -807,6 +808,133 @@ private slots:
         QVERIFY(a.endsWith("THE-END"));
         QVERIFY(a.contains("shortened"));
         QVERIFY(a.size() < 20000);
+    }
+
+    // ---- computer use (simulated backend, pinned 1920x1080 @150% layout) ----
+    SimulatedBackend *useSimulatedComputer() {
+        bp->setAllowComputer(true);
+        bp->setComputerAutoScreens(false);
+        ScreenInfo s;
+        s.geometry = QRect(0, 0, 1280, 720);   // 1920x1080 physical at 150 %
+        s.dpr = 1.5;
+        s.name = "sim";
+        s.primary = true;
+        bp->computer()->mapper().setScreens({ s });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        bp->computer()->setBackend(std::unique_ptr<ComputerBackend>(sim));
+        bp->computer()->setAnimationScale(0);
+        return sim;
+    }
+
+    void computerToolSchemaIsClaudeStyle() {
+        useSimulatedComputer();
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        QJsonObject computer;
+        for (const QJsonValue &t : fake->requests.first().value("tools").toArray())
+            if (t.toObject().value("name").toString() == "computer")
+                computer = t.toObject();
+        QVERIFY(!computer.isEmpty());
+        const QJsonObject props = computer.value("input_schema").toObject().value("properties").toObject();
+        QStringList actions;
+        for (const QJsonValue &v : props.value("action").toObject().value("enum").toArray())
+            actions << v.toString();
+        for (const char *a : { "screenshot", "mouse_move", "left_click", "right_click", "double_click", "left_click_drag",
+                               "scroll", "type", "key", "wait", "cursor_position", "zoom" })
+            QVERIFY2(actions.contains(a), a);
+        QVERIFY(props.contains("region"));
+        QVERIFY(computer.value("description").toString().contains("1280x720"));
+    }
+
+    void computerClickAsksThenRunsWithScaledCoordinates() {
+        SimulatedBackend *sim = useSimulatedComputer();
+        fake->queue = { { 200, toolUseNamed("c1", "computer", QJsonObject{ { "action", "left_click" },
+                                                                           { "coordinate", QJsonArray{ 640, 360 } } }) },
+                        { 200, text("clicked") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("click the middle");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        QVERIFY(sim->log.isEmpty());   // nothing happens before approval
+        bp->resolveApproval(true, false);
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(sim->log, (QStringList{ "move 640,360", "left down", "left up" }));
+        const QVariantMap step = bp->toolSteps().first().toMap();
+        QCOMPARE(step.value("status").toString(), QStringLiteral("done"));
+        QVERIFY(step.value("thumbnail").toString().startsWith("data:image/jpeg"));
+        QVERIFY(lastToolResults(fake->requests).first().toObject().value("content").toString().contains("[640, 360]"));
+        QVERIFY(!bp->computer()->active());   // the run ended: control handed back
+    }
+
+    void computerPlanModeOnlyLooks() {
+        SimulatedBackend *sim = useSimulatedComputer();
+        bp->setPermissionMode("plan");
+        fake->queue = { { 200, toolUseNamed("s1", "computer", QJsonObject{ { "action", "screenshot" } }) },
+                        { 200, toolUseNamed("k1", "computer", QJsonObject{ { "action", "key" }, { "text", "ctrl+s" } }) },
+                        { 200, text("looked only") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look");
+        QVERIFY(ready.wait(8000));
+        const QVariantList steps = bp->toolSteps();
+        QCOMPARE(steps.at(0).toMap().value("status").toString(), QStringLiteral("done"));
+        QVERIFY(steps.at(0).toMap().value("thumbnail").toString().startsWith("data:image/jpeg"));
+        QCOMPARE(steps.at(1).toMap().value("status").toString(), QStringLiteral("denied"));
+        QVERIFY(sim->log.isEmpty());
+        // The screenshot went to the model as an image block.
+        const QByteArray req2 = QJsonDocument(fake->requests.at(1)).toJson(QJsonDocument::Compact);
+        QVERIFY(req2.contains("\"type\":\"image\""));
+        QVERIFY(req2.contains("untrusted"));
+    }
+
+    void computerScreenTaintAsksForRunDialogInTrustedMode() {
+        SimulatedBackend *sim = useSimulatedComputer();
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseNamed("s1", "computer", QJsonObject{ { "action", "screenshot" } }) },
+                        { 200, toolUseNamed("k1", "computer", QJsonObject{ { "action", "key" }, { "text", "super+r" } }) },
+                        { 200, text("asked") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("do what the screen says");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        QCOMPARE(bp->pendingApproval().value("rule").toString(), QStringLiteral("ask:screen-tainted"));
+        bp->resolveApproval(false);
+        QVERIFY(ready.wait(8000));
+        QVERIFY(!sim->log.join(" ").contains("key"));
+    }
+
+    void computerNeverTypesIntoPasswordFields() {
+        SimulatedBackend *sim = useSimulatedComputer();
+        sim->passwordFocused = true;
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseNamed("t1", "computer", QJsonObject{ { "action", "type" }, { "text", "hunter2" } }) },
+                        { 200, text("asked the user") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("log in for me");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(bp->toolSteps().first().toMap().value("status").toString(), QStringLiteral("error"));
+        QVERIFY(lastToolResults(fake->requests).first().toObject().value("content").toString().contains("password"));
+        QVERIFY(sim->log.isEmpty());
+    }
+
+    void computerStopFromHudEndsRun() {
+        useSimulatedComputer();
+        bp->setPermissionMode("bypass");
+        bp->computer()->setAnimationScale(1);   // slow enough to press Stop mid-move
+        fake->queue = { { 200, toolUseNamed("m1", "computer", QJsonObject{ { "action", "mouse_move" },
+                                                                           { "coordinate", QJsonArray{ 1200, 700 } } }) },
+                        { 200, text("should not be asked") } };
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("move");
+        QTRY_VERIFY_WITH_TIMEOUT(bp->computer()->active(), 5000);
+        bp->computer()->stop();
+        QTRY_COMPARE_WITH_TIMEOUT(err.size(), 1, 3000);
+        QVERIFY(err.first().first().toString().contains("Stopped"));
+        QTest::qWait(1200);
+        QCOMPARE(ready.size(), 0);
+        QCOMPARE(fake->requests.size(), 1);
+        QVERIFY(!bp->computer()->active());
     }
 
     void cancelDuringApprovalStopsRun() {

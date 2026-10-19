@@ -21,6 +21,7 @@
 #include "BuddyProvider.h"
 #include "BuddySfx.h"
 #include "ClipboardHistory.h"
+#include "ComputerUse.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
 #include "GlassBackdrop.h"
@@ -43,6 +44,19 @@ T *nochSingletonCreate(T *instance, QJSEngine *engine)
     QJSEngine::setObjectOwnership(instance, QJSEngine::CppOwnership);
     return instance;
 }
+
+// Buddy's computer-use controller (owned by BuddyProvider): drives the agent
+// cursor, the screen-edge glow and the control HUD.
+struct AgentControlSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(ComputerUse)
+    QML_NAMED_ELEMENT(AgentControl)
+    QML_SINGLETON
+public:
+    inline static ComputerUse *s_singletonInstance = nullptr;
+    static ComputerUse *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
 
 struct OverlaySingleton
 {

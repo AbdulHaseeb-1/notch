@@ -1083,7 +1083,7 @@ bool AgentPolicy::isObservingComputerAction(const QString &action)
 {
     const QString a = action.trimmed().toLower();
     return a == QLatin1String("screenshot") || a == QLatin1String("cursor_position")
-        || a == QLatin1String("wait");
+        || a == QLatin1String("wait") || a == QLatin1String("zoom");
 }
 
 bool AgentPolicy::isPrivateUrl(const QString &rawUrl)
@@ -1255,6 +1255,35 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         if (plan)
             return deny(QStringLiteral("mode:plan"),
                         QStringLiteral("Plan mode cannot click or type on your screen."));
+        static const QStringList known{
+            "mouse_move", "left_click", "right_click", "middle_click", "double_click", "triple_click",
+            "left_click_drag", "scroll", "type", "key" };
+        if (!known.contains(action.trimmed().toLower()))
+            return deny(QStringLiteral("deny:computer-action"),
+                        QStringLiteral("Unknown computer action '%1'.").arg(action.left(40)));
+        const QString text = input.value(QStringLiteral("text")).toString();
+        if (action == QLatin1String("type") && text.size() > 2000)
+            return deny(QStringLiteral("deny:type-length"), QStringLiteral("Typing more than 2000 characters at once is blocked."));
+        // After reading the screen, a risky shortcut or command-like typing
+        // is asked for even when Trusted mode or a grant would allow it.
+        if (m_screenTainted || m_tainted) {
+            const QString t = text.trimmed().toLower();
+            static const QStringList riskyKeys{
+                "super+r", "win+r", "meta+r", "cmd+r", "super+x", "win+x", "ctrl+shift+escape", "ctrl+shift+esc",
+                "ctrl+alt+delete", "ctrl+alt+del", "alt+f4", "ctrl+shift+return", "ctrl+shift+enter", "super", "win" };
+            static const QRegularExpression shellRx(
+                QStringLiteral("(\\b(powershell|pwsh|cmd(\\.exe)?|bash|wsl|curl|wget|invoke-webrequest|iwr|iex|"
+                               "invoke-expression|start-process|certutil|mshta|rundll32|regsvr32|bitsadmin|"
+                               "reg\\s+(add|delete)|schtasks|net\\s+user|set-mppreference)\\b)"
+                               "|(-enc(odedcommand)?\\s)|(\\|\\s*(sh|bash|iex)\\b)|(rm\\s+-rf)|(del\\s+/[sfq])|(format\\s+[a-z]:)"),
+                QRegularExpression::CaseInsensitiveOption);
+            const bool riskyKey = action == QLatin1String("key") && riskyKeys.contains(t.simplified().remove(QLatin1Char(' ')));
+            const bool shellText = action == QLatin1String("type") && shellRx.match(text).hasMatch();
+            if (riskyKey || shellText)
+                return ask(QStringLiteral("ask:screen-tainted"),
+                           riskyKey ? QStringLiteral("After reading the screen, Buddy wants to press %1 (opens system tools).").arg(text.trimmed())
+                                    : QStringLiteral("After reading the screen, Buddy wants to type what looks like a command."));
+        }
         if (bypass)
             return allow(QStringLiteral("mode:bypass"));
         if (granted)

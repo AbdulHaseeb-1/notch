@@ -172,6 +172,7 @@ int main(int argc, char *argv[])
     AppearanceSingleton::s_singletonInstance = appearance;
     IconsSingleton::s_singletonInstance = iconSet;
     BuddyAgentSingleton::s_singletonInstance = buddyProvider;
+    AgentControlSingleton::s_singletonInstance = buddyProvider->computer();
     BuddySoundSingleton::s_singletonInstance = buddySfx;
     BackdropSingleton::s_singletonInstance = glass;
     OpenAppsSingleton::s_singletonInstance = openApps;
