@@ -357,9 +357,10 @@ class TstBuddyAgent : public QObject
     FakeAnthropic *fake = nullptr;
     BuddyProvider *bp = nullptr;
     QTemporaryDir ws;
+    QTemporaryDir undoStore;
 
 private slots:
-    void initTestCase() { QStandardPaths::setTestModeEnabled(true); QVERIFY(ws.isValid()); }
+    void initTestCase() { QStandardPaths::setTestModeEnabled(true); QVERIFY(ws.isValid() && undoStore.isValid()); }
 
     void init() {
         fake = new FakeAnthropic;
@@ -373,6 +374,9 @@ private slots:
         bp->setAllowBash(true);
         bp->setWorkspaceRoot(ws.path());
         bp->setKeepTraces(false);
+        QDir(undoStore.path()).removeRecursively();
+        QDir().mkpath(undoStore.path());
+        bp->setUndoPath(undoStore.path());
     }
     void cleanup() { delete bp; bp = nullptr; delete fake; fake = nullptr; }
 
@@ -1718,6 +1722,174 @@ private slots:
         QVERIFY(!systemText(fake->requests.first()).contains("ask_user_question"));
         // A model that asks anyway gets an answer it can act on, not a hung run.
         QVERIFY(lastToolResults(fake->requests).first().toObject().value("content").toString().contains("disabled"));
+    }
+
+
+    // ---- undo for a whole run -------------------------------------------------------
+
+    QString wsFile(const QString &name) const { return QDir(ws.path()).filePath(name); }
+    static void writeFile(const QString &path, const QByteArray &data) {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(data);
+    }
+    static QByteArray readFile(const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray("<missing>");
+    }
+    static QJsonObject replaceCall(const QString &path, const QString &from, const QString &to) {
+        return QJsonObject{ { "command", "str_replace" }, { "path", path }, { "old_str", from }, { "new_str", to } };
+    }
+
+    void everyEditorChangeOfARunIsUndoneTogether() {
+        QFile::remove(wsFile("b.txt"));
+        writeFile(wsFile("a.txt"), "old text");
+        bp->setPermissionMode("bypass");
+        fake->queue = {
+            { 200, toolUseNamed("e1", "str_replace_editor", replaceCall(wsFile("a.txt"), "old", "new")) },
+            { 200, toolUseNamed("e2", "str_replace_editor", QJsonObject{ { "command", "create" }, { "path", wsFile("b.txt") },
+                                                                          { "file_text", "brand new" } }) },
+            { 200, toolUseNamed("e3", "str_replace_editor", replaceCall(wsFile("a.txt"), "new", "newer")) },
+            { 200, text("edited") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy changed(bp, &BuddyProvider::lastRunChangesChanged);
+        bp->sendMessage("edit things");
+        QVERIFY(ready.wait(8000));
+        QTRY_VERIFY(!bp->lastRunChanges().isEmpty());
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("newer text"));
+        const QVariantMap c = bp->lastRunChanges();
+        QCOMPARE(c.value("count").toInt(), 2);   // a.txt once, even though it was edited twice
+        QCOMPARE(c.value("modified").toInt(), 1);
+        QCOMPARE(c.value("created").toInt(), 1);
+
+        const QVariantMap r = bp->undoLastRun();
+        QVERIFY2(r.value("ok").toBool(), qPrintable(r.value("message").toString()));
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("old text"));   // the state before the FIRST edit
+        QVERIFY(!QFileInfo::exists(wsFile("b.txt")));
+        QVERIFY(r.value("message").toString().contains("Restored 1 file"));
+        QVERIFY(bp->lastRunChanges().isEmpty());   // nothing left to offer
+    }
+
+    void shellCommandsAreTrackedByTheFilesTheyName() {
+        writeFile(wsFile("victim.txt"), "keep me");
+        QFile::remove(wsFile("out.txt"));
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUse("s1", "echo made > out.txt") }, { 200, toolUse("s2", "rm victim.txt") }, { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("tidy up");
+        QVERIFY(ready.wait(10000));
+        QTRY_VERIFY(!bp->lastRunChanges().isEmpty());
+        QVERIFY(QFileInfo::exists(wsFile("out.txt")));
+        QVERIFY(!QFileInfo::exists(wsFile("victim.txt")));
+        QCOMPARE(bp->lastRunChanges().value("created").toInt(), 1);
+        QCOMPARE(bp->lastRunChanges().value("deleted").toInt(), 1);
+        QVERIFY(bp->undoLastRun().value("ok").toBool());
+        QCOMPARE(readFile(wsFile("victim.txt")), QByteArray("keep me"));
+        QVERIFY(!QFileInfo::exists(wsFile("out.txt")));
+    }
+
+    void aRunThatChangedNothingOffersNothing() {
+        fake->queue = { { 200, toolUse("r1", "echo just looking") }, { 200, text("looked") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look");
+        QVERIFY(ready.wait(8000));
+        QVERIFY(bp->lastRunChanges().isEmpty());
+        QVERIFY(bp->pendingUndo().isEmpty());
+        const QVariantMap r = bp->undoLastRun();
+        QVERIFY(!r.value("ok").toBool());
+        QVERIFY(r.value("message").toString().contains("nothing to undo"));
+    }
+
+    void anEarlierRunStaysUndoableAfterALaterQuestion() {
+        writeFile(wsFile("a.txt"), "v0");
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseNamed("e1", "str_replace_editor", replaceCall(wsFile("a.txt"), "v0", "v1")) }, { 200, text("changed") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("change it");
+        QVERIFY(ready.wait(8000));
+        QTRY_VERIFY(!bp->lastRunChanges().isEmpty());
+        // A new question that changes nothing: the chip for the new answer is clear ...
+        fake->queue = { { 200, text("just an answer") } };
+        QSignalSpy ready2(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("what time is it");
+        QVERIFY(ready2.wait(5000));
+        QVERIFY(bp->lastRunChanges().isEmpty());
+        // ... but `/undo` can still reach the earlier run.
+        QCOMPARE(bp->pendingUndo().value("count").toInt(), 1);
+        QVERIFY(bp->undoLastRun().value("ok").toBool());
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("v0"));
+    }
+
+    void aCancelledRunCanStillBeUndone() {
+        writeFile(wsFile("a.txt"), "v0");
+        // Default mode: the first edit is approved, the second is waiting when the user cancels.
+        fake->queue = { { 200, toolUseNamed("e1", "str_replace_editor", replaceCall(wsFile("a.txt"), "v0", "v1")) },
+                        { 200, toolUseNamed("e2", "str_replace_editor", replaceCall(wsFile("a.txt"), "v1", "v2")) } };
+        bp->sendMessage("edit twice");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        bp->resolveApproval(true);
+        QTRY_VERIFY_WITH_TIMEOUT(fake->requests.size() == 2, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);   // the second edit asks
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("v1"));
+        bp->cancel();
+        QCOMPARE(bp->lastRunChanges().value("count").toInt(), 1);
+        QVERIFY(bp->undoLastRun().value("ok").toBool());
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("v0"));
+    }
+
+    void aDeclinedEditIsNeverRecorded() {
+        writeFile(wsFile("a.txt"), "v0");
+        fake->queue = { { 200, toolUseNamed("e1", "str_replace_editor", replaceCall(wsFile("a.txt"), "v0", "v1")) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("edit");
+        QTRY_VERIFY_WITH_TIMEOUT(!bp->pendingApproval().isEmpty(), 5000);
+        bp->resolveApproval(false);
+        QVERIFY(ready.wait(5000));
+        QVERIFY(bp->lastRunChanges().isEmpty());
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("v0"));
+    }
+
+    void aFileEditedAfterTheRunIsReportedAndOnlyOverwrittenWhenForced() {
+        writeFile(wsFile("a.txt"), "v0");
+        bp->setPermissionMode("bypass");
+        fake->queue = { { 200, toolUseNamed("e1", "str_replace_editor", replaceCall(wsFile("a.txt"), "v0", "buddy")) }, { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("edit");
+        QVERIFY(ready.wait(8000));
+        QTRY_VERIFY(!bp->lastRunChanges().isEmpty());
+        writeFile(wsFile("a.txt"), "the user's own edit");
+        const QVariantMap r = bp->undoLastRun();
+        QVERIFY(!r.value("ok").toBool());
+        QCOMPARE(r.value("conflicts").toStringList().size(), 1);
+        QVERIFY(r.value("message").toString().contains("left alone"));
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("the user's own edit"));
+        QVERIFY(bp->undoLastRun(true).value("ok").toBool());
+        QCOMPARE(readFile(wsFile("a.txt")), QByteArray("v0"));
+    }
+
+    void commandsTypedDirectlyAreJournaledToo() {
+        QFile::remove(wsFile("direct.txt"));
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->runDirectCommand("echo typed > direct.txt");
+        QVERIFY(ready.wait(8000));
+        QTRY_VERIFY(!bp->lastRunChanges().isEmpty());
+        QVERIFY(QFileInfo::exists(wsFile("direct.txt")));
+        QVERIFY(bp->undoLastRun().value("ok").toBool());
+        QVERIFY(!QFileInfo::exists(wsFile("direct.txt")));
+    }
+
+    void theJournalLivesInNochsPrivateFolderOutOfTheAgentsReach() {
+        // Backups must not be something the model can rewrite, or undo could be turned against the user.
+        BuddyProvider other;
+        const QString path = other.undoPath();
+        QVERIFY(path.endsWith("/undo"));
+        const AgentPolicy::Decision d = [&] {
+            AgentPolicy pol;
+            pol.setWorkspaceRoots({ ws.path() });
+            pol.setPrivatePaths({ QFileInfo(path).absolutePath() });
+            return pol.evaluate("str_replace_editor", QJsonObject{ { "command", "create" }, { "path", path + "/x/journal.json" } });
+        }();
+        QCOMPARE(d.verdict, AgentPolicy::Verdict::Deny);
     }
 
     void cancelDuringApprovalStopsRun() {

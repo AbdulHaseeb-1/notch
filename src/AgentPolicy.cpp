@@ -972,6 +972,8 @@ AgentPolicy::ShellPaths AgentPolicy::shellPaths(const QString &command)
                     && candidates.size() >= 2) {
                 out.reads << candidates.mid(0, candidates.size() - 1);
                 out.writes << candidates.last();
+                if (prog == QLatin1String("mv") || prog == QLatin1String("move") || prog == QLatin1String("move-item"))
+                    out.moved << candidates.mid(0, candidates.size() - 1);
             } else if (prog == QLatin1String("curl") || prog == QLatin1String("wget")
                        || prog == QLatin1String("iwr") || prog == QLatin1String("invoke-webrequest")) {
                 // -o / -O / -OutFile targets are writes; URLs are not paths.

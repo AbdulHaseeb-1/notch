@@ -95,7 +95,9 @@ public:
     static QString opaqueCommandReason(const QString &command);
     // Every path-like word a shell command mentions, with write targets
     // (redirects, cp/mv/rm/Set-Content ... arguments) listed separately.
-    struct ShellPaths { QStringList reads; QStringList writes; };
+    // `moved` lists what mv / move / Move-Item take away from its place: the
+    // gate treats those as reads, but undoing a run has to put them back.
+    struct ShellPaths { QStringList reads; QStringList writes; QStringList moved; };
     static ShellPaths shellPaths(const QString &command);
 
     // web_fetch / web_search urls: only http(s) is fetched; private,

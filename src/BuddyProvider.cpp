@@ -361,9 +361,12 @@ BuddyProvider::BuddyProvider(QObject *parent)
         emit errorOccurred(why);
     });
     connect(this, &BuddyProvider::statusChanged, this, [this](const QString &st) {
-        if (st == QLatin1String("idle"))
+        if (st == QLatin1String("idle")) {
             m_computer->end();
+            finalizeJournal();   // after cancel() has killed anything still running
+        }
     });
+    m_journal.setRoot(undoPath());
 
     m_approvalTimer.setInterval(1000);
     connect(&m_approvalTimer, &QTimer::timeout, this, &BuddyProvider::onApprovalTick);
@@ -747,6 +750,107 @@ void BuddyProvider::syncPrivatePaths()
     if (!appdata.isEmpty())
         priv << QDir(appdata).filePath(QStringLiteral("noch"));
     m_policy.setPrivatePaths(priv);
+}
+
+// ---- undo for a whole run ------------------------------------------------------
+
+QString BuddyProvider::undoPath() const
+{
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty())
+        base = QDir::homePath() + QStringLiteral("/.noch");
+    return QDir(base).filePath(QStringLiteral("undo"));
+}
+
+void BuddyProvider::beginJournalRun()
+{
+    QString id = m_traceId;
+    if (id.isEmpty())
+        id = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss"))
+           + QLatin1Char('-') + QString::number(QRandomGenerator::global()->generate() & 0xffff, 16);
+    m_journal.begin(id);
+    if (!m_lastRunChanges.isEmpty()) {
+        m_lastRunChanges.clear();
+        emit lastRunChangesChanged();
+    }
+}
+
+void BuddyProvider::finalizeJournal()
+{
+    if (!m_journal.active())
+        return;
+    m_lastRunChanges = m_journal.finish();
+    emit lastRunChangesChanged();
+}
+
+// Snapshot what a tool is about to change, before it runs. The editor names
+// exactly one file. A shell command is covered for the files it names
+// (redirects, cp, mv, rm, Set-Content ...); whatever a program it launches
+// touches is not tracked - the memory tool's notes are not either.
+void BuddyProvider::journalBefore(const PendingToolCall &call)
+{
+    if (!m_journal.active())
+        return;
+    if (call.name == QLatin1String("str_replace_editor")) {
+        const QString cmd = call.input.value(QStringLiteral("command")).toString().trimmed();
+        if (cmd == QLatin1String("create") || cmd == QLatin1String("str_replace")
+                || cmd == QLatin1String("insert") || cmd == QLatin1String("undo_edit")) {
+            const QString raw = call.input.value(QStringLiteral("path")).toString().trimmed();
+            if (!raw.isEmpty())
+                m_journal.record(m_policy.absolutePath(raw));
+        }
+    } else if (call.name == QLatin1String("bash")) {
+        const QString workDir = call.input.value(QStringLiteral("working_dir")).toString().trimmed();
+        const QString base = workDir.isEmpty() ? m_policy.baseDir()
+                                               : AgentPolicy::resolvePath(workDir, m_policy.baseDir());
+        const AgentPolicy::ShellPaths sp = AgentPolicy::shellPaths(call.input.value(QStringLiteral("command")).toString());
+        m_journal.recordPaths(sp.writes + sp.moved, base);
+    }
+}
+
+QVariantMap BuddyProvider::pendingUndo() const
+{
+    const QString id = m_journal.latestWithChanges();
+    return id.isEmpty() ? QVariantMap() : m_journal.summary(id);
+}
+
+QVariantMap BuddyProvider::undoLastRun(bool force)
+{
+    const QString id = m_journal.latestWithChanges();
+    if (id.isEmpty())
+        return QVariantMap{ { QStringLiteral("ok"), false }, { QStringLiteral("runId"), QString() },
+                            { QStringLiteral("restored"), 0 }, { QStringLiteral("removed"), 0 },
+                            { QStringLiteral("conflicts"), QStringList() }, { QStringLiteral("failed"), QStringList() },
+                            { QStringLiteral("message"), tr("There is nothing to undo.") } };
+    return undoRun(id, force);
+}
+
+QVariantMap BuddyProvider::undoRun(const QString &runId, bool force)
+{
+    const RunJournal::UndoResult r = m_journal.undo(runId, force);
+    QStringList parts;
+    if (r.restored > 0)
+        parts << tr("Restored %n file(s)", "", r.restored);
+    if (r.removed > 0)
+        parts << tr("removed %n new file(s)", "", r.removed);
+    if (!r.conflicts.isEmpty())
+        parts << tr("%n file(s) changed since and were left alone", "", int(r.conflicts.size()));
+    if (!r.failed.isEmpty())
+        parts << tr("%n file(s) could not be changed", "", int(r.failed.size()));
+    QString message = parts.isEmpty() ? tr("There is nothing to undo.") : parts.join(QStringLiteral(", "));
+    if (!message.endsWith(QLatin1Char('.')))
+        message += QLatin1Char('.');
+    if (m_lastRunChanges.value(QStringLiteral("runId")).toString() == runId) {
+        m_lastRunChanges = m_journal.summary(runId);
+        emit lastRunChangesChanged();
+    }
+    return QVariantMap{ { QStringLiteral("ok"), r.ok() && (r.restored + r.removed) > 0 },
+                        { QStringLiteral("runId"), runId },
+                        { QStringLiteral("restored"), r.restored },
+                        { QStringLiteral("removed"), r.removed },
+                        { QStringLiteral("conflicts"), r.conflicts },
+                        { QStringLiteral("failed"), r.failed },
+                        { QStringLiteral("message"), message } };
 }
 
 QString BuddyProvider::tracesPath() const
@@ -2108,6 +2212,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
               + QLatin1Char('-') + QString::number(QRandomGenerator::global()->generate() & 0xffff, 16);
     addSpan(QJsonObject{ { "type", "run" }, { "event", "start" }, { "chars", text.size() },
                          { "historyTurns", context.size() / 2 } });
+    beginJournalRun();
     m_agentIteration = 0;
     m_toolsDisabledForTurn = false;
     m_accumulatedText.clear();
@@ -2230,6 +2335,7 @@ void BuddyProvider::runDirectCommand(const QString &command)
 
     cancel();
     clearToolSteps();
+    beginJournalRun();
     m_turnTimer.start();
     m_agentIteration = -1; // Direct tool execution marker (no LLM follow-up turn)
     m_accumulatedText.clear();
@@ -3340,6 +3446,7 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
 
 void BuddyProvider::executeToolCall(const PendingToolCall &call)
 {
+    journalBefore(call);
     if (call.name == QLatin1String("bash")) {
         if (!m_allowBash) {
             finishCurrentToolCall(call, QStringLiteral("Error: bash command execution is disabled in Settings > Buddy."), QString(), true);

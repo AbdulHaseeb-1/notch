@@ -44,6 +44,10 @@ qt_add_executable(noch
     src/QmlSingletons.h
     src/BuddyProvider.cpp
     src/BuddyProvider.h
+    src/UserQuestions.cpp
+    src/UserQuestions.h
+    src/RunJournal.cpp
+    src/RunJournal.h
     src/ComputerUse.cpp
     src/ComputerUse.h
     src/ComputerUseWin.cpp
@@ -183,8 +187,17 @@ if(NOCH_BUILD_TESTS)
     add_test(NAME tst_buddysfx COMMAND tst_buddysfx)
     set_tests_properties(tst_buddysfx PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
     find_package(Qt6 REQUIRED COMPONENTS Network)
+    qt_add_executable(tst_userquestions tests/tst_userquestions.cpp
+        src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_userquestions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_userquestions COMMAND tst_userquestions)
+    qt_add_executable(tst_runjournal tests/tst_runjournal.cpp
+        src/RunJournal.cpp src/RunJournal.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_runjournal PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_runjournal COMMAND tst_runjournal)
     qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
         src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
+        src/UserQuestions.cpp src/UserQuestions.h src/RunJournal.cpp src/RunJournal.h
         src/StreamAccumulator.cpp src/StreamAccumulator.h
         src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
     target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)

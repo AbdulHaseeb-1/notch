@@ -18,6 +18,7 @@
 
 #include "AgentPolicy.h"
 #include "ComputerUse.h"
+#include "RunJournal.h"
 #include "StreamAccumulator.h"
 #include "UserQuestions.h"
 
@@ -112,6 +113,10 @@ class BuddyProvider : public QObject
     // Non-empty while Buddy waits for answers: { id, stepIndex, title, secondsLeft,
     // questions: [{ question, header, multiSelect, options: [{ label, description }] }] }.
     Q_PROPERTY(QVariantMap pendingQuestion READ pendingQuestion NOTIFY pendingQuestionChanged)
+    // The file changes the run that just finished made and that can be undone:
+    // { runId, count, created, modified, deleted, files: [{ path, action }],
+    //   untracked: [{ path, reason }] }. Empty when it changed nothing.
+    Q_PROPERTY(QVariantMap lastRunChanges READ lastRunChanges NOTIFY lastRunChangesChanged)
 
     Q_PROPERTY(QVariantList toolSteps READ toolSteps NOTIFY toolStepsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
@@ -206,6 +211,7 @@ public:
     static const AgentProfile *profileFor(const QString &id);
     QVariantMap pendingApproval() const { return m_pendingApproval; }
     QVariantMap pendingQuestion() const { return m_pendingQuestion; }
+    QVariantMap lastRunChanges() const { return m_lastRunChanges; }
 
     QVariantList toolSteps() const { return m_toolSteps; }
     QString activeTool() const { return m_activeTool; }
@@ -235,6 +241,15 @@ public:
     Q_INVOKABLE void skipQuestion();
     // How long a question waits before it is skipped (tests shorten it).
     void setQuestionTimeoutSeconds(int seconds) { m_questionTimeoutSec = qMax(1, seconds); }
+    // Undo a run's file changes. undoLastRun() takes the newest run that changed
+    // anything, which may be older than the last one. Files changed since the
+    // run are left alone and listed under `conflicts` unless force is set.
+    // Returns { ok, runId, restored, removed, conflicts, failed, message }.
+    Q_INVOKABLE QVariantMap pendingUndo() const;
+    Q_INVOKABLE QVariantMap undoLastRun(bool force = false);
+    Q_INVOKABLE QVariantMap undoRun(const QString &runId, bool force = false);
+    Q_INVOKABLE QString undoPath() const;
+    void setUndoPath(const QString &path) { m_journal.setRoot(path); }
     Q_INVOKABLE QString tracesPath() const;
     Q_INVOKABLE QString effectiveWorkspace() const;
     void syncPrivatePaths();
@@ -258,6 +273,7 @@ signals:
     void agentTodosChanged();
     void pendingApprovalChanged();
     void pendingQuestionChanged();
+    void lastRunChangesChanged();
     void streamTextChanged();
     void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
@@ -320,6 +336,8 @@ private:
     QTimer m_approvalTimer;      // 1 s ticks for the countdown, auto-deny at 0
     int m_approvalSecondsLeft = 0;
     // The question being asked (ask_user_question) and its countdown.
+    RunJournal m_journal;
+    QVariantMap m_lastRunChanges;
     QVariantMap m_pendingQuestion;
     QList<uq::Question> m_questions;
     PendingToolCall m_questionCall;
@@ -422,6 +440,9 @@ private:
     void setStepFields(int stepIndex, const QVariantMap &fields);
     void clearPendingApproval();
     void clearPendingQuestion();
+    void beginJournalRun();
+    void finalizeJournal();
+    void journalBefore(const PendingToolCall &call);
     void onApprovalTick();
     void onQuestionTick();
     void executeAskUserTool(const PendingToolCall &call);
