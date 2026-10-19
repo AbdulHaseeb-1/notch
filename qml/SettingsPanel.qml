@@ -300,7 +300,7 @@ Item {
             text: rs.option.label || ""
             color: rs.selected ? Theme.ink : Theme.textDim
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             font.weight: rs.selected ? Font.DemiBold : Font.Medium
         }
         MouseArea {
@@ -328,7 +328,7 @@ Item {
             text: parent.title.toUpperCase()
             color: Theme.textDim
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             font.weight: Font.Bold
             font.letterSpacing: 0.8
         }
@@ -340,7 +340,7 @@ Item {
             text: parent.rightText
             color: Theme.textFaint
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             font.weight: Font.DemiBold
         }
     }
@@ -348,18 +348,16 @@ Item {
     component GroupCard: Rectangle {
         default property alias cardContent: innerCol.data
         width: parent ? parent.width : 340
-        implicitHeight: innerCol.implicitHeight + 24
-        radius: 14
+        implicitHeight: innerCol.implicitHeight + 2 * Theme.sp4
+        radius: Theme.radiusLg
         color: Theme.raised
-        border.width: 1
-        border.color: Theme.borderSoft
 
         Column {
             id: innerCol
-            x: 16
-            y: 12
-            width: parent.width - 32
-            spacing: 10
+            x: Theme.sp4
+            y: Theme.sp4
+            width: parent.width - 2 * Theme.sp4
+            spacing: Theme.sp3
         }
     }
 
@@ -393,7 +391,7 @@ Item {
                 text: tr.label
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 13
+                font.pixelSize: Theme.fontMd
                 font.weight: Font.DemiBold
             }
             Text {
@@ -402,7 +400,7 @@ Item {
                 text: tr.sub
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 wrapMode: Text.WordWrap
                 lineHeight: 1.15
             }
@@ -489,7 +487,7 @@ Item {
                 text: spb.label
                 color: spb.primary ? Theme.inverse : (spb.danger ? Theme.danger : Theme.ink)
                 font.family: Theme.font
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontBase
                 font.weight: Font.Bold
             }
         }
@@ -532,7 +530,7 @@ Item {
             text: fb.label
             color: Theme.textDim
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             font.weight: Font.DemiBold
         }
 
@@ -625,7 +623,7 @@ Item {
             selectionColor: Theme.accent
             selectedTextColor: Theme.inverse
             font.family: fb.mono ? "Consolas" : Theme.font
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontMd
             clip: true
             selectByMouse: true
             echoMode: fb.secret && !fb.revealed ? TextInput.Password : TextInput.Normal
@@ -656,7 +654,7 @@ Item {
             text: fb.hint
             color: Theme.textFaint
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             elide: Text.ElideMiddle
         }
     }
@@ -686,7 +684,7 @@ Item {
             text: chip.text
             color: chip.selected ? Theme.inverse : (chipHit.containsMouse ? Theme.ink : Theme.textDim)
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             font.weight: chip.selected ? Font.DemiBold : Font.Medium
             Behavior on color { ColorAnimation { duration: 120 } }
         }
@@ -719,7 +717,7 @@ Item {
                 text: ls.label
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
             }
             Text {
@@ -728,7 +726,7 @@ Item {
                 text: Number(ls.value).toFixed(ls.decimals)
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.Bold
                 font.features: ({ "tnum": 1 })
             }
@@ -759,7 +757,7 @@ Item {
                 text: qsTr("Settings")
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 16
+                font.pixelSize: Theme.fontLg
                 font.weight: Font.Bold
             }
             Text {
@@ -768,7 +766,7 @@ Item {
                                        : qsTr("Buddy, AI provider & agent tools"))
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
             }
         }
 
@@ -934,7 +932,7 @@ Item {
                                 text: qsTr("Hide delay")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontBase
                                 font.weight: Font.Medium
                             }
                             Segmented {
@@ -1054,7 +1052,7 @@ Item {
                             text: qsTr("PINNED (%1)").arg(panel.dockModel.length)
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             font.weight: Font.Bold
                             font.letterSpacing: 0.8
                         }
@@ -1082,7 +1080,7 @@ Item {
                         height: panel.appsListH
                         radius: 14
                         color: Theme.raised
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.borderSoft
                         clip: true
 
@@ -1095,7 +1093,7 @@ Item {
                             text: qsTr("No apps pinned yet.\nClick + Add on the right to pin apps.")
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                         }
 
                         ListView {
@@ -1157,7 +1155,7 @@ Item {
                                         visible: rowImg.status !== Image.Ready
                                         radius: 6
                                         color: Theme.tile
-                                        border.width: 1
+                                        border.width: 0
                                         border.color: Theme.border
                                         Glyph {
                                             anchors.centerIn: parent
@@ -1183,7 +1181,7 @@ Item {
                                         color: Theme.ink
                                         elide: Text.ElideRight
                                         font.family: Theme.font
-                                        font.pixelSize: 13
+                                        font.pixelSize: Theme.fontMd
                                         font.weight: Font.DemiBold
                                     }
                                     Rectangle {
@@ -1247,7 +1245,7 @@ Item {
                             text: qsTr("ADD APPS")
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             font.weight: Font.Bold
                             font.letterSpacing: 0.8
                         }
@@ -1258,7 +1256,7 @@ Item {
                             text: qsTr("%1 available").arg(panel.availableList.length)
                             color: Theme.textFaint
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             font.weight: Font.DemiBold
                         }
                     }
@@ -1268,7 +1266,7 @@ Item {
                         height: panel.appsListH
                         radius: 14
                         color: Theme.raised
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.borderSoft
                         clip: true
 
@@ -1306,7 +1304,7 @@ Item {
                                 selectionColor: Theme.accent
                                 selectedTextColor: Theme.inverse
                                 font.family: Theme.font
-                                font.pixelSize: 13
+                                font.pixelSize: Theme.fontMd
                                 font.weight: Font.Medium
                                 clip: true
                                 selectByMouse: true
@@ -1348,7 +1346,7 @@ Item {
                                   : qsTr("All detected apps are already pinned")
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                         }
 
                         ListView {
@@ -1408,7 +1406,7 @@ Item {
                                         visible: candImg.status !== Image.Ready
                                         radius: 6
                                         color: Theme.tile
-                                        border.width: 1
+                                        border.width: 0
                                         border.color: Theme.border
                                         Glyph {
                                             anchors.centerIn: parent
@@ -1430,7 +1428,7 @@ Item {
                                     color: Theme.ink
                                     elide: Text.ElideRight
                                     font.family: Theme.font
-                                    font.pixelSize: 13
+                                    font.pixelSize: Theme.fontMd
                                     font.weight: Font.DemiBold
                                 }
 
@@ -1465,7 +1463,7 @@ Item {
                                             text: qsTr("Add")
                                             color: candHover.hovered ? Theme.inverse : Theme.ink
                                             font.family: Theme.font
-                                            font.pixelSize: 12
+                                            font.pixelSize: Theme.fontBase
                                             font.weight: Font.Bold
                                         }
                                     }
@@ -1590,7 +1588,7 @@ Item {
                                     text: qsTr("Voice style")
                                     color: Theme.textDim
                                     font.family: Theme.font
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSm
                                     font.weight: Font.DemiBold
                                 }
 
@@ -1621,7 +1619,7 @@ Item {
                                         text: qsTr("Sound volume")
                                         color: Theme.textDim
                                         font.family: Theme.font
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.fontSm
                                         font.weight: Font.DemiBold
                                     }
                                     Item { width: Math.max(4, parent.width - 115); height: 1 }
@@ -1629,7 +1627,7 @@ Item {
                                         text: Math.round(panel.prefs.buddySfxVolume * 100) + "%"
                                         color: Theme.ink
                                         font.family: Theme.font
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.fontSm
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -1679,7 +1677,7 @@ Item {
                             text: qsTr("The neon halo your buddy wears when it's happy.")
                             color: Theme.textFaint
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap
                         }
                         Flow {
@@ -1718,7 +1716,7 @@ Item {
                                 text: qsTr("Provider")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 font.weight: Font.DemiBold
                             }
 
@@ -1841,7 +1839,7 @@ Item {
                                 color: panel.testState === "ok" ? Theme.success
                                      : panel.testState === "failed" ? Theme.danger : Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontBase
                                 wrapMode: Text.WordWrap
                                 maximumLineCount: 2
                                 elide: Text.ElideRight
@@ -1870,7 +1868,7 @@ Item {
                                 text: qsTr("Permission mode")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 font.weight: Font.DemiBold
                             }
 
@@ -1898,7 +1896,7 @@ Item {
                                           : qsTr("Read-only commands run straight away. Anything that changes files, runs programs or clicks asks you first.")
                                 color: panel.prefs.buddyPermissionMode === "bypass" ? Theme.warning : Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -2032,7 +2030,7 @@ Item {
                                 text: qsTr("Screenshot detail")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 font.weight: Font.DemiBold
                             }
                             Segmented {
@@ -2052,7 +2050,7 @@ Item {
                                       : qsTr("Larger screenshots (up to 1920×1080): small text and icons are easier to read, at a few thousand more tokens per screenshot.")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -2177,7 +2175,7 @@ Item {
                                 text: qsTr("Steps per task")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 font.weight: Font.DemiBold
                             }
                             Segmented {
@@ -2197,7 +2195,7 @@ Item {
                                 text: qsTr("How many tool steps Buddy may take for one request before it stops and reports back. Repeating the same action over and over is stopped sooner.")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 wrapMode: Text.WordWrap
                             }
                         }
@@ -2221,7 +2219,7 @@ Item {
                                   : qsTr("Nothing saved yet. When Buddy asks first, “Always allow” can remember a narrow rule here, such as “run git status” or “edit files in this folder”.")
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap
                         }
 
@@ -2243,7 +2241,7 @@ Item {
                                     text: ruleRow.modelData.label
                                     color: Theme.ink
                                     font.family: Theme.font
-                                    font.pixelSize: 12
+                                    font.pixelSize: Theme.fontBase
                                     font.weight: Font.Medium
                                     wrapMode: Text.WordWrap
                                 }
@@ -2295,7 +2293,7 @@ Item {
                                   : qsTr("Buddy reads, on every run:")
                             color: Theme.ink
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                             wrapMode: Text.WordWrap
                         }
@@ -2309,7 +2307,7 @@ Item {
                                 text: "• " + modelData.name + (modelData.truncated ? qsTr(" (cut short)") : "")
                                 color: Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 elide: Text.ElideRight
                             }
                         }
@@ -2319,7 +2317,7 @@ Item {
                             text: qsTr("Put standing instructions in a NOCH.md in the workspace folder (AGENTS.md and CLAUDE.md work too). Your own commands are Markdown files in .noch/commands; type / in the chat to list them. Buddy always asks before changing one of these files.")
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap
                         }
 
@@ -2329,7 +2327,7 @@ Item {
                             text: instructionsCard.note
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap
                         }
 
@@ -2458,8 +2456,8 @@ Item {
                 text: "Noch"
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 13
-                font.weight: Font.ExtraBold
+                font.pixelSize: Theme.fontMd
+                font.weight: Font.Bold
             }
             Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
@@ -2467,7 +2465,7 @@ Item {
                 height: 20
                 radius: 10
                 color: Theme.raised
-                border.width: 1
+                border.width: 0
                 border.color: Theme.border
                 Text {
                     id: verText
@@ -2475,7 +2473,7 @@ Item {
                     text: "v" + panel.version
                     color: Theme.textDim
                     font.family: Theme.font
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSm
                     font.weight: Font.DemiBold
                 }
             }

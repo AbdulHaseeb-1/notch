@@ -107,7 +107,7 @@ Item {
                 selectionColor: Theme.accent
                 selectedTextColor: Theme.inverse
                 font.family: Theme.font
-                font.pixelSize: 15
+                font.pixelSize: Theme.fontLg
                 font.weight: Font.Medium
                 clip: true
                 selectByMouse: true
@@ -263,7 +263,7 @@ Item {
                     color: Theme.ink
                     elide: Text.ElideRight
                     font.family: Theme.font
-                    font.pixelSize: 14
+                    font.pixelSize: Theme.fontMd
                     font.weight: row.modelData.kind === "calc" ? Font.Bold : Font.DemiBold
 
                     // The calculator row shows the sum being evaluated.
@@ -275,7 +275,7 @@ Item {
                         text: row.modelData.subtitle || ""
                         color: Theme.textFaint
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontBase
                     }
                 }
 
@@ -290,7 +290,7 @@ Item {
                     color: row.active ? Theme.textDim : Theme.textFaint
                     elide: Text.ElideRight
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     font.weight: Font.Medium
                 }
 
@@ -331,7 +331,7 @@ Item {
                         height: 17
                         radius: 5
                         color: Theme.raised
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.border
                         Text {
                             id: hintKey
@@ -339,7 +339,7 @@ Item {
                             text: hint.key
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontXs
                             font.weight: Font.Bold
                         }
                     }
@@ -348,7 +348,7 @@ Item {
                         text: parent.what
                         color: Theme.textFaint
                         font.family: Theme.font
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontXs
                         font.weight: Font.Medium
                     }
                 }
@@ -366,7 +366,7 @@ Item {
                 text: qsTr("%1 result(s)").arg(pcard.results.length)
                 color: Theme.textFaint
                 font.family: Theme.font
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontXs
             }
         }
     }

@@ -54,7 +54,7 @@ Rectangle {
     radius: Theme.radiusMd
     color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.06)
     border.width: 1
-    border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.34)
+    border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.16)
     focus: visible
     activeFocusOnTab: true
     Accessible.role: Accessible.Dialog
@@ -202,7 +202,7 @@ Rectangle {
         radius: Theme.radiusSm + 3
         color: picked ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.20)
                       : (cm.pressed ? Theme.glassFillActive : cm.containsMouse ? Theme.glassFillHover : Theme.glassFill)
-        border.width: 1
+        border.width: 0
         border.color: picked ? Theme.accent : Theme.glassBorderStrong
         Accessible.role: Accessible.CheckBox
         Accessible.name: c.label

@@ -40,7 +40,7 @@ Rectangle {
         text: self.label
         color: self.showHud ? Theme.text : Theme.inverse
         font.family: Theme.font
-        font.pixelSize: 12
+        font.pixelSize: Theme.fontBase
         font.weight: Font.Bold
     }
 }

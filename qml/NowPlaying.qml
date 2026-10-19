@@ -82,7 +82,7 @@ Item {
                 color: "#ffffff"
                 font.family: Theme.font
                 font.pixelSize: Math.round(8 * chip.s)
-                font.weight: Font.Black
+                font.weight: Font.Bold
             }
         }
         MouseArea {
@@ -187,7 +187,7 @@ Item {
                 anchors.fill: parent
                 radius: width / 2
                 color: Theme.raised
-                border.width: 1
+                border.width: 0
                 border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.45)
                 visible: miniCover.visible
                 clip: true
@@ -289,7 +289,7 @@ Item {
                 height: width
                 radius: Math.round(7 * chip.s)
                 color: Theme.raised
-                border.width: 1
+                border.width: 0
                 border.color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.5)
                 visible: barMiniCover.visible
                 clip: true

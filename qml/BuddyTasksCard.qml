@@ -93,7 +93,7 @@ Item {
                 text: card.day
                 color: Theme.textFaint
                 font.family: Theme.font
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontXs
             }
 
             Rectangle {
@@ -125,7 +125,7 @@ Item {
                 text: card.doneCount + " / " + card.items.length + qsTr(" done")
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontXs
                 font.weight: Font.DemiBold
             }
         }
@@ -190,7 +190,7 @@ Item {
                     text: row.modelData.text
                     color: row.modelData.done ? Theme.textFaint : Theme.text
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     elide: Text.ElideRight
                     opacity: row.modelData.done ? 0.62 : 1
                 }
@@ -249,7 +249,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontBase
                 clip: true
                 selectByMouse: true
 
@@ -275,7 +275,7 @@ Item {
                 text: qsTr("Clear done")
                 color: clearDoneHit.containsMouse ? Theme.ink : Theme.accent
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
 
                 MouseArea {

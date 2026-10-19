@@ -24,7 +24,7 @@ Rectangle {
     radius: Theme.radiusMd
     color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.07)
     border.width: 1
-    border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.38)
+    border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.24)
     focus: visible
     activeFocusOnTab: true
     Accessible.role: Accessible.Dialog

@@ -1125,7 +1125,7 @@ Item {
                 text: buddy.bubbleText
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
             }
         }

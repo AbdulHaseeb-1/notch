@@ -73,7 +73,7 @@ Item {
                 text: (card.ready && card.cd && card.cd.symbol) ? String(card.cd.symbol) : ""
                 color: Theme.ink
                 font.family: Theme.font
-                font.pixelSize: 13
+                font.pixelSize: Theme.fontMd
                 font.weight: Font.DemiBold
             }
             Text {
@@ -86,7 +86,7 @@ Item {
                       : ""
                 color: (card.ready && card.cd && card.cd.changePct >= 0) ? Theme.success : Theme.danger
                 font.family: Theme.font
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontBase
                 font.weight: Font.DemiBold
             }
         }
@@ -213,7 +213,7 @@ Item {
                           : ""
                     color: card.biasColor(card.cd ? card.cd.bias : "")
                     font.family: Theme.font
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontXs
                     font.weight: Font.DemiBold
                 }
             }
@@ -248,7 +248,7 @@ Item {
                 text: qsTr("Strength")
                 color: Theme.textFaint
                 font.family: Theme.font
-                font.pixelSize: 9
+                font.pixelSize: Theme.fontXs
             }
         }
 
@@ -258,7 +258,7 @@ Item {
             text: card.chartSummaryText()
             color: Theme.textDim
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             wrapMode: Text.WordWrap
             lineHeight: 1.2
         }

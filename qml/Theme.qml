@@ -3,7 +3,8 @@ import QtQuick
 
 // One theme for the whole app: dark stone.
 //
-// Warm, neutral dark greys with subtle borders and restrained contrast. There
+// Warm, neutral dark greys. Surfaces are told apart by fill, not by outlines:
+// borders are kept only where something floats over the desktop or has focus. There
 // is no light mode, no surface family and no accent picker any more: every
 // colour, type size, spacing step, radius and panel width lives here, once,
 // and every component reads this singleton (`Theme.ink`, `Theme.sp3`, ...).
@@ -12,14 +13,14 @@ import QtQuick
 // at run time and there is nothing to re-evaluate when "the theme changes".
 QtObject {
     // ---- stone ramp (darkest -> lightest) -------------------------------------
-    readonly property color stone950: "#0f0e0d"
-    readonly property color stone900: "#151413"
-    readonly property color stone850: "#1a1918"
-    readonly property color stone800: "#1f1e1c"
-    readonly property color stone750: "#252321"
-    readonly property color stone700: "#2c2a27"
-    readonly property color stone650: "#34312e"
-    readonly property color stone600: "#3d3a36"
+    readonly property color stone950: "#0a0a09"
+    readonly property color stone900: "#0e0e0d"
+    readonly property color stone850: "#131312"
+    readonly property color stone800: "#1a1918"
+    readonly property color stone750: "#211f1e"
+    readonly property color stone700: "#292826"
+    readonly property color stone650: "#312f2d"
+    readonly property color stone600: "#3a3835"
     readonly property color stone500: "#57534d"
     readonly property color stone400: "#78736b"
     readonly property color stone300: "#a29c93"
@@ -54,22 +55,22 @@ QtObject {
     readonly property color orb: stone950            // the desktop buddy's body
 
     // ---- lines ---------------------------------------------------------------
-    readonly property color border: "#33302d"
-    readonly property color borderSoft: "#292725"
+    readonly property color border: "#262422"
+    readonly property color borderSoft: "#1d1c1a"
     readonly property color borderStrong: stone600
-    readonly property color hairline: "#26ffffff"
+    readonly property color hairline: "#14ffffff"
 
     // ---- glass ---------------------------------------------------------------
     // Semi-transparent layers for the tool-call trace and history lists: a
     // whisper of light over the stone surface plus a faint rim. No blur and
     // no effects, so they are as cheap as a plain Rectangle.
-    readonly property real surfaceAlpha: 0.95        // flyouts / panels over the desktop
-    readonly property color glassFill: "#0affffff"     // ~4 % white
-    readonly property color glassFillHover: "#12ffffff"
-    readonly property color glassFillActive: "#1affffff"
-    readonly property color glassBorder: "#14ffffff"
-    readonly property color glassBorderStrong: "#24ffffff"
-    readonly property color glassDeep: "#59000000"     // recessed console wells
+    readonly property real surfaceAlpha: 0.97        // flyouts / panels over the desktop
+    readonly property color glassFill: "#08ffffff"     // ~3 % white
+    readonly property color glassFillHover: "#0fffffff"
+    readonly property color glassFillActive: "#16ffffff"
+    readonly property color glassBorder: "#0dffffff"
+    readonly property color glassBorderStrong: "#1cffffff"
+    readonly property color glassDeep: "#66000000"     // recessed console wells
     readonly property color scrim: "#8c000000"
 
     // ---- accent & status -------------------------------------------------------
@@ -111,6 +112,11 @@ QtObject {
     readonly property int fontMd: 13
     readonly property int fontLg: 15
     readonly property int fontXl: 17
+    // Weights: body text is Medium, labels and buttons DemiBold, titles Bold.
+    // (ExtraBold and Black are not used.)
+    readonly property int weightBody: Font.Medium
+    readonly property int weightLabel: Font.DemiBold
+    readonly property int weightTitle: Font.Bold
 
     // ---- spacing, radii, sizes -------------------------------------------------
     readonly property int sp1: 4

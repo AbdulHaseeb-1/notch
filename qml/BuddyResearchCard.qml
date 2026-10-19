@@ -51,7 +51,7 @@ Item {
                 height: bodyLabel.implicitHeight + 18
                 radius: 10
                 color: Theme.tile
-                border.width: 1
+                border.width: 0
                 border.color: Theme.tileEdge
 
                 Text {
@@ -62,7 +62,7 @@ Item {
                     text: (card.ready && card.digest && card.digest.summary) ? card.digest.summary : ""
                     color: Theme.text
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     wrapMode: Text.WordWrap
                     lineHeight: 1.18
                 }
@@ -72,7 +72,7 @@ Item {
                 text: qsTr("Key findings")
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
             }
 
@@ -100,7 +100,7 @@ Item {
                         text: parent.modelData
                         color: Theme.text
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontBase
                         wrapMode: Text.WordWrap
                         lineHeight: 1.18
                     }
@@ -119,7 +119,7 @@ Item {
                         text: qsTr("Assessment")
                         color: Theme.textDim
                         font.family: Theme.font
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSm
                         font.weight: Font.DemiBold
                     }
                     Rectangle {
@@ -140,7 +140,7 @@ Item {
                             text: card.sentimentLabel
                             color: card.ready ? card.sentimentColor(card.sentimentScore) : Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontXs
                             font.weight: Font.DemiBold
                         }
                     }
@@ -150,7 +150,7 @@ Item {
                                         : ""
                         color: Theme.textFaint
                         font.family: Theme.font
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontXs
                     }
                 }
                 Rectangle {
@@ -172,7 +172,7 @@ Item {
                 text: qsTr("Suggested reading (not fetched — just famous desks)")
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
             }
 
@@ -190,7 +190,7 @@ Item {
                         height: 24
                         radius: 12
                         color: srcHit.containsMouse || srcHit.pressed ? Theme.tileActive : Theme.tile
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.border
 
                         Row {
@@ -210,7 +210,7 @@ Item {
                                 text: srcBtn.modelData.name
                                 color: srcHit.containsMouse ? Theme.ink : Theme.text
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 font.weight: Font.DemiBold
                             }
                             Glyph {
@@ -236,7 +236,7 @@ Item {
                 text: qsTr("Sample content — Noch has no live feed wired up, so nothing here is real-time.")
                 color: Theme.textFaint
                 font.family: Theme.font
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontXs
                 width: parent.width
                 wrapMode: Text.WordWrap
             }

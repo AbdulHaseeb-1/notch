@@ -284,7 +284,7 @@ Item {
                               : (Media.hasTrack ? qsTr("NOW PLAYING") : qsTr("MUSIC"))
                         color: Theme.ink
                         font.family: Theme.font
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontXs
                         font.weight: Font.Bold
                         font.letterSpacing: 1.8
                         elide: Text.ElideRight
@@ -417,7 +417,7 @@ Item {
                                     text: srcChip.modelData.name
                                     color: srcChip.isCurrent ? Theme.ink : panel.textMuted
                                     font.family: Theme.font
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSm
                                     font.weight: srcChip.isCurrent ? Font.Bold : Font.Medium
                                 }
                             }
@@ -634,7 +634,7 @@ Item {
                     color: Theme.ink
                     elide: Text.ElideRight
                     font.family: Theme.font
-                    font.pixelSize: 16
+                    font.pixelSize: Theme.fontLg
                     font.weight: Font.Bold
                 }
                 Text {
@@ -643,7 +643,7 @@ Item {
                     color: panel.textMuted
                     elide: Text.ElideRight
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     font.weight: Font.Medium
                 }
             }
@@ -772,7 +772,7 @@ Item {
                       : (Media.hasTrack ? (panel.playing ? qsTr("LIVE") : qsTr("PAUSED")) : "0:00")
                 color: panel.textFaint
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
             }
@@ -785,7 +785,7 @@ Item {
                       : (Media.hasTrack && Media.sourceName ? Media.sourceName : "0:00")
                 color: panel.textFaint
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
             }
@@ -907,8 +907,8 @@ Item {
                         text: "1"
                         color: "#ffffff"
                         font.family: Theme.font
-                        font.pixelSize: 8
-                        font.weight: Font.Black
+                        font.pixelSize: Theme.fontXs
+                        font.weight: Font.Bold
                     }
                 }
             }
@@ -954,7 +954,7 @@ Item {
                 text: Math.round(Media.volume * 100) + "%"
                 color: panel.textFaint
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 font.weight: Font.DemiBold
                 font.features: ({ "tnum": 1 })
             }
@@ -1008,7 +1008,7 @@ Item {
                         text: qRow.index + 1
                         color: qRow.current ? panel.accent : panel.textFaint
                         font.family: Theme.font
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSm
                         font.weight: Font.DemiBold
                         font.features: ({ "tnum": 1 })
                     }
@@ -1023,7 +1023,7 @@ Item {
                         color: qRow.current ? panel.accentLight : Theme.text
                         elide: Text.ElideRight
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontBase
                         font.weight: qRow.current ? Font.Bold : Font.Normal
                     }
 
