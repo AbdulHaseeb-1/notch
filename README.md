@@ -168,3 +168,5 @@ server: deny, approve, reject, plan/bypass modes, 529 retry, redaction,
 compaction, loop guard, cancel during an approval, streamed text and tool
 calls, cancel mid-stream, stream error and truncation retries, specialist
 handoffs and their toolsets, session memory, and the per-run memory index.
+`tst_buddysfx` checks the synthesized buddy cues (no NaN, headroom, silent
+edges, no pops), resampling, pacing, the speak-run cap, mute and volume.

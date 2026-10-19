@@ -1,26 +1,28 @@
 #include "BuddySfx.h"
 
 #include <QAudioDevice>
+#include <QAudioSink>
 #include <QDebug>
 #include <QDir>
-#include <QFile>
+#include <QGuiApplication>
+#include <QIODevice>
 #include <QMediaDevices>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QRandomGenerator>
-#include <QUrl>
 #include <QtMath>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
 
 namespace {
 
 constexpr int kSampleRate = 44100;
 constexpr double kTwoPi = 6.28318530717958647692;
 
-// Playback pacing. A cue is never retriggered while its previous instance
-// could still be sounding: restarting a playing QSoundEffect chops the sample
-// off with a click. Every cue ends with a short fade to silence, so waiting
-// until just before its end is enough.
+// Playback pacing: the same cue is not stacked on itself in quick succession
+// (see BuddySfx::admit; capped by kMaxCueGapMs below).
 constexpr qint64 kCueTailGraceMs = 25;
 constexpr qint64 kMinCueGapMs = 110;
 
@@ -140,59 +142,183 @@ QVector<double> roomTail(const QVector<double> &dry, const int (&delaysMs)[3], i
     return out;
 }
 
-QByteArray wrapWav(const QVector<qint16> &interleaved, int sampleRate, int channels)
-{
-    const quint32 dataSize = quint32(interleaved.size() * sizeof(qint16));
-    const quint32 riffSize = 36 + dataSize;
-    const quint16 audioFormat = 1; // PCM
-    const quint16 numChannels = quint16(channels);
-    const quint32 sr = quint32(sampleRate);
-    const quint32 byteRate = quint32(sampleRate * channels * sizeof(qint16));
-    const quint16 blockAlign = quint16(channels * sizeof(qint16));
-    const quint16 bitsPerSample = 16;
-    const quint32 fmtChunkSize = 16;
-
-    QByteArray out;
-    out.resize(44 + int(dataSize));
-    char *p = out.data();
-
-    std::memcpy(p + 0,  "RIFF", 4);
-    std::memcpy(p + 4,  &riffSize, 4);
-    std::memcpy(p + 8,  "WAVE", 4);
-    std::memcpy(p + 12, "fmt ", 4);
-    std::memcpy(p + 16, &fmtChunkSize, 4);
-    std::memcpy(p + 20, &audioFormat, 2);
-    std::memcpy(p + 22, &numChannels, 2);
-    std::memcpy(p + 24, &sr, 4);
-    std::memcpy(p + 28, &byteRate, 4);
-    std::memcpy(p + 32, &blockAlign, 2);
-    std::memcpy(p + 34, &bitsPerSample, 2);
-    std::memcpy(p + 36, "data", 4);
-    std::memcpy(p + 40, &dataSize, 4);
-    if (dataSize > 0)
-        std::memcpy(p + 44, interleaved.constData(), dataSize);
-    return out;
-}
-
 // Pitches used by the cues (a warm, pentatonic-friendly middle register).
 constexpr double C4 = 261.63, E4 = 329.63, G4 = 392.00, A4 = 440.00;
 constexpr double C5 = 523.25, D5 = 587.33, E5 = 659.26, G5 = 783.99, A5 = 880.00;
 constexpr double Cs5 = 554.37, C6 = 1046.50;
 
+
+// Upper bound for the "wait out the previous instance" pacing. The mixer
+// overlaps voices without clicks, so a long cue (the reply arpeggio) must not
+// swallow a legitimate repeat a second later; this only stops spam.
+constexpr qint64 kMaxCueGapMs = 350;
+constexpr int kMaxVoices = 8;
+
+// Gentle limiter for when several voices overlap: transparent below 0.8,
+// then eases towards 1.0 instead of hard clipping.
+inline float softClip(float x)
+{
+    const float a = std::fabs(x);
+    if (a <= 0.8f)
+        return x;
+    const float y = 0.8f + 0.2f * std::tanh((a - 0.8f) / 0.2f);
+    return x < 0 ? -y : y;
+}
+
 } // namespace
+
+// Pull-mode source for the QAudioSink: sums the active voices and writes them
+// in whatever format the device asked for. readData() may run on the audio
+// thread, so the voice list is guarded by a mutex (held for microseconds).
+class SfxMixer final : public QIODevice
+{
+public:
+    struct Voice {
+        QSharedPointer<const QVector<float>> data; // interleaved stereo
+        qsizetype frame = 0;
+        float gain = 1.0f;
+        int fadeLeft = -1;   // frames left of a forced fade-out, -1 = none
+        int fadeLen = 1;
+    };
+
+    SfxMixer(const QAudioFormat &format, QObject *parent)
+        : QIODevice(parent), m_format(format) {}
+
+    void add(const QSharedPointer<const QVector<float>> &data, float gain)
+    {
+        if (!data || data->isEmpty())
+            return;
+        QMutexLocker lock(&m_mutex);
+        if (m_voices.size() >= kMaxVoices) {
+            // Fade the oldest out quickly instead of cutting it.
+            Voice &old = m_voices.first();
+            const int f = std::max(1, m_format.sampleRate() / 200);
+            if (old.fadeLeft < 0 || old.fadeLeft > f) { old.fadeLeft = f; old.fadeLen = f; }
+        }
+        m_voices.append({ data, 0, gain, -1, 1 });
+    }
+
+    // Fade every voice to silence over ~ms (used for mute / volume 0).
+    void fadeAll(int ms)
+    {
+        QMutexLocker lock(&m_mutex);
+        const int f = std::max(1, m_format.sampleRate() * ms / 1000);
+        for (Voice &v : m_voices)
+            if (v.fadeLeft < 0 || v.fadeLeft > f) { v.fadeLeft = f; v.fadeLen = f; }
+    }
+
+    bool idle() const
+    {
+        QMutexLocker lock(&m_mutex);
+        return m_voices.isEmpty();
+    }
+
+    bool isSequential() const override { return true; }
+    qint64 bytesAvailable() const override { return (1 << 20) + QIODevice::bytesAvailable(); }
+
+protected:
+    qint64 readData(char *data, qint64 maxlen) override
+    {
+        const int ch = std::max(1, m_format.channelCount());
+        const int bps = std::max(1, m_format.bytesPerSample());
+        const qint64 frames = maxlen / (ch * bps);
+        if (frames <= 0)
+            return 0;
+        m_scratch.assign(size_t(frames) * 2, 0.0f);
+        {
+            QMutexLocker lock(&m_mutex);
+            for (auto it = m_voices.begin(); it != m_voices.end();) {
+                Voice &v = *it;
+                const qsizetype total = v.data->size() / 2;
+                const float *src = v.data->constData();
+                qint64 i = 0;
+                for (; i < frames && v.frame < total; ++i, ++v.frame) {
+                    float g = v.gain;
+                    if (v.fadeLeft >= 0) {
+                        if (v.fadeLeft == 0) { v.frame = total; break; }
+                        g *= float(v.fadeLeft) / float(v.fadeLen);
+                        --v.fadeLeft;
+                    }
+                    m_scratch[size_t(2 * i)] += src[2 * v.frame] * g;
+                    m_scratch[size_t(2 * i + 1)] += src[2 * v.frame + 1] * g;
+                }
+                if (v.frame >= total)
+                    it = m_voices.erase(it);
+                else
+                    ++it;
+            }
+        }
+        for (qint64 i = 0; i < frames; ++i) {
+            const float l = softClip(m_scratch[size_t(2 * i)]);
+            const float r = softClip(m_scratch[size_t(2 * i + 1)]);
+            for (int c = 0; c < ch; ++c) {
+                const float s = ch == 1 ? 0.5f * (l + r) : (c == 0 ? l : (c == 1 ? r : 0.0f));
+                char *out = data + (i * ch + c) * bps;
+                switch (m_format.sampleFormat()) {
+                case QAudioFormat::Float: { const float v = s; std::memcpy(out, &v, 4); break; }
+                case QAudioFormat::Int32: { const qint32 v = qint32(std::clamp(s, -1.0f, 1.0f) * 2147483520.0f); std::memcpy(out, &v, 4); break; }
+                case QAudioFormat::UInt8: { *reinterpret_cast<quint8 *>(out) = quint8(std::lround(128.0f + std::clamp(s, -1.0f, 1.0f) * 127.0f)); break; }
+                default: { const qint16 v = qint16(std::lround(std::clamp(s, -1.0f, 1.0f) * 32767.0f)); std::memcpy(out, &v, 2); break; }
+                }
+            }
+        }
+        return frames * ch * bps;
+    }
+    qint64 writeData(const char *, qint64) override { return -1; }
+
+private:
+    QAudioFormat m_format;
+    mutable QMutex m_mutex;
+    QList<Voice> m_voices;
+    std::vector<float> m_scratch;
+};
 
 BuddySfx::BuddySfx(QObject *parent)
     : QObject(parent)
 {
     m_clock.start();
-    m_recoveryTimer.setSingleShot(true);
-    m_recoveryTimer.setInterval(500);
-    connect(&m_recoveryTimer, &QTimer::timeout, this, &BuddySfx::recoverEffects);
-    connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
-        m_recoveryAttempts = 0;
-        scheduleRecovery();
+    // Never make noise from the offscreen screenshot harness or a CI run.
+    m_deviceDisabled = qEnvironmentVariableIntValue("NOCH_NO_AUDIO") != 0
+                       || QGuiApplication::platformName() == QLatin1String("offscreen");
+    if (qEnvironmentVariableIntValue("NOCH_FORCE_AUDIO") != 0)   // diagnostics
+        m_deviceDisabled = false;
+    m_idleTimer.setSingleShot(true);
+    m_idleTimer.setInterval(4000);
+    connect(&m_idleTimer, &QTimer::timeout, this, [this] {
+        if (m_mixer && !m_mixer->idle())
+            m_idleTimer.start();
+        else
+            dropSink();     // release the device while the buddy is quiet
     });
-    rebuildEffects();
+    connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        // Default device switched, headphones plugged, etc.: reopen lazily on
+        // the next cue, in that device's own format.
+        dropSink();
+        m_failures = 0;
+        m_retryAfterMs = 0;
+        const bool avail = !QMediaDevices::defaultAudioOutput().isNull();
+        if (avail != m_outputAvailable) {
+            m_outputAvailable = avail;
+            emit outputChanged();
+        }
+    });
+    // Cues used to be written to %TEMP%\noch-buddy-sfx as WAV files for
+    // QSoundEffect; they are rendered in memory now, so tidy that folder up.
+    QDir(QDir::temp().filePath(QStringLiteral("noch-buddy-sfx"))).removeRecursively();
+    rebuildCues();
+}
+
+BuddySfx::~BuddySfx()
+{
+    dropSink();
+}
+
+QStringList BuddySfx::cueNames()
+{
+    return { QStringLiteral("wake"), QStringLiteral("pop"), QStringLiteral("dismiss"),
+             QStringLiteral("think"), QStringLiteral("reply"), QStringLiteral("happy"),
+             QStringLiteral("drop"), QStringLiteral("speak0"), QStringLiteral("speak1"),
+             QStringLiteral("speak2"), QStringLiteral("error") };
 }
 
 void BuddySfx::setEnabled(bool on)
@@ -200,34 +326,20 @@ void BuddySfx::setEnabled(bool on)
     if (m_enabled == on)
         return;
     m_enabled = on;
-    if (!on)
-        stopEffects();
+    if (!on && m_mixer)
+        m_mixer->fadeAll(12);   // a short fade, never a click
     emit enabledChanged();
 }
 
 void BuddySfx::setVolume(double v)
 {
-    const double clamped = std::clamp(v, 0.0, 1.0);
-    if (qFuzzyCompare(m_volume, clamped))
+    const double clamped = std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0;
+    if (qFuzzyCompare(1.0 + m_volume, 1.0 + clamped))
         return;
     m_volume = clamped;
-    if (clamped <= 0.001) {
-        stopEffects();
-    } else {
-        for (QSoundEffect *fx : std::as_const(m_effects)) {
-            if (fx)
-                fx->setVolume(outputGain());
-        }
-    }
+    if (clamped <= 0.001 && m_mixer)
+        m_mixer->fadeAll(12);
     emit volumeChanged();
-}
-
-void BuddySfx::stopEffects()
-{
-    for (QSoundEffect *fx : std::as_const(m_effects)) {
-        if (fx)
-            fx->stop();
-    }
 }
 
 // The slider is perceptual: loudness grows roughly with the square of the
@@ -246,7 +358,7 @@ void BuddySfx::setStyle(const QString &s)
     if (m_style == norm)
         return;
     m_style = norm;
-    rebuildEffects();
+    rebuildCues();
     emit styleChanged();
 }
 
@@ -259,10 +371,38 @@ double BuddySfx::pitchMultiplier() const
     return 1.0;
 }
 
-void BuddySfx::play(const QString &cue)
+void BuddySfx::rebuildCues()
+{
+    const double pitch = pitchMultiplier();
+    m_cues.clear();
+    m_deviceCues.clear();
+    for (const QString &cue : cueNames()) {
+        auto data = QSharedPointer<const QVector<float>>::create(renderCue(cue, pitch));
+        m_cueMs.insert(cue, int(qint64(data->size() / 2) * 1000 / kSynthRate));
+        m_cues.insert(cue, data);
+        if (m_deviceCueRate > 0)
+            m_deviceCues.insert(cue, QSharedPointer<const QVector<float>>::create(
+                                         resampleStereo(*data, kSynthRate, m_deviceCueRate)));
+    }
+}
+
+bool BuddySfx::admit(const QString &key, qint64 nowMs)
+{
+    // Don't stack the same cue on itself in quick succession (it would read
+    // as spam / a flam), but never wait longer than kMaxCueGapMs.
+    const qint64 gap = std::clamp(qint64(m_cueMs.value(key)) - kCueTailGraceMs,
+                                  kMinCueGapMs, kMaxCueGapMs);
+    const auto last = m_lastPlayMs.constFind(key);
+    if (last != m_lastPlayMs.constEnd() && nowMs - *last < gap)
+        return false;
+    m_lastPlayMs.insert(key, nowMs);
+    return true;
+}
+
+bool BuddySfx::play(const QString &cue)
 {
     if (!m_enabled || m_volume <= 0.001)
-        return;
+        return false;
 
     QString key = (cue == QLatin1String("open"))    ? QStringLiteral("wake")
                 : (cue == QLatin1String("success")) ? QStringLiteral("reply")
@@ -276,128 +416,153 @@ void BuddySfx::play(const QString &cue)
         // continuous chatter, stay quiet for the rest of the answer. Only a
         // real pause (the reveal is over) re-arms the run. Every attempt
         // counts as activity, so a long reveal can't creep the run back on.
-        if (now - m_lastSpeakMs > kSpeakRunGapMs)
+        if (m_lastSpeakMs < 0 || now - m_lastSpeakMs > kSpeakRunGapMs)
             m_speakRunStartMs = now;
         m_lastSpeakMs = now;
         if (now - m_speakRunStartMs > kSpeakRunMaxMs)
-            return;
-
-        // Three soft syllables, never the same one twice in a row, so the
-        // babble while an answer reveals sounds musical instead of mechanical.
+            return false;
+        // All three syllables share one pacing slot.
+        if (!admit(QStringLiteral("speak0"), now))
+            return false;
         int pick = int(QRandomGenerator::global()->bounded(2));
         if (pick >= m_lastSpeakVariant)
             ++pick;
         m_lastSpeakVariant = pick;
         key = QStringLiteral("speak%1").arg(pick);
+    } else {
+        if (!m_cues.contains(key))
+            return false;
+        if (!admit(key, now))
+            return false;
     }
 
-    // Don't retrigger a cue while its previous instance could still be
-    // sounding - a restart cuts the tail and reads as a click. Each cue waits
-    // out its own length (its final stretch is already fading to silence).
-    const qint64 gap = std::max(kMinCueGapMs, qint64(m_cueMs.value(key)) - kCueTailGraceMs);
-    if (now - m_lastPlayMs.value(key, 0) < gap)
-        return;
-    m_lastPlayMs.insert(key, now);
-
-    QSoundEffect *fx = m_effects.value(key, nullptr);
-    if (!fx)
-        fx = m_effects.value(QStringLiteral("wake"), nullptr);
-    if (fx && fx->status() == QSoundEffect::Error) {
-        qWarning() << "BuddySfx: effect is in error state for cue" << key
-                   << "source" << fx->source();
-        scheduleRecovery();
-        return;
-    }
-    if (fx && fx->status() == QSoundEffect::Ready) {
-        fx->setVolume(outputGain());
-        fx->play();
-    } else if (fx) {
-        qWarning() << "BuddySfx: effect not ready for cue" << key
-                   << "status" << fx->status() << "source" << fx->source();
-    }
+    ++m_voicesStarted;
+    if (!ensureSink())
+        return true;        // let through, but there is no device to play on
+    m_mixer->add(m_deviceCues.value(key), float(outputGain()));
+    m_idleTimer.start();
+    return true;
 }
 
-void BuddySfx::scheduleRecovery()
+bool BuddySfx::ensureSink()
 {
-    if (m_recoveryAttempts >= 3)
-        return;
-    if (!m_recoveryTimer.isActive())
-        m_recoveryTimer.start();
-}
+    if (m_sink && m_mixer)
+        return true;
+    if (m_deviceDisabled)
+        return false;
+    const qint64 now = m_clock.elapsed();
+    if (now < m_retryAfterMs)
+        return false;
 
-void BuddySfx::recoverEffects()
-{
-    ++m_recoveryAttempts;
-    qInfo() << "BuddySfx: reinitializing effects after audio backend change/failure";
-    stopEffects();
-    for (QSoundEffect *fx : std::as_const(m_effects)) {
-        if (fx)
-            fx->deleteLater();
+    const QAudioDevice dev = QMediaDevices::defaultAudioOutput();
+    if (dev.isNull()) {
+        if (m_outputAvailable) {
+            m_outputAvailable = false;
+            emit outputChanged();
+        }
+        return false;
     }
-    m_effects.clear();
-    rebuildEffects();
-}
 
-void BuddySfx::rebuildEffects()
-{
-    const QString dirPath = QDir::temp().filePath(QStringLiteral("noch-buddy-sfx"));
-    QDir().mkpath(dirPath);
+    // Ask for what the device mixes in natively (WASAPI shared mode only
+    // accepts its own mix format), preferring float, then 16-bit.
+    QAudioFormat fmt = dev.preferredFormat();
+    if (fmt.sampleRate() <= 0)
+        fmt.setSampleRate(48000);
+    if (fmt.channelCount() <= 0)
+        fmt.setChannelCount(2);
+    QAudioFormat f = fmt;
+    f.setSampleFormat(QAudioFormat::Float);
+    if (dev.isFormatSupported(f)) {
+        fmt = f;
+    } else {
+        f.setSampleFormat(QAudioFormat::Int16);
+        if (dev.isFormatSupported(f) || fmt.sampleFormat() == QAudioFormat::Unknown)
+            fmt = f;
+    }
+    m_format = fmt;
 
-    // Files from the previous synth ("buddy_<cue>_<style>.wav") are never
-    // used again; don't leave them behind in the temp folder.
-    QDir dir(dirPath);
-    const QStringList legacy = dir.entryList({ QStringLiteral("buddy_*.wav") }, QDir::Files);
-    for (const QString &name : legacy)
-        dir.remove(name);
+    if (m_deviceCueRate != fmt.sampleRate()) {
+        m_deviceCueRate = fmt.sampleRate();
+        m_deviceCues.clear();
+        for (auto it = m_cues.cbegin(); it != m_cues.cend(); ++it)
+            m_deviceCues.insert(it.key(), QSharedPointer<const QVector<float>>::create(
+                                              resampleStereo(*it.value(), kSynthRate, m_deviceCueRate)));
+    }
 
-    const QStringList cues = {
-        QStringLiteral("wake"),
-        QStringLiteral("pop"),
-        QStringLiteral("dismiss"),
-        QStringLiteral("think"),
-        QStringLiteral("reply"),
-        QStringLiteral("happy"),
-        QStringLiteral("drop"),
-        QStringLiteral("speak0"),
-        QStringLiteral("speak1"),
-        QStringLiteral("speak2"),
-        QStringLiteral("error")
+    auto fail = [this, now](const char *why) {
+        qWarning() << "BuddySfx: cannot open sound output:" << why << m_format;
+        dropSink();
+        ++m_failures;
+        m_retryAfterMs = now + std::min<qint64>(30000, 500LL << std::min(m_failures, 6));
+        return false;
     };
 
-    const double pitch = pitchMultiplier();
-
-    for (const QString &cue : cues) {
-        // v2 in the name: never let a stale file from the old synth be reused.
-        const QString filePath = QDir(dirPath).filePath(
-            QStringLiteral("buddy2_%1_%2.wav").arg(cue, m_style));
-        const QByteArray wav = synthesizeCue(cue, pitch);
-        // Remember how long the cue sounds (44-byte WAV header, stereo
-        // 16-bit frames) so play() can keep a retrigger from chopping off
-        // the tail with a click.
-        const int frames = int(std::max<qsizetype>(0, (wav.size() - 44) / (2 * int(sizeof(qint16)))));
-        m_cueMs.insert(cue, frames * 1000 / kSampleRate);
-        QFile f(filePath);
-        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            f.write(wav);
-            f.close();
+    m_mixer = new SfxMixer(fmt, this);
+    m_mixer->open(QIODevice::ReadOnly);
+    m_sink = new QAudioSink(dev, fmt, this);
+    m_sink->setBufferSize(fmt.bytesForDuration(80000));   // ~80 ms: low latency, no underruns
+    QAudioSink *sink = m_sink;
+    connect(m_sink, &QAudioSink::stateChanged, this, [this, sink](QAudio::State st) {
+        if (sink != m_sink)
+            return;
+        const QAudio::Error err = sink->error();
+        if (st == QAudio::StoppedState && err != QAudio::NoError && err != QAudio::UnderrunError) {
+            qWarning() << "BuddySfx: sound output stopped with error" << err;
+            ++m_failures;
+            m_retryAfterMs = m_clock.elapsed() + std::min<qint64>(30000, 500LL << std::min(m_failures, 6));
+            QMetaObject::invokeMethod(this, [this, sink] { if (sink == m_sink) dropSink(); },
+                                      Qt::QueuedConnection);
         }
+    });
+    m_sink->start(m_mixer);
+    if (m_sink->error() != QAudio::NoError && m_sink->error() != QAudio::UnderrunError)
+        return fail("start failed");
+    if (m_sink->state() == QAudio::StoppedState)
+        return fail("device refused the format");
+    m_failures = 0;
+    if (!m_outputAvailable) {
+        m_outputAvailable = true;
+        emit outputChanged();
+    }
+    return true;
+}
 
-        QSoundEffect *fx = new QSoundEffect(this);
-        fx->setLoopCount(1);
-        connect(fx, &QSoundEffect::statusChanged, this, [this, fx, cue] {
-            if (fx->status() == QSoundEffect::Error) {
-                qWarning() << "BuddySfx: failed to load cue" << cue
-                           << "from" << fx->source();
-                scheduleRecovery();
-            }
-        });
-        m_effects.insert(cue, fx);
-        fx->setSource(QUrl::fromLocalFile(filePath));
-        fx->setVolume(outputGain());
+void BuddySfx::dropSink()
+{
+    m_idleTimer.stop();
+    if (m_sink) {
+        QAudioSink *s = m_sink;
+        m_sink = nullptr;
+        s->stop();
+        delete s;
+    }
+    if (m_mixer) {
+        m_mixer->close();
+        delete m_mixer;
+        m_mixer = nullptr;
     }
 }
 
-QByteArray BuddySfx::synthesizeCue(const QString &cue, double pitchScale)
+QVector<float> BuddySfx::resampleStereo(const QVector<float> &in, int fromRate, int toRate)
+{
+    if (fromRate <= 0 || toRate <= 0 || fromRate == toRate || in.size() < 4)
+        return in;
+    const qsizetype inFrames = in.size() / 2;
+    const qsizetype outFrames = std::max<qsizetype>(1, qsizetype(double(inFrames) * toRate / fromRate));
+    QVector<float> out(outFrames * 2);
+    const double step = double(fromRate) / toRate;
+    for (qsizetype i = 0; i < outFrames; ++i) {
+        const double pos = i * step;
+        const qsizetype a = std::min<qsizetype>(qsizetype(pos), inFrames - 1);
+        const qsizetype b = std::min<qsizetype>(a + 1, inFrames - 1);
+        const float t = float(pos - double(a));
+        out[2 * i] = in[2 * a] + (in[2 * b] - in[2 * a]) * t;
+        out[2 * i + 1] = in[2 * a + 1] + (in[2 * b + 1] - in[2 * a + 1]) * t;
+    }
+    return out;
+}
+
+QVector<float> BuddySfx::renderCue(const QString &cue, double pitchScale)
 {
     QVector<double> mix;
     double level = 0.42;      // peak after normalising (≈ -7.5 dBFS)
@@ -469,6 +634,7 @@ QByteArray BuddySfx::synthesizeCue(const QString &cue, double pitchScale)
         cutoff = 3000.0;
     }
 
+
     if (mix.isEmpty())
         mix.resize(64, 0.0);
 
@@ -484,9 +650,13 @@ QByteArray BuddySfx::synthesizeCue(const QString &cue, double pitchScale)
     double peak = 1e-9;
     for (int i = 0; i < frames; ++i) {
         const double dry = i < mix.size() ? mix[i] : 0.0;
-        left[i] = dry + wet * tailL[i];
-        right[i] = dry + wet * (i < tailR.size() ? tailR[i] : 0.0);
-        peak = std::max(peak, std::max(std::abs(left[i]), std::abs(right[i])));
+        double l = dry + wet * tailL[i];
+        double r = dry + wet * (i < tailR.size() ? tailR[i] : 0.0);
+        if (!std::isfinite(l)) l = 0.0;
+        if (!std::isfinite(r)) r = 0.0;
+        left[i] = l;
+        right[i] = r;
+        peak = std::max(peak, std::max(std::abs(l), std::abs(r)));
     }
 
     // Trim the inaudible end of the tail so cues stay small and snappy.
@@ -495,16 +665,21 @@ QByteArray BuddySfx::synthesizeCue(const QString &cue, double pitchScale)
     while (last > 0 && std::abs(left[last]) < floor && std::abs(right[last]) < floor)
         --last;
     const int keep = std::min(frames, last + int(0.005 * kSampleRate));
-    const int fade = std::min(keep, int(0.020 * kSampleRate));
+    const int fade = std::max(1, std::min(keep, int(0.020 * kSampleRate)));
+    const int fadeIn = std::max(1, std::min(keep / 4, int(0.002 * kSampleRate)));
 
+    // Normalise to the cue's level, with a 2 ms safety fade-in and a 20 ms
+    // fade-out so the buffer starts and ends exactly at silence (no clicks).
     const double gain = level / peak;
-    QVector<qint16> pcm(keep * 2);
+    QVector<float> out(keep * 2);
     for (int i = 0; i < keep; ++i) {
         double g = gain;
+        if (i < fadeIn)
+            g *= double(i) / double(fadeIn);
         if (i >= keep - fade)
-            g *= double(keep - i) / double(fade);
-        pcm[2 * i]     = qint16(std::clamp(left[i] * g, -0.98, 0.98) * 32767.0);
-        pcm[2 * i + 1] = qint16(std::clamp(right[i] * g, -0.98, 0.98) * 32767.0);
+            g *= double(keep - 1 - i) / double(fade);
+        out[2 * i]     = float(std::clamp(left[i] * g, -level, level));
+        out[2 * i + 1] = float(std::clamp(right[i] * g, -level, level));
     }
-    return wrapWav(pcm, kSampleRate, 2);
+    return out;
 }
