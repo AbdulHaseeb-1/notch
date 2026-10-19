@@ -224,6 +224,18 @@ Item {
             height: Math.round(20 * chip.s)
             anchors.verticalCenter: parent.verticalCenter
 
+            // The bars step ~9 times a second instead of animating every
+            // frame: the notch window is as large as the screen, so a 60 fps
+            // animation here repainted all of it for as long as music played.
+            readonly property bool live: chip.playing && !chip.barOpen && chip.visible
+            property int tick: 0
+            Timer {
+                interval: 110
+                repeat: true
+                running: meter.live
+                onTriggered: meter.tick += 1
+            }
+
             Repeater {
                 model: 4
 
@@ -231,7 +243,9 @@ Item {
                     id: bar
 
                     required property int index
-                    property real level: chip.playing ? 0.45 : 0.22
+                    readonly property real level: !meter.live ? (chip.playing ? 0.45 : 0.22)
+                        : 0.22 + 0.78 * (0.5 + 0.5 * Math.sin(meter.tick * (0.55 + bar.index * 0.17)
+                                                              + bar.index * 1.7))
 
                     x: index * Math.round(5 * chip.s)
                     anchors.verticalCenter: parent.verticalCenter
@@ -249,19 +263,6 @@ Item {
                             color: Qt.rgba(chip.dynAccent.r, chip.dynAccent.g, chip.dynAccent.b, 0.32)
                             Behavior on color { ColorAnimation { duration: 120 } }
                         }
-                    }
-
-                    SequentialAnimation on level {
-                        running: chip.playing && !chip.barOpen && chip.visible
-                        loops: Animation.Infinite
-                        // `on <property>` replaces the binding while it runs,
-                        // so bars used to freeze mid-value when paused. Resting
-                        // height back on the way out.
-                        onRunningChanged: if (!running)
-                            bar.level = Qt.binding(() => chip.playing ? 0.45 : 0.22)
-
-                        NumberAnimation { to: 1.0; duration: 340 + bar.index * 110; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 0.22; duration: 340 + bar.index * 110; easing.type: Easing.InOutSine }
                     }
                 }
             }

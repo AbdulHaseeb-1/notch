@@ -693,12 +693,15 @@ Item {
         }
     }
 
-    // VSync-locked FrameAnimation runs while eyes or expressions are active.
+    // VSync-locked FrameAnimation runs while eyes or expressions are moving.
+    // `springing` is raised by everything that changes the face (setMood, hop,
+    // cursor movement, hover) and dropped once the spring settles. A resting
+    // mood such as "sleepy" must NOT keep the loop alive: the notch window is
+    // as large as the screen, so every frame repaints all of it.
     FrameAnimation {
         id: gazeSpring
         running: buddy.visible && !buddy.motionPaused
-                 && (buddy.springing || buddy.session !== "idle" || buddy.busy
-                     || buddy.mood !== "neutral" || buddyHit.containsMouse)
+                 && (buddy.springing || buddy.session !== "idle" || buddy.busy)
         onTriggered: {
             const dt = Math.min(0.033, Math.max(0.004, frameTime))
             buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
@@ -961,8 +964,9 @@ Item {
         Item {
             anchors.fill: parent
             // Turning the finished rings is only a transform; their geometry
-            // is never rebuilt while they spin.
-            NumberAnimation on rotation {
+            // is never rebuilt while they spin. An animator turns them on the
+            // render thread, so the GUI thread does no work per frame.
+            RotationAnimator on rotation {
                 from: 0
                 to: 360
                 duration: buddy.mo < 1 ? 9000 : 3600
@@ -1943,6 +1947,7 @@ Item {
             buddy.wake()
             dozeTimer.restart()
         }
+        onExited: buddy.springing = true
         onPressed: (mouse) => {
             buddy.wake()
             dozeTimer.restart()

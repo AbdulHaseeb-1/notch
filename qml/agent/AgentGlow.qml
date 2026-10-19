@@ -70,44 +70,52 @@ Window {
         readonly property real edgeAlpha: (0.28 + 0.50 * glow.intensity) * (0.72 + 0.28 * pulse)
 
         // Four feathered edges. Each fades from the screen edge inwards.
-        Rectangle {
-            width: parent.width
-            height: glow.depth
-            gradient: Gradient {
-                GradientStop { position: 0; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha) }
-                GradientStop { position: 0.45; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha * 0.3) }
-                GradientStop { position: 1; color: "transparent" }
+        // The gradient stops are constant (a changing stop colour makes Qt
+        // build and cache a new gradient texture on every frame); the pulse
+        // only drives the opacity of the group.
+        Item {
+            anchors.fill: parent
+            opacity: frame.edgeAlpha
+
+            Rectangle {
+                width: parent.width
+                height: glow.depth
+                gradient: Gradient {
+                    GradientStop { position: 0; color: glow.tint }
+                    GradientStop { position: 0.45; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, 0.3) }
+                    GradientStop { position: 1; color: "transparent" }
+                }
             }
-        }
-        Rectangle {
-            y: parent.height - height
-            width: parent.width
-            height: glow.depth
-            gradient: Gradient {
-                GradientStop { position: 0; color: "transparent" }
-                GradientStop { position: 0.55; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha * 0.3) }
-                GradientStop { position: 1; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha) }
+            Rectangle {
+                y: parent.height - height
+                width: parent.width
+                height: glow.depth
+                gradient: Gradient {
+                    GradientStop { position: 0; color: "transparent" }
+                    GradientStop { position: 0.55; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, 0.3) }
+                    GradientStop { position: 1; color: glow.tint }
+                }
             }
-        }
-        Rectangle {
-            width: glow.depth
-            height: parent.height
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha) }
-                GradientStop { position: 0.45; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha * 0.3) }
-                GradientStop { position: 1; color: "transparent" }
+            Rectangle {
+                width: glow.depth
+                height: parent.height
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: glow.tint }
+                    GradientStop { position: 0.45; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, 0.3) }
+                    GradientStop { position: 1; color: "transparent" }
+                }
             }
-        }
-        Rectangle {
-            x: parent.width - width
-            width: glow.depth
-            height: parent.height
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0; color: "transparent" }
-                GradientStop { position: 0.55; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha * 0.3) }
-                GradientStop { position: 1; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, frame.edgeAlpha) }
+            Rectangle {
+                x: parent.width - width
+                width: glow.depth
+                height: parent.height
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0; color: "transparent" }
+                    GradientStop { position: 0.55; color: Qt.rgba(glow.tint.r, glow.tint.g, glow.tint.b, 0.3) }
+                    GradientStop { position: 1; color: glow.tint }
+                }
             }
         }
 

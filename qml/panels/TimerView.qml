@@ -22,9 +22,9 @@ Item {
     implicitWidth: 368
     implicitHeight: col.implicitHeight
 
-    // Ring progress, smoothed between the timer's ticks.
-    property real shownRatio: timer ? timer.ratio : 0
-    Behavior on shownRatio { NumberAnimation { duration: 220; easing.type: Easing.Linear } }
+    // Ring progress. It follows the timer directly (once a second); smoothing
+    // it would keep an animation running for the whole session.
+    readonly property real shownRatio: timer ? timer.ratio : 0
 
     component RoundButton: Item {
         id: rb

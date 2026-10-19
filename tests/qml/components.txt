@@ -1,2 +1,3 @@
 buddy/BuddyQuestionCard
 agent/ToolTraceBar
+panels/FocusTimer
