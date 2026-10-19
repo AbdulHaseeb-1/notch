@@ -304,10 +304,13 @@ private:
     QTimer m_retryTimer;         // backoff before re-sending a failed model call
     int m_retryCount = 0;
     QHash<QString, int> m_callRepeats;  // name+input fingerprint -> count in this run
+    QString m_lastComputerFp;           // computer calls: the previous call's fingerprint ...
+    int m_computerRepeat = 0;           // ... and how many times in a row it has come
     QJsonArray m_traceSpans;
     QString m_traceId;
     QElapsedTimer m_modelTimer;
     int m_compactedResults = 0;
+    mutable int m_lastCacheMark = -1;   // message index the previous request ended its cacheable prefix at
     int m_cachedTokens = 0;
     int m_deniedCalls = 0;
 

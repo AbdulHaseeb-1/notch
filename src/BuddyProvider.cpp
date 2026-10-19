@@ -43,9 +43,14 @@ const char kBatchHalted[] = "Not executed: an earlier computer action in this tu
 // Safety / recovery tuning.
 constexpr int kApprovalTimeoutSec = 120;   // unanswered approvals are declined
 constexpr int kMaxRetries = 3;             // transient API errors (429/5xx/529)
-constexpr int kMaxIdenticalCalls = 2;      // same tool + same input per run
+constexpr int kMaxIdenticalCalls = 2;      // same tool + same input per run (computer: back to back)
+constexpr int kMaxIdenticalComputerInputs = 8;   // the same click / key / type this often in one run is a loop
 constexpr int kKeepRecentToolResults = 4;  // newest tool results kept verbatim
 constexpr int kCompactMinChars = 600;      // older results above this are cleared
+// Trimming comes in batches so the prompt cache survives between them: nothing
+// is cleared until one of these is reached, then every older result goes.
+constexpr int kClearBatchResults = 6;      // bulky older results waiting to be cleared
+constexpr int kClearBatchImages = 4;       // ... or this many old screenshots
 constexpr int kMaxTraceFiles = 40;
 // Long answers. The old fixed max_tokens of 2048 cut longer replies off, and
 // the cut text was shown as if it were the whole answer.
@@ -218,6 +223,46 @@ bool resolveMemorySandboxPath(const QString &memoriesRoot, const QString &rawInp
             : QStringLiteral("/memories/") + sub;
     }
     return true;
+}
+
+// Ends a cacheable prefix after message `index` by putting cache_control on its
+// last block that can carry one. Done on the copy that is sent, never on the
+// stored conversation, so a marker never lingers on a message it no longer
+// belongs to. Returns false when the message has nothing markable.
+bool markCacheBreakpoint(QJsonArray &messages, int index)
+{
+    if (index < 0 || index >= messages.size())
+        return false;
+    QJsonObject msg = messages.at(index).toObject();
+    const QJsonObject marker{ { QStringLiteral("type"), QStringLiteral("ephemeral") } };
+    const QJsonValue content = msg.value(QStringLiteral("content"));
+    if (content.isString()) {
+        if (content.toString().trimmed().isEmpty())
+            return false;   // the API rejects cache_control on empty text
+        msg[QStringLiteral("content")] = QJsonArray{ QJsonObject{
+            { QStringLiteral("type"), QStringLiteral("text") },
+            { QStringLiteral("text"), content.toString() },
+            { QStringLiteral("cache_control"), marker } } };
+        messages[index] = msg;
+        return true;
+    }
+    if (!content.isArray())
+        return false;
+    QJsonArray blocks = content.toArray();
+    for (int i = blocks.size() - 1; i >= 0; --i) {
+        QJsonObject b = blocks.at(i).toObject();
+        const QString type = b.value(QStringLiteral("type")).toString();
+        if (type == QLatin1String("thinking") || type == QLatin1String("redacted_thinking"))
+            continue;   // cannot carry a marker
+        if (type == QLatin1String("text") && b.value(QStringLiteral("text")).toString().isEmpty())
+            continue;
+        b[QStringLiteral("cache_control")] = marker;
+        blocks[i] = b;
+        msg[QStringLiteral("content")] = blocks;
+        messages[index] = msg;
+        return true;
+    }
+    return false;
 }
 
 QString cleanBase(const QString &base)
@@ -1011,6 +1056,8 @@ void BuddyProvider::clearToolSteps()
     m_advisorInsightInTurn.clear();
     m_unlockedDeferredTools.clear();
     m_callRepeats.clear();
+    m_lastComputerFp.clear();
+    m_computerRepeat = 0;
     m_compactedResults = 0;
     m_cachedTokens = 0;
     m_deniedCalls = 0;
@@ -1727,6 +1774,19 @@ QJsonObject BuddyProvider::buildAgentPayload() const
                          { QStringLiteral("text"), systemPrompt() },
                          { QStringLiteral("cache_control"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("ephemeral") } } } };
         payload[QStringLiteral("system")] = QJsonArray{ sys };
+        // The conversation so far is a growing prefix too. Mark its tail so the
+        // next turn reads it from the cache instead of paying for it again, and
+        // mark the previous turn's tail as well: a long batch of parallel tool
+        // calls can push the new tail further than the 20-block look-back the
+        // cache uses to find an earlier entry. With the system prompt and the
+        // tool block that makes four breakpoints, the most the API allows.
+        QJsonArray msgs = m_agentMessages;
+        const int tail = int(msgs.size()) - 1;
+        if (m_lastCacheMark >= 0 && m_lastCacheMark < tail)
+            markCacheBreakpoint(msgs, m_lastCacheMark);
+        markCacheBreakpoint(msgs, tail);
+        payload[QStringLiteral("messages")] = msgs;
+        m_lastCacheMark = tail;
         if (!tools.isEmpty() && tools.last().isObject()) {
             QJsonArray cached = tools;
             QJsonObject last = cached.last().toObject();
@@ -1924,6 +1984,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_truncated = false;
     m_handoffCount = 0;
     m_computerBatchFailed = false;
+    m_lastCacheMark = -1;
     // One memory listing per run: a stable system prompt keeps the prompt
     // cache warm even when the model writes memories mid-run.
     m_memoryIndexSnapshot = memoryIndex();
@@ -3037,10 +3098,30 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
     const QString fp = call.name + QLatin1Char('|')
         + QString::fromUtf8(QJsonDocument(call.input).toJson(QJsonDocument::Compact));
     const QString fpHash = QString::fromLatin1(QCryptographicHash::hash(fp.toUtf8(), QCryptographicHash::Sha1).toHex());
-    if (!direct && ++m_callRepeats[fpHash] > kMaxIdenticalCalls) {
+    // Computer use is different: looking at the screen after almost every
+    // action is the normal rhythm, so a screenshot (same input every time) or
+    // a repeated key press is only a loop when it repeats back to back. A
+    // wider cap on identical input actions still ends a stuck click loop.
+    bool repeated = false;
+    if (!direct) {
+        if (call.name == QLatin1String("computer")) {
+            if (fpHash == m_lastComputerFp)
+                ++m_computerRepeat;
+            else {
+                m_lastComputerFp = fpHash;
+                m_computerRepeat = 1;
+            }
+            repeated = m_computerRepeat > kMaxIdenticalCalls;
+            if (!repeated && cu::isInputAction(cu::parseAction(call.input, m_computer->mapper().agentSize()).action))
+                repeated = ++m_callRepeats[fpHash] > kMaxIdenticalComputerInputs;
+        } else {
+            repeated = ++m_callRepeats[fpHash] > kMaxIdenticalCalls;
+        }
+    }
+    if (repeated) {
         deny(QStringLiteral("guard:repeat"), tr("Repeated identical call skipped"),
-             QStringLiteral("This exact tool call already ran %1 times in this task. It was not run again. "
-                            "Use the earlier result or try a different approach.").arg(kMaxIdenticalCalls));
+             QStringLiteral("This exact tool call keeps repeating in this task. It was not run again. "
+                            "Use the earlier result or try a different approach."));
         return;
     }
 
@@ -3201,11 +3282,18 @@ QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QStrin
 }
 
 
-// Context editing (Anthropic "clear tool uses" strategy): before each model
-// call, keep the newest kKeepRecentToolResults tool results verbatim and
-// replace older bulky ones (and every screenshot except the latest) with a
-// short placeholder, so long agent runs stay inside the context window and
-// cost less. Returns how many results were cleared this time.
+// Context editing (Anthropic "clear tool uses" strategy), in batches.
+//
+// The newest kKeepRecentToolResults tool results always stay verbatim. Older
+// bulky results (and every older screenshot) are replaced by a short
+// placeholder - but not one at a time. Rewriting a message early in the
+// conversation changes the prompt prefix, which throws away the prompt cache
+// for everything after it, so trimming every turn meant paying for the whole
+// history again on every turn. Instead nothing is touched until enough has
+// piled up (kClearBatch*), then all of it goes at once and the prefix stays
+// byte-identical for the next several turns. This is what `clear_at_least`
+// is for in Anthropic's context-editing API. Returns how many results were
+// cleared this time.
 int BuddyProvider::compactContext()
 {
     struct Ref { int msg; int block; };   // block -1 = whole OpenAI-style tool message
@@ -3225,26 +3313,27 @@ int BuddyProvider::compactContext()
     if (refs.size() <= kKeepRecentToolResults)
         return 0;
 
-    auto placeholder = [](int chars) {
-        return QStringLiteral("[Earlier tool result cleared to save context (%1 chars). Re-run the tool if you need it again.]").arg(chars);
-    };
-    int cleared = 0;
+    // What each older result is: nothing to clear, bulky text, or a screenshot.
+    struct Candidate { Ref ref; int chars; bool image; };   // chars: for the placeholder text
+    QList<Candidate> candidates;
+    int images = 0;
     for (int r = 0; r < refs.size() - kKeepRecentToolResults; ++r) {
         const Ref ref = refs.at(r);
-        QJsonObject m = m_agentMessages.at(ref.msg).toObject();
+        const QJsonObject m = m_agentMessages.at(ref.msg).toObject();
+        int chars = 0;
+        bool hasImage = false;
+        bool already = false;
         if (ref.block < 0) {
             const QString c = m.value(QStringLiteral("content")).toString();
-            if (c.size() < kCompactMinChars || c.startsWith(QLatin1String("[Earlier tool result cleared")))
-                continue;
-            m[QStringLiteral("content")] = placeholder(c.size());
+            chars = c.size();
+            already = c.startsWith(QLatin1String("[Earlier tool result cleared"));
         } else {
-            QJsonArray content = m.value(QStringLiteral("content")).toArray();
-            QJsonObject block = content.at(ref.block).toObject();
-            const QJsonValue v = block.value(QStringLiteral("content"));
-            int chars = 0;
-            bool hasImage = false;
+            const QJsonValue v = m.value(QStringLiteral("content")).toArray().at(ref.block).toObject()
+                                     .value(QStringLiteral("content"));
             if (v.isString()) {
                 chars = v.toString().size();
+                already = v.toString().startsWith(QLatin1String("[Earlier tool result cleared"))
+                       || v.toString().startsWith(QLatin1String("[Earlier screenshot removed"));
             } else {
                 for (const QJsonValue &part : v.toArray()) {
                     const QJsonObject po = part.toObject();
@@ -3253,19 +3342,39 @@ int BuddyProvider::compactContext()
                     chars += po.value(QStringLiteral("text")).toString().size();
                 }
             }
-            if (!hasImage && (chars < kCompactMinChars
-                    || (v.isString() && v.toString().startsWith(QLatin1String("[Earlier tool result cleared")))))
-                continue;
-            block[QStringLiteral("content")] = hasImage
+        }
+        if (already || (!hasImage && chars < kCompactMinChars))
+            continue;
+        candidates.append({ ref, chars, hasImage });
+        images += hasImage ? 1 : 0;
+    }
+    // Not worth breaking the cache for yet.
+    if (candidates.size() < kClearBatchResults && images < kClearBatchImages)
+        return 0;
+
+    auto placeholder = [](int chars) {
+        return QStringLiteral("[Earlier tool result cleared to save context (%1 chars). Re-run the tool if you need it again.]").arg(chars);
+    };
+    int cleared = 0;
+    for (const Candidate &cand : candidates) {
+        QJsonObject m = m_agentMessages.at(cand.ref.msg).toObject();
+        if (cand.ref.block < 0) {
+            m[QStringLiteral("content")] = placeholder(cand.chars);
+        } else {
+            QJsonArray content = m.value(QStringLiteral("content")).toArray();
+            QJsonObject block = content.at(cand.ref.block).toObject();
+            block[QStringLiteral("content")] = cand.image
                 ? QStringLiteral("[Earlier screenshot removed to save context.]")
-                : placeholder(chars);
-            content[ref.block] = block;
+                : placeholder(cand.chars);
+            content[cand.ref.block] = block;
             m[QStringLiteral("content")] = content;
         }
-        m_agentMessages[ref.msg] = m;
+        m_agentMessages[cand.ref.msg] = m;
         ++cleared;
     }
     m_compactedResults += cleared;
+    // The cached prefix just changed; the old tail marker points at nothing useful.
+    m_lastCacheMark = -1;
     return cleared;
 }
 

@@ -165,6 +165,45 @@ QStringList toolNames(const QJsonObject &req)
     return out;
 }
 
+// The conversation with the per-request cache markers taken off, to compare
+// what the model sees from one request to the next.
+QJsonArray withoutCacheMarkers(const QJsonArray &messages)
+{
+    QJsonArray out;
+    for (const QJsonValue &mv : messages) {
+        QJsonObject m = mv.toObject();
+        if (m.value("content").isArray()) {
+            QJsonArray blocks;
+            for (const QJsonValue &bv : m.value("content").toArray()) {
+                QJsonObject b = bv.toObject();
+                b.remove("cache_control");
+                blocks.append(b);
+            }
+            // A string turned into a one-block array for its marker is the same message.
+            if (blocks.size() == 1 && blocks.first().toObject().value("type").toString() == "text"
+                    && blocks.first().toObject().size() == 2)
+                m["content"] = blocks.first().toObject().value("text").toString();
+            else
+                m["content"] = blocks;
+        }
+        out.append(m);
+    }
+    return out;
+}
+
+// The text of a message whether it was sent as a string or, to carry a cache
+// marker, as one text block.
+QString messageText(const QJsonObject &msg)
+{
+    const QJsonValue c = msg.value("content");
+    if (c.isString())
+        return c.toString();
+    QString out;
+    for (const QJsonValue &b : c.toArray())
+        out += b.toObject().value("text").toString();
+    return out;
+}
+
 QString systemText(const QJsonObject &req)
 {
     return req.value("system").toArray().first().toObject().value("text").toString();
@@ -441,8 +480,9 @@ private slots:
         QVERIFY(lastToolResults(fake->requests).first().toObject().value("content").toString().contains("API key"));
     }
 
-    void oldToolResultsAreCompacted() {
-        // Six read-only rounds with bulky output, then a final answer.
+    void shortConversationsAreNotTrimmedAtAll() {
+        // Six bulky rounds: only two are older than the newest four, and two is
+        // not worth breaking the prompt cache for.
         for (int i = 0; i < 6; ++i)
             fake->queue.append({ 200, toolUse(QStringLiteral("c%1").arg(i),
                                               QStringLiteral("echo %1%2").arg(i).arg(QString(700, QLatin1Char('x')))) });
@@ -452,8 +492,136 @@ private slots:
         QVERIFY(ready.wait(10000));
         QCOMPARE(fake->requests.size(), 7);
         const QByteArray last = QJsonDocument(fake->requests.constLast()).toJson(QJsonDocument::Compact);
-        QCOMPARE(last.count("Earlier tool result cleared"), 2);   // 6 results, newest 4 kept
-        QCOMPARE(bp->responseMeta().value("compacted").toInt(), 2);
+        QCOMPARE(last.count("Earlier tool result cleared"), 0);
+        QCOMPARE(bp->responseMeta().value("compacted").toInt(), 0);
+    }
+
+    void trimmingIsBatchedSoTheCachedPrefixSurvives() {
+        for (int i = 0; i < 16; ++i)
+            fake->queue.append({ 200, toolUse(QStringLiteral("c%1").arg(i),
+                                              QStringLiteral("echo %1%2").arg(i).arg(QString(700, QLatin1Char('x')))) });
+        fake->queue.append({ 200, text("summarised") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("print a lot");
+        QVERIFY(ready.wait(20000));
+        QCOMPARE(fake->requests.size(), 17);
+        // Between trims every request must extend the previous one byte for
+        // byte (cache markers aside), or the prompt cache is thrown away.
+        QList<int> breaks;
+        for (int i = 1; i < fake->requests.size(); ++i) {
+            const QJsonArray prev = withoutCacheMarkers(fake->requests.at(i - 1).value("messages").toArray());
+            const QJsonArray cur = withoutCacheMarkers(fake->requests.at(i).value("messages").toArray());
+            bool prefix = cur.size() >= prev.size();
+            for (int j = 0; prefix && j < prev.size(); ++j)
+                prefix = prev.at(j) == cur.at(j);
+            if (!prefix)
+                breaks << i;
+        }
+        // 16 turns, 2 trims: once six older results piled up (request 11),
+        // and again six more later (request 17). Trimming each turn would be 12 breaks.
+        QCOMPARE(breaks, (QList<int>{ 10, 16 }));
+        const QByteArray last = QJsonDocument(fake->requests.constLast()).toJson(QJsonDocument::Compact);
+        QCOMPARE(last.count("Earlier tool result cleared"), 12);   // everything older than the newest four
+        QCOMPARE(bp->responseMeta().value("compacted").toInt(), 12);
+    }
+
+    void aTrimClearsEveryOlderResultNotJustTheOldest() {
+        for (int i = 0; i < 11; ++i)
+            fake->queue.append({ 200, toolUse(QStringLiteral("c%1").arg(i),
+                                              QStringLiteral("echo %1%2").arg(i).arg(QString(700, QLatin1Char('x')))) });
+        fake->queue.append({ 200, text("ok") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("print a lot");
+        QVERIFY(ready.wait(20000));
+        // Request 11 is the first with six older results: all six are cleared
+        // together, the newest four are verbatim.
+        const QByteArray at11 = QJsonDocument(fake->requests.at(10)).toJson(QJsonDocument::Compact);
+        QCOMPARE(at11.count("Earlier tool result cleared"), 6);
+        const QByteArray at10 = QJsonDocument(fake->requests.at(9)).toJson(QJsonDocument::Compact);
+        QCOMPARE(at10.count("Earlier tool result cleared"), 0);
+        // The newest four results are still whole.
+        const QJsonArray msgs = fake->requests.at(10).value("messages").toArray();
+        int whole = 0;
+        for (const QJsonValue &m : msgs)
+            for (const QJsonValue &b : m.toObject().value("content").toArray())
+                if (b.toObject().value("type").toString() == "tool_result"
+                        && b.toObject().value("content").toString().contains("xxxxxxxx"))
+                    ++whole;
+        QCOMPARE(whole, 4);
+    }
+
+    void smallResultsAreNeverCleared() {
+        for (int i = 0; i < 12; ++i)
+            fake->queue.append({ 200, toolUse(QStringLiteral("c%1").arg(i), QStringLiteral("echo short%1").arg(i)) });
+        fake->queue.append({ 200, text("ok") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("print a little");
+        QVERIFY(ready.wait(20000));
+        QCOMPARE(bp->responseMeta().value("compacted").toInt(), 0);
+    }
+
+    void oldScreenshotsAreClearedInBatches() {
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        bp->setPermissionMode("bypass");
+        // zoom returns an image and its input differs every time (so the loop guard stays quiet).
+        for (int i = 0; i < 9; ++i)
+            fake->queue.append({ 200, toolUseBatch({ member(QStringLiteral("z%1").arg(i), "zoom",
+                { { "region", QJsonArray{ 0, 0, 200 + i, 200 + i } } }) }) });
+        fake->queue.append({ 200, text("seen") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("look around");
+        QVERIFY(ready.wait(30000));
+        QCOMPARE(fake->requests.size(), 10);
+        auto images = [](const QJsonObject &req) { return QJsonDocument(req).toJson(QJsonDocument::Compact).count("\"type\":\"image\""); };
+        // Seven screenshots in context at request 8: nothing cleared yet.
+        QCOMPARE(images(fake->requests.at(7)), 7);
+        // Request 9 has eight; four of them are old, which is the batch size.
+        QCOMPARE(images(fake->requests.at(8)), 4);
+        QCOMPARE(QJsonDocument(fake->requests.at(8)).toJson(QJsonDocument::Compact).count("Earlier screenshot removed"), 4);
+        QCOMPARE(images(fake->requests.at(9)), 5);   // the newest four plus one more since
+    }
+
+    void cacheBreakpointsFollowTheConversationTail() {
+        for (int i = 0; i < 2; ++i)
+            fake->queue.append({ 200, toolUse(QStringLiteral("c%1").arg(i), QStringLiteral("echo hi%1").arg(i)) });
+        fake->queue.append({ 200, text("done") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("two rounds");
+        QVERIFY(ready.wait(10000));
+        QCOMPARE(fake->requests.size(), 3);
+        auto markedMessages = [](const QJsonObject &req) {
+            QList<int> marked;
+            const QJsonArray msgs = req.value("messages").toArray();
+            for (int i = 0; i < msgs.size(); ++i)
+                if (QJsonDocument(msgs.at(i).toObject()).toJson(QJsonDocument::Compact).contains("cache_control"))
+                    marked << i;
+            return marked;
+        };
+        auto totalMarkers = [](const QJsonObject &req) { return QJsonDocument(req).toJson(QJsonDocument::Compact).count("cache_control"); };
+        // Turn 1: just the user message.
+        QCOMPARE(markedMessages(fake->requests.at(0)), (QList<int>{ 0 }));
+        // The marker went on a text block built for the request ...
+        const QJsonObject first = fake->requests.at(0).value("messages").toArray().first().toObject();
+        QCOMPARE(first.value("content").toArray().first().toObject().value("text").toString(), QStringLiteral("two rounds"));
+        // Turn 2: the new tail (index 2) and last turn's tail (index 0).
+        QCOMPARE(markedMessages(fake->requests.at(1)), (QList<int>{ 0, 2 }));
+        // Turn 3: tail (4) and the previous tail (2); older messages are clean again.
+        QCOMPARE(markedMessages(fake->requests.at(2)), (QList<int>{ 2, 4 }));
+        // System + tools + two message markers is the API's limit of four.
+        for (const QJsonObject &req : fake->requests)
+            QVERIFY(totalMarkers(req) <= 4);
+        QCOMPARE(totalMarkers(fake->requests.at(2)), 4);
+    }
+
+    void openAiRequestsCarryNoCacheMarkers() {
+        bp->setProvider("openai");
+        bp->setApiBase(fake->base() + "/v1");
+        fake->queue = { { 200, openAiToolCall("t1", "echo hi") }, { 200, openAiText("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(8000));
+        for (const QJsonObject &req : fake->requests)
+            QVERIFY(!QJsonDocument(req).toJson().contains("cache_control"));   // OpenAI caches the prefix by itself
     }
 
     void identicalCallLoopIsBroken() {
@@ -688,7 +856,7 @@ private slots:
         // ~3012 chars per turn in a 24k budget: 7 newest turns verbatim,
         // 2 summary messages, and the new question.
         QCOMPARE(msgs.size(), 2 + 7 * 2 + 1);
-        QCOMPARE(msgs.last().toObject().value("content").toString(), QStringLiteral("latest"));
+        QCOMPARE(messageText(msgs.last().toObject()), QStringLiteral("latest"));
     }
 
     void memoryIndexInSystemPrompt() {
@@ -731,7 +899,7 @@ private slots:
         QCOMPARE(partial.value("role").toString(), QStringLiteral("assistant"));
         QVERIFY(QJsonDocument(partial).toJson().contains("first-59"));
         QCOMPARE(msgs.last().toObject().value("role").toString(), QStringLiteral("user"));
-        QVERIFY(msgs.last().toObject().value("content").toString().contains("cut off"));
+        QVERIFY(messageText(msgs.last().toObject()).contains("cut off"));
         QCOMPARE(bp->responseMeta().value("continuations").toInt(), 1);
         QCOMPARE(bp->responseMeta().value("truncated").toBool(), false);
         QCOMPARE(bp->responseMeta().value("stopReason").toString(), QStringLiteral("end_turn"));
@@ -1355,6 +1523,25 @@ private slots:
         QVERIFY2(ready.first().first().toString().contains("Stopped after 5 tool rounds"), qPrintable(ready.first().first().toString()));
         QCOMPARE(fake->requests.size(), 6);
         QCOMPARE(bp->responseMeta().value("maxSteps").toInt(), 5);
+    }
+
+    void repeatedScreenshotsAreNotMistakenForALoop() {
+        // A long computer-use task looks at the screen after nearly every action.
+        useSimulatedComputer(QSize(1280, 720), 1.0);
+        bp->setPermissionMode("bypass");
+        for (int i = 0; i < 6; ++i) {
+            fake->queue.append({ 200, toolUseBatch({ member(QStringLiteral("s%1").arg(i), "screenshot") }) });
+            fake->queue.append({ 200, toolUseBatch({ member(QStringLiteral("k%1").arg(i), "key", { { "text", "Tab" } }) }) });
+        }
+        fake->queue.append({ 200, text("done") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("tab through the form");
+        QVERIFY(ready.wait(30000));
+        int denied = 0;
+        for (const QVariant &s : bp->toolSteps())
+            denied += s.toMap().value("status").toString() == QLatin1String("denied");
+        QCOMPARE(denied, 0);
+        QCOMPARE(bp->toolSteps().size(), 12);
     }
 
     void cancelDuringApprovalStopsRun() {
