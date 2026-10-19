@@ -4,6 +4,7 @@
 // files (NOCH_MOONSHINE_DIR, a folder with encoder.onnx and decoder.onnx); the
 // tests skip without them.
 #include <QtTest>
+#include <QElapsedTimer>
 
 #include "Moonshine.h"
 #include "OrtRuntime.h"
@@ -57,7 +58,14 @@ private slots:
         QFETCH(QString, wav);
         QFETCH(QString, expected);
         QString why;
-        const QString text = m.transcribe(wavPcm(wav), &why);
+        const QByteArray pcm = wavPcm(wav);
+        QElapsedTimer clock;
+        clock.start();
+        const QString text = m.transcribe(pcm, &why);
+        const double ms = clock.nsecsElapsed() / 1e6;
+        const double seconds = double(pcm.size()) / 2 / Moonshine::kSampleRate;
+        qInfo().noquote() << QStringLiteral("moonshine: %1 s of speech in %2 ms (%3x real time)")
+                                 .arg(seconds, 0, 'f', 1).arg(ms, 0, 'f', 0).arg(seconds * 1000 / ms, 0, 'f', 1);
         QVERIFY2(why.isEmpty(), qPrintable(why));
         QCOMPARE(text, expected);
     }

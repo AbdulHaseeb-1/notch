@@ -894,17 +894,6 @@ Item {
             yScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashY
         }
 
-        // Subtle inner top-rim highlight so the sphere feels tactile and 3D
-        Rectangle {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: Math.round(3 * buddy.s)
-            width: Math.round(parent.width * 0.54)
-            height: Math.round(parent.height * 0.22)
-            radius: height / 2
-            color: "#ffffff"
-            opacity: 0.055
-        }
-
         // left eye
         Item {
             id: eyeL
