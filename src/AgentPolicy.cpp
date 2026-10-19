@@ -1236,6 +1236,19 @@ bool AgentPolicy::isObservingComputerAction(const QString &action)
         || a == QLatin1String("wait") || a == QLatin1String("zoom");
 }
 
+bool AgentPolicy::isInstructionPath(const QString &path)
+{
+    QString p = path.toLower();
+    p.replace(QLatin1Char('\\'), QLatin1Char('/'));   // a Windows path, whatever the host
+    const QStringList parts = p.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (parts.isEmpty())
+        return false;
+    const QString leaf = parts.last();
+    if (leaf == QLatin1String("noch.md") || leaf == QLatin1String("agents.md") || leaf == QLatin1String("claude.md"))
+        return true;
+    return parts.contains(QStringLiteral(".noch"));
+}
+
 bool AgentPolicy::isPrivateUrl(const QString &rawUrl)
 {
     const QUrl u = QUrl::fromUserInput(rawUrl.trimmed());
@@ -1326,7 +1339,9 @@ AgentPolicy::Decision AgentPolicy::evaluateShell(const QJsonObject &input) const
 
     // Paths the command would write: protected / private / credentials => deny.
     const ShellPaths paths = shellPaths(cmd);
+    bool writesInstructions = false;
     for (const QString &w : paths.writes) {
+        writesInstructions = writesInstructions || isInstructionPath(lexical(w, base));
         const QString prot = protectedPathReason(w, base);
         if (!prot.isEmpty())
             return deny(QStringLiteral("deny:protected-path"), QStringLiteral("Blocked: writing %1.").arg(prot));
@@ -1353,6 +1368,14 @@ AgentPolicy::Decision AgentPolicy::evaluateShell(const QJsonObject &input) const
     // 2. Opaque commands (eval, encoded, variable-as-program): never auto-allow.
     const QString opaque = opaqueCommandReason(cmd);
     const bool plan = m_mode == Mode::Plan;
+    if (writesInstructions) {
+        if (plan)
+            return deny(QStringLiteral("mode:plan"),
+                        QStringLiteral("Plan mode is read-only; this command could change the system."));
+        return ask(QStringLiteral("ask:instructions-file"),
+                   QStringLiteral("This changes Buddy's standing instructions (NOCH.md, AGENTS.md, CLAUDE.md or a .noch "
+                                  "folder). What is written there is added to every future prompt, so check it."));
+    }
     const bool bypass = m_mode == Mode::Bypass && !m_tainted;
     const bool granted = m_sessionAllow.contains(QLatin1String("bash")) && !m_tainted;
 
@@ -1467,6 +1490,10 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
             return deny(QStringLiteral("deny:protected-path"), QStringLiteral("Blocked: %1.").arg(prot));
         if (plan)
             return deny(QStringLiteral("mode:plan"), QStringLiteral("Plan mode is read-only; file edits are disabled."));
+        if (isInstructionPath(path))
+            return ask(QStringLiteral("ask:instructions-file"),
+                       QStringLiteral("This changes Buddy's standing instructions (%1). What is written there is added to "
+                                      "every future prompt, so check it.").arg(QFileInfo(path).fileName()));
         if (bypass)
             return allow(QStringLiteral("mode:bypass"));
         if (isSecretsFile(path) || !credentialPathReason(path, m_base).isEmpty())

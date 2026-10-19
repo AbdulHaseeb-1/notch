@@ -116,6 +116,11 @@ public:
     // *.pem, id_rsa, browser profiles: reading them asks.
     static QString credentialPathReason(const QString &path, const QString &base = QString());
     static bool isSecretsFile(const QString &path);
+    // Files whose content steers Buddy from now on: instruction files (NOCH.md,
+    // AGENTS.md, CLAUDE.md) and anything under a .noch folder (slash commands).
+    // A run that changes one is changing its own future instructions, so any
+    // write to them asks - in Trusted mode, with a grant or a saved rule too.
+    static bool isInstructionPath(const QString &path);
     bool insideWorkspace(const QString &path) const;
     // Lexically cleaned absolute path (relative paths join the workspace
     // base). What BuddyProvider executes, so the gate and the tool agree.

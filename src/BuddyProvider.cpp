@@ -754,6 +754,86 @@ void BuddyProvider::syncPrivatePaths()
     m_policy.setPrivatePaths(priv);
 }
 
+// ---- project instructions and slash commands -------------------------------------
+
+QString BuddyProvider::userDataDir() const
+{
+    if (!m_userDataDir.isEmpty())
+        return m_userDataDir;
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty())
+        base = QDir::homePath() + QStringLiteral("/.noch");
+    return base;
+}
+
+QVariantMap BuddyProvider::resolveSlash(const QString &text) const
+{
+    const pc::Slash s = pc::parseSlash(text);
+    if (!s.isCommand)
+        return QVariantMap{ { QStringLiteral("kind"), QStringLiteral("none") } };
+    const QList<pc::Command> all = pc::loadCommands(effectiveWorkspace(), userDataDir());
+    for (const pc::Command &c : all) {
+        if (c.name != s.name)
+            continue;
+        if (c.builtin())
+            return QVariantMap{ { QStringLiteral("kind"), QStringLiteral("builtin") },
+                                { QStringLiteral("name"), c.name }, { QStringLiteral("args"), s.args } };
+        return QVariantMap{ { QStringLiteral("kind"), QStringLiteral("prompt") },
+                            { QStringLiteral("name"), c.name }, { QStringLiteral("args"), s.args },
+                            { QStringLiteral("prompt"), pc::expand(c, s.args) },
+                            { QStringLiteral("source"), c.source }, { QStringLiteral("description"), c.description } };
+    }
+    const QString near = pc::suggestCommand(all, s.name);
+    return QVariantMap{ { QStringLiteral("kind"), QStringLiteral("unknown") }, { QStringLiteral("name"), s.name },
+                        { QStringLiteral("suggestion"), near },
+                        { QStringLiteral("message"), near.isEmpty() ? tr("There is no command “/%1”. Type /help to see them.").arg(s.name)
+                                                                    : tr("There is no command “/%1”. Did you mean /%2?").arg(s.name, near) } };
+}
+
+QVariantList BuddyProvider::slashCommands(const QString &prefix) const
+{
+    const QString p = prefix.trimmed().toLower();
+    QVariantList out;
+    for (const pc::Command &c : pc::loadCommands(effectiveWorkspace(), userDataDir())) {
+        if (!p.isEmpty() && !c.name.startsWith(p))
+            continue;
+        out.append(QVariantMap{ { QStringLiteral("name"), c.name }, { QStringLiteral("description"), c.description },
+                                { QStringLiteral("argumentHint"), c.argumentHint }, { QStringLiteral("source"), c.source } });
+    }
+    return out;
+}
+
+QVariantMap BuddyProvider::projectInstructions() const
+{
+    const pc::Instructions ins = pc::loadInstructions(effectiveWorkspace(), userDataDir());
+    QVariantList sources;
+    for (const pc::InstructionSource &s : ins.sources)
+        sources.append(QVariantMap{ { QStringLiteral("name"), s.name }, { QStringLiteral("path"), s.path },
+                                    { QStringLiteral("bytes"), double(s.bytes) }, { QStringLiteral("truncated"), s.truncated } });
+    return QVariantMap{ { QStringLiteral("empty"), ins.empty() }, { QStringLiteral("text"), ins.text },
+                        { QStringLiteral("truncated"), ins.truncated }, { QStringLiteral("sources"), sources } };
+}
+
+QVariantMap BuddyProvider::initProjectInstructions()
+{
+    const QDir ws(effectiveWorkspace());
+    const QString path = ws.filePath(QStringLiteral("NOCH.md"));
+    const pc::Instructions existing = pc::loadInstructions(effectiveWorkspace(), QString());
+    if (!existing.empty())
+        return QVariantMap{ { QStringLiteral("ok"), false }, { QStringLiteral("path"), existing.sources.first().path },
+                            { QStringLiteral("message"), tr("This workspace already has instructions (%1).").arg(existing.sources.first().name) } };
+    if (QFileInfo::exists(path))
+        return QVariantMap{ { QStringLiteral("ok"), false }, { QStringLiteral("path"), path },
+                            { QStringLiteral("message"), tr("NOCH.md is already there; add your instructions to it.") } };
+    QDir().mkpath(ws.absolutePath());
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(pc::instructionsTemplate().toUtf8()) < 0 || !f.commit())
+        return QVariantMap{ { QStringLiteral("ok"), false }, { QStringLiteral("path"), path },
+                            { QStringLiteral("message"), tr("Could not write %1.").arg(QDir::toNativeSeparators(path)) } };
+    return QVariantMap{ { QStringLiteral("ok"), true }, { QStringLiteral("path"), path },
+                        { QStringLiteral("message"), tr("Created %1. Open it and write your instructions.").arg(QDir::toNativeSeparators(path)) } };
+}
+
 // ---- saved "always allow" rules ------------------------------------------------
 
 QString BuddyProvider::savedRulesPath() const
@@ -1462,7 +1542,7 @@ QString BuddyProvider::systemPrompt() const
         "in the bubble), and actionable. Use clean bullet points (`- `) or bold highlights where helpful.");
 
     if (!hasAnyToolEnabled())
-        return base;
+        return base + m_instructionsSection;
 
     QStringList caps;
     if (m_allowBash)
@@ -1530,6 +1610,7 @@ QString BuddyProvider::systemPrompt() const
         safety += QStringLiteral("\n\nSpecialists: for focused web research use `transfer_to_research`; for reading, "
                                  "editing or building code use `transfer_to_code`. Handle quick questions yourself.");
     safety += m_memoryIndexSnapshot;
+    safety += m_instructionsSection;
     return base + safety + QStringLiteral("\n\nYou have the Anthropic Agent SDK tool suite armed:\n")
          + caps.join('\n')
          + QStringLiteral("\nWhen tackling multi-step or technical tasks, you can consult `advisor`, track progress with `todo_write`, search tools with `tool_search`, search the web with `web_search`/`web_fetch`, persist knowledge in `memory`, or act on the system via `bash`, `str_replace_editor`, `glob_grep`, and `computer`.");
@@ -2278,6 +2359,19 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     // One memory listing per run: a stable system prompt keeps the prompt
     // cache warm even when the model writes memories mid-run.
     m_memoryIndexSnapshot = memoryIndex();
+    {
+        // Instruction files are read once per run for the same reason: an edit
+        // mid-run must not change the system prompt and spoil the cache.
+        const pc::Instructions ins = pc::loadInstructions(effectiveWorkspace(), userDataDir());
+        m_instructionsSection = pc::systemPromptSection(ins);
+        if (!ins.empty()) {
+            QJsonArray names;
+            for (const pc::InstructionSource &s : ins.sources)
+                names.append(s.name);
+            addSpan(QJsonObject{ { "type", "instructions" }, { "sources", names },
+                                 { "chars", ins.text.size() }, { "truncated", ins.truncated } });
+        }
+    }
     if (m_activeAgent != QLatin1String("buddy")) {   // every run starts with Buddy
         m_activeAgent = QStringLiteral("buddy");
         emit activeAgentChanged();

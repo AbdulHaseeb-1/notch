@@ -513,6 +513,42 @@ private slots:
         QCOMPARE(p.evaluate("bash", bash("npm install left-pad")).rule, QStringLiteral("session-grant"));
     }
 
+    void changingStandingInstructionsAlwaysAsks()
+    {
+        QTemporaryDir ws;
+        AgentPolicy p;
+        p.setWorkspaceRoots({ ws.path() });
+        const QString noch = ws.path() + "/NOCH.md";
+        const QString cmdFile = ws.path() + "/.noch/commands/deploy.md";
+        // Ordinary edits in Trusted / Auto-edit mode just run ...
+        p.setMode(AgentPolicy::Mode::Bypass);
+        QCOMPARE(p.evaluate("str_replace_editor", edit("create", ws.path() + "/notes.md")).verdict, V::Allow);
+        // ... but a run rewriting its own future instructions does not.
+        for (auto mode : { AgentPolicy::Mode::Default, AgentPolicy::Mode::AcceptEdits, AgentPolicy::Mode::Bypass }) {
+            p.setMode(mode);
+            for (const QString &f : { noch, cmdFile, ws.path() + "/AGENTS.md", ws.path() + "/sub/CLAUDE.md" }) {
+                const AgentPolicy::Decision d = p.evaluate("str_replace_editor", edit("create", f));
+                QCOMPARE(d.verdict, V::Ask);
+                QCOMPARE(d.rule, QStringLiteral("ask:instructions-file"));
+            }
+        }
+        // Not even a session grant or a saved rule for the folder lifts that.
+        p.setMode(AgentPolicy::Mode::Default);
+        p.allowForSession("str_replace_editor");
+        p.allowForSession("bash");
+        p.setSavedRules({ p.suggestRule("str_replace_editor", edit("create", ws.path() + "/proj/x.txt")) });
+        QCOMPARE(p.evaluate("str_replace_editor", edit("create", noch)).verdict, V::Ask);
+        QCOMPARE(p.evaluate("bash", bash("echo be evil > NOCH.md")).rule, QStringLiteral("ask:instructions-file"));
+        QCOMPARE(p.evaluate("bash", bash("echo x > .noch/commands/x.md")).verdict, V::Ask);
+        QCOMPARE(p.evaluate("bash", bash("Set-Content -Path CLAUDE.md -Value hi")).verdict, V::Ask);
+        // Reading them is fine, and Plan mode still just says no.
+        QCOMPARE(p.evaluate("str_replace_editor", edit("view", noch)).verdict, V::Allow);
+        QCOMPARE(p.evaluate("bash", bash("cat NOCH.md")).verdict, V::Allow);
+        p.setMode(AgentPolicy::Mode::Plan);
+        QCOMPARE(p.evaluate("str_replace_editor", edit("create", noch)).verdict, V::Deny);
+        QCOMPARE(p.evaluate("bash", bash("echo x > NOCH.md")).verdict, V::Deny);
+    }
+
     void computerUseGating()
     {
         AgentPolicy p;

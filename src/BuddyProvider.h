@@ -18,6 +18,7 @@
 
 #include "AgentPolicy.h"
 #include "ComputerUse.h"
+#include "ProjectContext.h"
 #include "RunJournal.h"
 #include "SavedRules.h"
 #include "StreamAccumulator.h"
@@ -259,6 +260,22 @@ public:
     Q_INVOKABLE QVariantMap undoRun(const QString &runId, bool force = false);
     Q_INVOKABLE QString undoPath() const;
     void setUndoPath(const QString &path) { m_journal.setRoot(path); }
+    // Slash commands. resolveSlash() reads what the user typed:
+    //   { kind: "none" }                                  not a command
+    //   { kind: "builtin", name, args }                   the UI does it (/new, /undo ...)
+    //   { kind: "prompt", name, args, prompt, source }    a user's template, expanded: send `prompt`
+    //   { kind: "unknown", name, message, suggestion }
+    Q_INVOKABLE QVariantMap resolveSlash(const QString &text) const;
+    // [{ name, description, argumentHint, source }] for the suggestion list; `prefix` is typed after the slash.
+    Q_INVOKABLE QVariantList slashCommands(const QString &prefix = QString()) const;
+    // The instruction files Buddy reads for this workspace, read fresh:
+    // { empty, text, truncated, sources: [{ name, path, bytes, truncated }] }.
+    Q_INVOKABLE QVariantMap projectInstructions() const;
+    // /init: write a starter NOCH.md into the workspace unless it has instructions already.
+    Q_INVOKABLE QVariantMap initProjectInstructions();
+    // Noch's own data folder (user-level NOCH.md and commands/). Tests point it elsewhere.
+    Q_INVOKABLE QString userDataDir() const;
+    void setUserDataDir(const QString &dir) { m_userDataDir = dir; }
     Q_INVOKABLE QString tracesPath() const;
     Q_INVOKABLE QString effectiveWorkspace() const;
     void syncPrivatePaths();
@@ -346,6 +363,8 @@ private:
     QTimer m_approvalTimer;      // 1 s ticks for the countdown, auto-deny at 0
     int m_approvalSecondsLeft = 0;
     // The question being asked (ask_user_question) and its countdown.
+    QString m_instructionsSection;   // system-prompt text from the instruction files, read once per run
+    QString m_userDataDir;
     SavedRules m_savedRules;
     AgentPolicy::SavedRule m_approvalRule;   // what "Always allow" on the pending card would save
     RunJournal m_journal;
