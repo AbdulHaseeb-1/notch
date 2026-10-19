@@ -61,6 +61,10 @@ qt_add_executable(noch
     src/VoiceAudio.h
     src/VoiceInput.cpp
     src/VoiceInput.h
+    src/WakeWord.cpp
+    src/WakeWord.h
+    src/SpeechOut.cpp
+    src/SpeechOut.h
     src/PushToTalkKey.cpp
     src/PushToTalkKey.h
     src/ComputerUse.cpp
@@ -216,6 +220,18 @@ if(NOCH_BUILD_TESTS)
     endif()
     add_test(NAME tst_voice COMMAND tst_voice)
     set_tests_properties(tst_voice PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    qt_add_executable(tst_wakeword tests/tst_wakeword.cpp
+        src/WakeWord.cpp src/WakeWord.h src/SpeechOut.cpp src/SpeechOut.h
+        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h)
+    target_link_libraries(tst_wakeword PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
+    add_test(NAME tst_wakeword COMMAND tst_wakeword)
+    set_tests_properties(tst_wakeword PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    qt_add_executable(tst_speechout tests/tst_speechout.cpp
+        src/SpeechOut.cpp src/SpeechOut.h src/WakeWord.cpp src/WakeWord.h
+        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h)
+    target_link_libraries(tst_speechout PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
+    add_test(NAME tst_speechout COMMAND tst_speechout)
+    set_tests_properties(tst_speechout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
     qt_add_executable(tst_chatsessions tests/tst_chatsessions.cpp
         src/ChatSessions.cpp src/ChatSessions.h src/SessionFormat.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_chatsessions PRIVATE Qt6::Core Qt6::Network Qt6::Test)

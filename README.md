@@ -133,6 +133,7 @@ cmake --build build
 | `src/SavedRules.*` | Saved "always allow" rules |
 | `src/ProjectContext.*` | `NOCH.md` instruction files and slash-command templates |
 | `src/VoiceInput.*`, `src/VoiceAudio.*`, `src/PushToTalkKey.*` | Push-to-talk voice: microphone, speech-to-text request, global hold-to-talk key |
+| `src/WakeWord.*`, `src/SpeechOut.*` | Wake word ("hey buddy"): utterance detector, phrase matching, consent and rate limits; reading reports aloud |
 | `src/StreamAccumulator.*` | SSE parser that rebuilds a streamed reply into the buffered response JSON |
 | `src/QmlSingletons.h` | Registers the backend objects as typed QML singletons (`Media`, `BuddyAgent`, `Dock`, …) |
 | `src/AgentPolicy.*` | Tool permission policy, secret redaction, injection heuristics (see `docs/agent-safety.md`) |
@@ -176,7 +177,8 @@ compaction, loop guard, cancel during an approval, streamed text and tool
 calls, cancel mid-stream, stream error and truncation retries, specialist
 handoffs and their toolsets, session memory, and the per-run memory index.
 `tst_computeruse` covers the computer-use actions, screenshot scaling, held keys
-and the simulated backend. `tst_userquestions`, `tst_runjournal`,
+and the simulated backend. `tst_wakeword` (82 tests: phrase matching, utterance detection, consent, rate limit, pausing, back-off) and `tst_speechout`
+cover the wake word and spoken reports. `tst_userquestions`, `tst_runjournal`,
 `tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
 the question, undo, saved-rule, instruction/slash-command, chat-session and voice
 modules (the last one with a fake microphone and a fake speech server).

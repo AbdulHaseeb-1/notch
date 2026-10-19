@@ -83,6 +83,13 @@ Window {
         property string buddyVoiceModel: "whisper-1"
         property string buddyVoiceLanguage: ""
         property bool buddyVoiceAutoSend: false
+        // ---- Wake word ("hey buddy"): off until switched on ------------------
+        property bool buddyWakeEnabled: false
+        property string buddyWakePhrase: "hey buddy"
+        // Everything the microphone hears is sent to the speech service to check
+        // for the phrase: a service on the internet needs this explicit yes.
+        property bool buddyWakeCloudOk: false
+        property bool buddySpeakReports: false
         // ---- Agent safety (see docs/agent-safety.md) -------------------------
         // "default" asks before side effects, "acceptEdits" auto-approves file
         // edits inside the workspace, "plan" is read-only, "bypass" trusts all
@@ -110,6 +117,7 @@ Window {
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
         cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceBase, cfg.buddyVoiceModel, cfg.buddyVoiceLanguage, cfg.buddyVoiceAutoSend,
+        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeCloudOk, cfg.buddySpeakReports,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyHandoffs,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
@@ -1193,6 +1201,10 @@ Window {
     Binding { target: Voice; property: "model"; value: cfg.buddyVoiceModel }
     Binding { target: Voice; property: "language"; value: cfg.buddyVoiceLanguage }
     Binding { target: TalkKey; property: "enabled"; value: cfg.buddyVoiceEnabled && cfg.buddyVoiceHotkey }
+    Binding { target: Wake; property: "enabled"; value: cfg.buddyWakeEnabled }
+    Binding { target: Wake; property: "phrase"; value: cfg.buddyWakePhrase }
+    Binding { target: Wake; property: "allowCloud"; value: cfg.buddyWakeCloudOk }
+    Binding { target: Speech; property: "enabled"; value: cfg.buddySpeakReports }
     Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
     Binding { target: BuddySound; property: "volume"; value: cfg.buddySfxVolume }
     Binding { target: BuddySound; property: "style"; value: cfg.buddySfxStyle }

@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QTimer>
 
+#include <functional>
 #include <memory>
 
 // Where the microphone's audio comes from. The real one is Qt Multimedia;
@@ -88,6 +89,21 @@ public:
     Q_INVOKABLE QString transcriptionUrl() const;
     // Why the address cannot be used ("" if it can).
     Q_INVOKABLE QString addressProblem() const;
+    // Is the speech service on this computer (so audio never leaves it)?
+    Q_INVOKABLE bool localService() const;
+
+    // One transcription of a clip, by the same service and key as push-to-talk.
+    struct Transcription {
+        bool ok = false;
+        bool empty = false;      // the service answered, with no words in it
+        int status = 0;          // HTTP status (0: no answer)
+        QString text;
+        QString error;           // user-readable when !ok
+    };
+    // Sends `wav` without touching push-to-talk's state. `done` runs once on
+    // `context`'s thread (never, if `context` is destroyed first). The reply can be aborted.
+    QPointer<QNetworkReply> transcribe(const QByteArray &wav, QObject *context,
+                                       std::function<void(const Transcription &)> done);
 
     // Start recording. False, with `error` set, when voice is off or not set up or the mic will not open.
     Q_INVOKABLE bool beginListening();
@@ -112,6 +128,8 @@ private:
     void onAudio(const QByteArray &pcm);
     void onReply();
     void send(const QByteArray &wav);
+    QNetworkReply *post(const QByteArray &wav);
+    static Transcription parse(QNetworkReply *reply);
     static bool isLocalAddress(const QString &base);
 
     QNetworkAccessManager m_nam;

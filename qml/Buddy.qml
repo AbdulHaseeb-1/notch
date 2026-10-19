@@ -1131,6 +1131,29 @@ Item {
         }
     }
 
+    // The microphone is open for the wake word: always shown while it is, never hidden.
+    Rectangle {
+        id: wakeBadge
+        objectName: "wakeBadge"
+        visible: Wake.active
+        z: 5
+        width: Math.round(18 * buddy.s)
+        height: width
+        radius: width / 2
+        x: buddy.width - width + Math.round(2 * buddy.s)
+        y: buddy.height - height + Math.round(2 * buddy.s)
+        color: Theme.surface
+        border.width: 1
+        border.color: Wake.state === "awaiting" ? Theme.danger : Theme.borderStrong
+        Glyph {
+            anchors.centerIn: parent
+            name: "mic"
+            size: Math.round(11 * buddy.s)
+            stroke: 1.8
+            color: Wake.state === "awaiting" ? Theme.danger : Theme.textDim
+        }
+    }
+
     property string bubbleText: ""
     property string emoteIcon: ""
     Timer {
@@ -1550,6 +1573,7 @@ Item {
                 return
             }
         }
+        spokenRun = voiceStarted
         lastRequest = trimmed
         forgetAnswer()
         autoPopPending = true
@@ -1663,6 +1687,10 @@ Item {
     }
     function showError(message) {
         awaitingReply = false
+        if (spokenRun) {
+            Speech.say(qsTr("That didn't work."))
+            spokenRun = false
+        }
         if (replyToPanel && resultPanel) {
             resultPanel.errorMessage = message
             resultPanel.phase = "error"
@@ -1743,6 +1771,10 @@ Item {
     function present(kind, title, payload, simulated) {
         awaitingReply = false
         autoPopPending = true
+        if (kind === "chat" && payload && payload.response)
+            reportAloud(payload.response)
+        else
+            spokenRun = false
         recordHistory(kind, title, payload)
         if (kind === "chat" && payload && payload.response)
             rememberTurn(lastRequest, payload.response)
@@ -2075,6 +2107,55 @@ Item {
         }
     }
 
+    // ---- wake word ------------------------------------------------------------
+    // "Hey buddy, <request>": the request runs like a typed one (same permission
+    // gate, same approvals), and because it was asked out loud its outcome is
+    // also said out loud when that is switched on in Settings.
+    property bool voiceStarted: false     // the next submit() comes from the wake word
+    property bool spokenRun: false        // the run in flight does
+    function wakeHeard() {
+        wake()
+        react("curious", 1400, 4, 70)
+        lookAtBubble(24, 4)
+        if (BuddySound)
+            BuddySound.play("wake")
+        // A note would cut a running request's reply off; only show one when idle.
+        if (!busy && session !== "thinking")
+            note(qsTr("Listening…"), "mic")
+    }
+    function wakeCommand(text) {
+        const said = String(text || "").trim()
+        if (said.length === 0)
+            return
+        if (busy || session === "thinking") {
+            if (BuddySound)
+                BuddySound.play("dismiss")
+            Speech.say(qsTr("I'm still busy with the last request."))
+            return
+        }
+        voiceStarted = true
+        submit(said)
+        voiceStarted = false
+    }
+    function reportAloud(reply) {
+        if (spokenRun)
+            Speech.speakReport(reply)
+        spokenRun = false
+    }
+    Connections {
+        target: Wake
+        function onWoke() { buddy.wakeHeard() }
+        function onCommand(text) { buddy.wakeCommand(text) }
+        function onTimedOut() {
+            if (!buddy.busy)
+                buddy.note(qsTr("I didn't catch a request"), "mic-off")
+        }
+        function onFailed(message) {
+            if (message.length > 0 && !buddy.busy)
+                buddy.note(message, "mic-off")
+        }
+    }
+
     // Only the request the buddy is still waiting for may answer; a reply to
     // a question that was closed or superseded is dropped.
     Connections {
@@ -2107,6 +2188,8 @@ Item {
             const p = BuddyAgent.pendingApproval
             const waiting = p && p.id !== undefined
             if (waiting && !approvalNudge.running) {
+                if (buddy.spokenRun)
+                    Speech.say(qsTr("I need your approval to continue."))
                 buddy.wake()
                 buddy.react("surprised", 900, 4, 80)
                 buddy.lookAtBubble(24, 4)
@@ -2123,6 +2206,8 @@ Item {
             const asking = !!(p && p.id !== undefined)
             if (asking && !buddy.questionShown) {
                 buddy.questionShown = true
+                if (buddy.spokenRun)
+                    Speech.say(qsTr("I have a question for you."))
                 buddy.wake()
                 buddy.react("curious", 1100, 4, 70)
                 buddy.lookAtBubble(24, 4)

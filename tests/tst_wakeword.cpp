@@ -1,0 +1,620 @@
+// Wake word: phrase matching, finding utterances in audio, spoken summaries, and
+// the whole listen -> check -> command flow (fake microphone, fake speech server).
+#include <QtTest>
+#include <QSignalSpy>
+
+#include "../src/SpeechOut.h"
+#include "../src/WakeWord.h"
+#include "SpeechFakes.h"
+
+namespace {
+
+// Speech-like: a loud, varying tone.
+QByteArray speech(double seconds) { return tone(seconds, 250, 0.35); }
+QByteArray hum(double seconds, double amp) { return tone(seconds, 50, amp); }
+
+QByteArray reply(const QString &text)
+{
+    return QByteArray("{\"text\":\"") + text.toUtf8() + "\"}";
+}
+
+// One utterance as the microphone would hear it: speech, then enough quiet to end it.
+QByteArray utterance(double seconds = 1.0) { return speech(seconds) + silence(1.0); }
+
+} // namespace
+
+class TstWakeWord : public QObject
+{
+    Q_OBJECT
+
+    struct Rig {
+        FakeStt stt;
+        VoiceInput voice;
+        FakeCapture *voiceMic = new FakeCapture;
+        WakeWord wake{ &voice };
+        FakeCapture *mic = new FakeCapture;
+        QSignalSpy woke{ &wake, &WakeWord::woke };
+        QSignalSpy command{ &wake, &WakeWord::command };
+        QSignalSpy timedOut{ &wake, &WakeWord::timedOut };
+        QSignalSpy failed{ &wake, &WakeWord::failed };
+        Rig(bool on = true) {
+            voice.setEnabled(true);
+            voice.setApiBase(stt.base());
+            voice.setApiKey("sk-test-key-0123456789");
+            voice.setCapture(std::unique_ptr<AudioCapture>(voiceMic));
+            wake.setCapture(std::unique_ptr<AudioCapture>(mic));
+            wake.setCooldownMs(0);
+            if (on)
+                wake.setEnabled(true);
+        }
+        void say(double seconds = 1.0) { mic->feed(utterance(seconds)); }
+    };
+
+private slots:
+    // ---- the phrase ---------------------------------------------------------------
+
+    void normalizesWords() {
+        QCOMPARE(wake::normalizeWord("Búddy!"), QStringLiteral("buddy"));
+        QCOMPARE(wake::normalizeWord("  HEY, "), QStringLiteral("hey"));
+        QCOMPARE(wake::normalizeWord("—"), QString());
+        QCOMPARE(wake::normalizeWord("R2-D2"), QStringLiteral("r2d2"));
+    }
+
+    void phraseValidation_data() {
+        QTest::addColumn<QString>("phrase");
+        QTest::addColumn<bool>("ok");
+        QTest::newRow("default") << "hey buddy" << true;
+        QTest::newRow("one word") << "jarvis" << true;
+        QTest::newRow("four words") << "ok there noch buddy" << true;
+        QTest::newRow("apostrophe") << "what's up buddy" << true;
+        QTest::newRow("empty") << "" << false;
+        QTest::newRow("blank") << "   " << false;
+        QTest::newRow("too short") << "yo" << false;
+        QTest::newRow("short words") << "a b c" << false;
+        QTest::newRow("five words") << "one two three four five" << false;
+        QTest::newRow("symbols") << "hey <buddy>" << false;
+        QTest::newRow("too long") << QString(41, 'a') << false;
+    }
+    void phraseValidation() {
+        QFETCH(QString, phrase);
+        QFETCH(bool, ok);
+        QCOMPARE(wake::phraseProblem(phrase).isEmpty(), ok);
+    }
+
+    void matches_data() {
+        QTest::addColumn<QString>("said");
+        QTest::addColumn<QString>("phrase");
+        QTest::addColumn<bool>("found");
+        QTest::addColumn<QString>("rest");
+        const QString hb = "hey buddy";
+        QTest::newRow("plain") << "Hey buddy" << hb << true << "";
+        QTest::newRow("punctuation") << "Hey, Buddy!" << hb << true << "";
+        QTest::newRow("with request") << "Hey Buddy open notepad" << hb << true << "open notepad";
+        QTest::newRow("comma then request") << "Hey buddy, open notepad." << hb << true << "open notepad.";
+        QTest::newRow("dash then request") << "hey buddy - what's the time?" << hb << true << "what's the time?";
+        QTest::newRow("keeps their words") << "HEY BUDDY, CHECK my Email" << hb << true << "CHECK my Email";
+        QTest::newRow("one word") << "heybuddy do it" << hb << true << "do it";
+        QTest::newRow("one letter off in a long word") << "hey buddi what now" << hb << true << "what now";
+        QTest::newRow("filler before") << "okay hey buddy what's up" << hb << true << "what's up";
+        QTest::newRow("accents") << "hey búddy" << hb << true << "";
+        QTest::newRow("single word phrase") << "Jarvis, status report" << "jarvis" << true << "status report";
+        QTest::newRow("filler before single word") << "hey jarvis lights on" << "jarvis" << true << "lights on";
+        QTest::newRow("long word two letters off") << "computerize open it" << "computer" << false << "";
+        QTest::newRow("phrase typed with caps") << "hey buddy go" << "Hey  BUDDY" << true << "go";
+
+        QTest::newRow("in the middle of a sentence") << "I told my buddy hey" << hb << false << "";
+        QTest::newRow("late in the sentence") << "hey there buddy" << hb << false << "";
+        QTest::newRow("wrong order") << "buddy hey" << hb << false << "";
+        QTest::newRow("only half of it") << "hey bud" << hb << false << "";
+        QTest::newRow("only hey") << "hey" << hb << false << "";
+        QTest::newRow("short word must be exact") << "hay buddy" << hb << false << "";
+        QTest::newRow("other name") << "hey bobby" << hb << false << "";
+        QTest::newRow("single word after a non-filler") << "my buddy said" << "buddy" << false << "";
+        QTest::newRow("empty") << "" << hb << false << "";
+        QTest::newRow("empty phrase") << "hey buddy" << "" << false << "";
+        QTest::newRow("punctuation only") << "... !!" << hb << false << "";
+    }
+    void matches() {
+        QFETCH(QString, said);
+        QFETCH(QString, phrase);
+        QFETCH(bool, found);
+        QFETCH(QString, rest);
+        const wake::Match m = wake::match(said, phrase);
+        QCOMPARE(m.found, found);
+        QCOMPARE(m.rest, rest);
+    }
+
+    void spokenSummaryIsShortAndPlain() {
+        QCOMPARE(wake::spokenSummary("Done. I created the file."), QStringLiteral("Done. I created the file."));
+        QCOMPARE(wake::spokenSummary("**Done!** See [the docs](https://example.com/x) now."),
+                 QStringLiteral("Done! See the docs now."));
+        QCOMPARE(wake::spokenSummary("Open https://example.com/long/path now."), QStringLiteral("Open now."));
+        const QString withCode = wake::spokenSummary("Here is the fix:\n```cpp\nint x = 1;\n```\nIt works now.");
+        QVERIFY2(!withCode.contains("int x"), qPrintable(withCode));
+        QVERIFY(withCode.contains("It works now."));
+        const QString list = wake::spokenSummary("Results:\n- one\n- two\n1. three");
+        QVERIFY2(!list.contains("- ") && !list.contains("1."), qPrintable(list));
+        QVERIFY(list.contains("one") && list.contains("three"));
+        QCOMPARE(wake::spokenSummary("  \n  "), QString());
+        QCOMPARE(wake::spokenSummary("```\nonly code\n```"), QString());
+    }
+
+    void spokenSummaryCutsOnASentence() {
+        const QString text = "First sentence is here. " + QString("Second sentence goes on and on. ").repeated(20);
+        const QString s = wake::spokenSummary(text, 100);
+        QVERIFY(s.size() <= 100);
+        QVERIFY2(s.endsWith('.'), qPrintable(s));
+        QVERIFY(s.startsWith("First sentence is here."));
+    }
+
+    void spokenSummaryCutsALongSentenceAtAWord() {
+        const QString s = wake::spokenSummary(QString("word ").repeated(200), 60);
+        QVERIFY(s.size() <= 61);
+        QVERIFY(s.endsWith(QChar(0x2026)));
+        QVERIFY(!s.contains("wor…"));
+    }
+
+    // ---- finding utterances ---------------------------------------------------------
+
+    void silenceMakesNoUtterance() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        QVERIFY(!seg.feed(silence(5), &out));
+        QVERIFY(out.isEmpty());
+    }
+
+    void aClickIsNotAWord() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        seg.feed(silence(1) + speech(0.1) + silence(2), &out);
+        QVERIFY(out.isEmpty());
+    }
+
+    void oneUtteranceComesOutWholeWithItsLeadIn() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        const bool started = seg.feed(silence(1) + speech(1.0) + silence(1.5), &out);
+        QVERIFY(started);
+        QCOMPARE(out.size(), 1);
+        const double secs = voice::seconds(out.first());
+        QVERIFY2(secs >= 1.0 && secs <= 1.0 + 0.3 + 0.25 + 0.05, qPrintable(QString::number(secs)));   // lead-in and a short tail
+        QVERIFY(voice::peak(out.first()) > 0.3);
+    }
+
+    void aShortPauseDoesNotSplitASentence() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        seg.feed(speech(0.8) + silence(0.4) + speech(0.8) + silence(1.5), &out);
+        QCOMPARE(out.size(), 1);
+    }
+
+    void aLongPauseSplitsTwoUtterances() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        seg.feed(speech(0.8) + silence(1.2) + speech(0.8) + silence(1.5), &out);
+        QCOMPARE(out.size(), 2);
+    }
+
+    void endlessSpeechIsCutAtTheMaximum() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        seg.feed(speech(20), &out);
+        QVERIFY(out.size() >= 2);
+        for (const QByteArray &u : out)
+            QVERIFY(voice::seconds(u) <= 8.1);
+    }
+
+    void aSteadyHumIsLearnedAsTheRoom() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        // A fan louder than the minimum: after a moment it is "the room", not speech.
+        seg.feed(hum(0.3, 0.06) + hum(6, 0.06), &out);
+        const int fromHum = int(out.size());
+        QVERIFY2(fromHum <= 1, "at most the first fraction of a second may count");
+        out.clear();
+        seg.feed(hum(1, 0.06) + speech(1.0) + hum(1.5, 0.06), &out);
+        QCOMPARE(out.size(), 1);   // speech over the hum is still heard
+    }
+
+    void chunkSizeDoesNotChangeTheResult() {
+        const QByteArray all = silence(0.5) + speech(1.0) + silence(1.2) + speech(0.9) + silence(1.5);
+        wake::Segmenter whole;
+        QList<QByteArray> a;
+        whole.feed(all, &a);
+        wake::Segmenter pieces;
+        QList<QByteArray> b;
+        for (int i = 0; i < all.size(); i += 333)   // odd, not frame-aligned, not even sample-aligned
+            pieces.feed(all.mid(i, 333), &b);
+        QCOMPARE(b.size(), a.size());
+        for (int i = 0; i < a.size(); ++i)
+            QCOMPARE(b.at(i).size(), a.at(i).size());
+    }
+
+    void resetForgetsAHalfHeardUtterance() {
+        wake::Segmenter seg;
+        QList<QByteArray> out;
+        seg.feed(speech(0.5), &out);
+        QVERIFY(seg.inUtterance());
+        seg.reset();
+        QVERIFY(!seg.inUtterance());
+        seg.feed(silence(2), &out);
+        QVERIFY(out.isEmpty());
+    }
+
+    // ---- the whole flow -------------------------------------------------------------
+
+    void offByDefaultAndNothingHappens() {
+        Rig r(false);
+        QCOMPARE(r.wake.state(), QStringLiteral("off"));
+        QVERIFY(!r.wake.active());
+        QCOMPARE(r.mic->starts, 0);
+        r.say();
+        QTest::qWait(150);
+        QCOMPARE(r.stt.requests, 0);
+    }
+
+    void listensOnceEnabledAndSaysSo() {
+        Rig r;
+        QCOMPARE(r.mic->starts, 1);
+        QVERIFY(r.wake.active());
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+        r.wake.setEnabled(false);
+        QCOMPARE(r.mic->stops, 1);
+        QVERIFY(!r.wake.active());
+        QCOMPARE(r.wake.state(), QStringLiteral("off"));
+    }
+
+    void phraseWithARequestRunsIt() {
+        Rig r;
+        r.stt.reply = reply("Hey Buddy, open notepad");
+        r.say();
+        QTRY_COMPARE(r.command.count(), 1);
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
+        QCOMPARE(r.woke.count(), 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void whatIsSentIsAProperWavOfTheUtterance() {
+        Rig r;
+        r.stt.reply = reply("hey buddy go");
+        r.say(1.0);
+        QTRY_COMPARE(r.stt.requests, 1);
+        QVERIFY(r.stt.requestLine.contains("/v1/audio/transcriptions"));
+        QVERIFY(r.stt.body.contains("RIFF"));
+        QVERIFY(r.stt.headers.contains("authorization: bearer sk-test-key-0123456789"));
+        QVERIFY(r.stt.body.size() > 16000);       // about a second of audio, not empty
+        QVERIFY(r.stt.body.size() < 16000 * 2 * 3); // and not everything since the microphone opened
+    }
+
+    void phraseAloneThenTheRequestInTheNextBreath() {
+        Rig r;
+        r.stt.replies = { reply("Hey buddy."), reply("what is the weather today") };
+        r.say(0.8);
+        QTRY_COMPARE(r.woke.count(), 1);
+        QCOMPARE(r.command.count(), 0);
+        QCOMPARE(r.wake.state(), QStringLiteral("awaiting"));
+        r.mic->feed(speech(1.5) + silence(1.5));   // a request may be followed by a longer pause than a phrase
+        QTRY_COMPARE(r.command.count(), 1);
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("what is the weather today"));
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void theRequestAfterTheBeepMayPauseLongerThanASentence() {
+        Rig r;
+        r.stt.replies = { reply("hey buddy"), reply("open the calendar and then the mail") };
+        r.say(0.8);
+        QTRY_COMPARE(r.wake.state(), QStringLiteral("awaiting"));
+        // 1 s of quiet in the middle would split a normal utterance; a request is allowed longer.
+        r.mic->feed(speech(0.8) + silence(1.0) + speech(0.8) + silence(1.5));
+        QTRY_COMPARE(r.command.count(), 1);
+        QCOMPARE(r.stt.requests, 2);   // one request, not two halves
+    }
+
+    void phraseAloneAndThenNothingTimesOut() {
+        Rig r;
+        r.wake.setAwaitStartMs(80);
+        r.stt.reply = reply("hey buddy");
+        r.say();
+        QTRY_COMPARE(r.woke.count(), 1);
+        QTRY_COMPARE(r.timedOut.count(), 1);
+        QCOMPARE(r.command.count(), 0);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void startingToSpeakHoldsOffTheTimeout() {
+        Rig r;
+        r.wake.setAwaitStartMs(150);
+        r.stt.replies = { reply("hey buddy"), reply("do the thing") };
+        r.say(0.6);
+        QTRY_COMPARE(r.wake.state(), QStringLiteral("awaiting"));
+        r.mic->feed(speech(0.5));      // speaking has begun, but has not ended yet
+        QTest::qWait(300);             // longer than the wait
+        QCOMPARE(r.timedOut.count(), 0);
+        r.mic->feed(silence(1.5));
+        QTRY_COMPARE(r.command.count(), 1);
+    }
+
+    void ordinaryTalkIsForgotten() {
+        Rig r;
+        r.stt.reply = reply("I was telling my buddy that hey buddy is a good greeting");
+        r.say();
+        QTRY_COMPARE(r.stt.requests, 1);
+        QTest::qWait(100);
+        QCOMPARE(r.woke.count(), 0);
+        QCOMPARE(r.command.count(), 0);
+        QCOMPARE(r.failed.count(), 0);
+        QVERIFY(r.wake.error().isEmpty());
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void silenceAndRoomNoiseNeverLeaveTheComputer() {
+        Rig r;
+        r.mic->feed(silence(5));
+        r.mic->feed(hum(5, 0.01));
+        r.mic->feed(speech(0.1) + silence(1.5));   // a click
+        QTest::qWait(150);
+        QCOMPARE(r.stt.requests, 0);
+    }
+
+    void aSecondUtteranceWhileOneIsBeingCheckedIsDroppedNotQueued() {
+        Rig r;
+        r.stt.delayMs = 300;
+        r.stt.reply = reply("nothing to see");
+        r.say();
+        r.say();
+        r.say();
+        QTest::qWait(600);
+        QCOMPARE(r.stt.requests, 1);
+        QCOMPARE(r.wake.droppedUtterances(), 2);
+    }
+
+    void checksPerMinuteAreCapped() {
+        Rig r;
+        r.stt.reply = reply("just talking");
+        const int tries = WakeWord::kMaxChecksPerMinute + 4;
+        for (int i = 0; i < tries; ++i) {
+            const int before = r.stt.requests;
+            r.say(0.6);
+            if (i < WakeWord::kMaxChecksPerMinute)
+                QTRY_COMPARE(r.stt.requests, before + 1);
+            else
+                QTest::qWait(60);
+        }
+        QCOMPARE(r.stt.requests, WakeWord::kMaxChecksPerMinute);
+        QVERIFY(r.wake.droppedUtterances() >= 4);
+    }
+
+    void aSecondWakeRightAfterTheFirstIsIgnored() {
+        Rig r;
+        r.wake.setCooldownMs(600);
+        r.stt.reply = reply("hey buddy open notepad");
+        r.say();
+        QTRY_COMPARE(r.command.count(), 1);
+        r.say();
+        QTRY_COMPARE(r.stt.requests, 2);
+        QTest::qWait(100);
+        QCOMPARE(r.command.count(), 1);
+        QTest::qWait(600);
+        r.say();
+        QTRY_COMPARE(r.command.count(), 2);
+    }
+
+    void aVeryLongRequestIsCapped() {
+        Rig r;
+        r.stt.reply = reply("hey buddy " + QString(5000, 'x'));
+        r.say();
+        QTRY_COMPARE(r.command.count(), 1);
+        QCOMPARE(r.command.first().first().toString().size(), WakeWord::kMaxCommandChars);
+    }
+
+    void changingThePhraseTakesEffect() {
+        Rig r;
+        r.wake.setPhrase("computer");
+        r.stt.reply = reply("Computer, lights on");
+        r.say();
+        QTRY_COMPARE(r.command.count(), 1);
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("lights on"));
+        r.stt.reply = reply("hey buddy lights off");
+        r.say();
+        QTRY_COMPARE(r.stt.requests, 2);
+        QTest::qWait(80);
+        QCOMPARE(r.command.count(), 1);   // the old phrase no longer works
+    }
+
+    // ---- consent and blocking -----------------------------------------------------------
+
+    void needsVoiceInputFirst() {
+        Rig r(false);
+        r.voice.setEnabled(false);
+        r.wake.setEnabled(true);
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        QVERIFY(r.wake.blockedReason().contains("voice input", Qt::CaseInsensitive));
+        QCOMPARE(r.mic->starts, 0);
+        r.voice.setEnabled(true);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+        QCOMPARE(r.mic->starts, 1);
+    }
+
+    void needsAKeyForARemoteServiceAndAnAddressThatIsUsable() {
+        Rig r(false);
+        r.voice.setApiBase("http://example.com");   // plain http to a remote machine: refused
+        r.wake.setEnabled(true);
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        QCOMPARE(r.mic->starts, 0);
+    }
+
+    void aServiceOnTheInternetNeedsExplicitConsent() {
+        Rig r(false);
+        r.voice.setApiBase("https://api.example.com");
+        r.wake.setEnabled(true);
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        QVERIFY2(r.wake.blockedReason().contains("everything it hears"), qPrintable(r.wake.blockedReason()));
+        QCOMPARE(r.mic->starts, 0);    // the microphone never opened
+        r.say();
+        QCOMPARE(r.stt.requests, 0);
+        r.wake.setAllowCloud(true);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+        QCOMPARE(r.mic->starts, 1);
+        r.wake.setAllowCloud(false);   // taking it back closes the microphone at once
+        QCOMPARE(r.mic->stops, 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+    }
+
+    void aServiceOnThisComputerNeedsNoConsent() {
+        Rig r;                           // the fake server is on 127.0.0.1
+        QVERIFY(r.voice.localService());
+        QVERIFY(r.wake.blockedReason().isEmpty());
+        QVERIFY(r.wake.active());
+    }
+
+    void badPhraseBlocks() {
+        Rig r(false);
+        r.wake.setPhrase("yo");
+        r.wake.setEnabled(true);
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        QCOMPARE(r.mic->starts, 0);
+        r.wake.setPhrase("hey buddy");
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    // ---- sharing the microphone ---------------------------------------------------------
+
+    void pausesWhilePushToTalkIsInUse() {
+        Rig r;
+        QCOMPARE(r.mic->starts, 1);
+        QVERIFY(r.voice.beginListening());
+        QCOMPARE(r.mic->stops, 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("paused"));
+        QVERIFY(!r.wake.active());
+        r.voice.cancel();
+        QCOMPARE(r.mic->starts, 2);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void pausesWhileBuddySpeaks() {
+        Rig r;
+        r.wake.setPaused(true);
+        QCOMPARE(r.mic->stops, 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("paused"));
+        r.mic->feed(utterance());     // nothing is listening
+        QTest::qWait(100);
+        QCOMPARE(r.stt.requests, 0);
+        r.wake.setPaused(false);
+        QCOMPARE(r.mic->starts, 2);
+    }
+
+    void turningItOffAbandonsWhatWasBeingChecked() {
+        Rig r;
+        r.stt.delayMs = 250;
+        r.stt.reply = reply("hey buddy open notepad");
+        r.say();
+        QTRY_COMPARE(r.stt.requests, 1);
+        r.wake.setEnabled(false);
+        QTest::qWait(500);
+        QCOMPARE(r.command.count(), 0);
+        QCOMPARE(r.woke.count(), 0);
+    }
+
+    // ---- trouble -------------------------------------------------------------------------
+
+    void noMicrophoneSaysSoAndDoesNotRetryInALoop() {
+        Rig r(false);
+        r.mic->startOk = false;
+        r.wake.setEnabled(true);
+        QCOMPARE(r.mic->starts, 1);
+        QCOMPARE(r.failed.count(), 1);
+        QVERIFY(r.wake.error().contains("microphone", Qt::CaseInsensitive));
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        r.voice.setModel("another-model");     // settings changed: one more try
+        QCOMPARE(r.mic->starts, 2);
+        r.mic->startOk = true;
+        r.voice.setLanguage("en");
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void theMicrophoneDyingStopsListening() {
+        Rig r;
+        r.mic->breakDown("Microphone unplugged");
+        QCOMPARE(r.failed.count(), 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        QVERIFY(!r.wake.active());
+    }
+
+    void aFailingServiceClosesTheMicrophoneAndBacksOff() {
+        Rig r;
+        r.wake.setBackoffBaseSeconds(1);
+        r.stt.status = 500;
+        r.stt.reply = "{\"error\":{\"message\":\"boom\"}}";
+        r.say();
+        QTRY_COMPARE(r.failed.count(), 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("paused"));      // no microphone while it backs off
+        QVERIFY(!r.wake.active());
+        r.say();                                                   // nothing hears this
+        QTest::qWait(100);
+        QCOMPARE(r.stt.requests, 1);
+        r.stt.status = 200;
+        QTRY_VERIFY_WITH_TIMEOUT(r.wake.active(), 3000);          // back after the pause
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void aRefusedKeyStopsUntilTheKeyChanges() {
+        Rig r;
+        r.stt.status = 401;
+        r.stt.reply = "{\"error\":{\"message\":\"bad key\"}}";
+        r.say();
+        QTRY_COMPARE(r.failed.count(), 1);
+        QVERIFY(r.wake.error().contains("refused"));
+        QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
+        QVERIFY(!r.wake.active());
+        r.stt.status = 200;
+        r.voice.setApiKey("sk-a-new-key-0123456789");
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+        QVERIFY(r.wake.active());
+    }
+
+    void noWordsInTheAnswerIsNotAnError() {
+        Rig r;
+        r.stt.reply = reply("");
+        r.say();
+        QTRY_COMPARE(r.stt.requests, 1);
+        QTest::qWait(80);
+        QCOMPARE(r.failed.count(), 0);
+        QVERIFY(r.wake.active());
+    }
+
+    void noWordsAfterThePhraseCountsAsTimingOut() {
+        Rig r;
+        r.stt.replies = { reply("hey buddy"), reply("") };
+        r.say();
+        QTRY_COMPARE(r.wake.state(), QStringLiteral("awaiting"));
+        r.mic->feed(speech(1.0) + silence(1.5));
+        QTRY_COMPARE(r.timedOut.count(), 1);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void cancelAwaitingGoesBackToWaitingForThePhrase() {
+        Rig r;
+        r.stt.reply = reply("hey buddy");
+        r.say();
+        QTRY_COMPARE(r.wake.state(), QStringLiteral("awaiting"));
+        r.wake.cancelAwaiting();
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void whatWasHeardIsNeverKept() {
+        // The only things that come out are the signals; no property holds a transcript.
+        Rig r;
+        r.stt.reply = reply("some private conversation about a surprise party");
+        r.say();
+        QTRY_COMPARE(r.stt.requests, 1);
+        QTest::qWait(80);
+        const QMetaObject *mo = r.wake.metaObject();
+        for (int i = mo->propertyOffset(); i < mo->propertyCount(); ++i) {
+            const QVariant v = mo->property(i).read(&r.wake);
+            QVERIFY2(!v.toString().contains("party"), mo->property(i).name());
+        }
+    }
+};
+
+QTEST_MAIN(TstWakeWord)
+#include "tst_wakeword.moc"
