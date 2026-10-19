@@ -21,6 +21,7 @@ struct Reply {
     QByteArray body;
     QList<QByteArray> sse = {};   // when set: text/event-stream, written chunk by chunk
     int gapMs = 0;
+    int declaredLength = -1;      // SSE only: send a Content-Length larger than the body (dropped mid-stream)
 };
 
 class FakeAnthropic : public QObject
@@ -63,7 +64,9 @@ private:
         const Reply r = queue.isEmpty() ? Reply{ 500, "{\"error\":{\"message\":\"no reply queued\"}}" }
                                         : queue.takeFirst();
         if (!r.sse.isEmpty()) {
-            s->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n");
+            s->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n"
+                     + (r.declaredLength > 0 ? "Content-Length: " + QByteArray::number(r.declaredLength) + "\r\n" : QByteArray())
+                     + "Connection: close\r\n\r\n");
             QPointer<QTcpSocket> sp(s);
             for (int i = 0; i < r.sse.size(); ++i) {
                 const QByteArray chunk = r.sse.at(i);
@@ -211,6 +214,55 @@ QList<QByteArray> sseToolUse(const QString &id, const QString &command)
            + sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", "tool_use" } } },
                                          { "usage", QJsonObject{ { "output_tokens", 9 } } } })
            + sseEvent("message_stop", { { "type", "message_stop" } });
+    return out;
+}
+
+// Anthropic SSE for a long text answer that ends with `stopReason`
+// (max_tokens = cut by the output limit). The whole stream is re-split into
+// awkward network chunks: mid-line, mid-"data:" prefix and inside multi-byte
+// UTF-8 sequences, with \r\n line ends on some events.
+QList<QByteArray> sseLong(const QStringList &pieces, const QString &stopReason, int chunk = 13)
+{
+    QByteArray all = sseEvent("message_start", { { "type", "message_start" }, { "message", QJsonObject{
+              { "id", "msg_l" }, { "type", "message" }, { "role", "assistant" }, { "model", "claude-long" },
+              { "content", QJsonArray() }, { "usage", QJsonObject{ { "input_tokens", 9000 } } } } } })
+        + sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 0 },
+                                            { "content_block", QJsonObject{ { "type", "text" }, { "text", "" } } } });
+    for (int i = 0; i < pieces.size(); ++i) {
+        QByteArray ev = sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+                                                          { "delta", QJsonObject{ { "type", "text_delta" }, { "text", pieces.at(i) } } } });
+        if (i % 3 == 1)
+            ev.replace("\n", "\r\n");
+        all += ev;
+        if (i % 5 == 0)
+            all += ": ping\n\n";
+    }
+    all += sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 0 } })
+         + sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", stopReason } } },
+                                       { "usage", QJsonObject{ { "output_tokens", 2048 } } } })
+         + sseEvent("message_stop", { { "type", "message_stop" } });
+    QList<QByteArray> out;
+    for (int i = 0; i < all.size(); i += chunk)
+        out << all.mid(i, chunk);
+    return out;
+}
+
+// A long multi-turn session, as Buddy.qml sends it.
+QVariantList longSession(int turns, int answerChars)
+{
+    QVariantList ctx;
+    for (int i = 0; i < turns; ++i) {
+        ctx << QVariantMap{ { "role", "user" }, { "content", QStringLiteral("question %1").arg(i) } };
+        ctx << QVariantMap{ { "role", "assistant" }, { "content", QStringLiteral("answer %1 ").arg(i) + QString(answerChars, 'a') } };
+    }
+    return ctx;
+}
+
+QStringList longPieces(const QString &tag, int n)
+{
+    QStringList out;
+    for (int i = 0; i < n; ++i)
+        out << QStringLiteral("%1-%2 naïve café — 日本語 ✓ ").arg(tag).arg(i);
     return out;
 }
 
@@ -608,6 +660,153 @@ private slots:
         QVERIFY(ready.wait(5000));
         QVERIFY(systemText(fake->requests.first()).contains("/memories/prefs.md"));
         QFile::remove(f.fileName());
+    }
+
+    // Regression: "the agent cuts the chat mid response when the chat gets a
+    // bit longer". A long reply that hits the output limit (stop_reason
+    // max_tokens) used to be shown as the final answer. Now the loop asks the
+    // model to continue and stitches the parts together.
+    void maxTokensStopAutoContinues() {
+        const QStringList p1 = longPieces("first", 60);
+        const QStringList p2 = longPieces("second", 20);
+        fake->queue = { Reply{ 200, {}, sseLong(p1, "max_tokens"), 2 },
+                        Reply{ 200, {}, sseLong(p2, "end_turn", 7), 2 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("write me something long", longSession(10, 2500));
+        QVERIFY(ready.wait(15000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 2);
+        const QString got = ready.first().first().toString();
+        QCOMPARE(got, (p1.join(QString()) + p2.join(QString())).trimmed());
+        // Room to answer: the output budget is not the old 2048 tokens.
+        QVERIFY(fake->requests.first().value("max_tokens").toInt() >= 8192);
+        // The continuation request carries the partial answer and a nudge.
+        const QJsonArray msgs = fake->requests.at(1).value("messages").toArray();
+        const QJsonObject partial = msgs.at(msgs.size() - 2).toObject();
+        QCOMPARE(partial.value("role").toString(), QStringLiteral("assistant"));
+        QVERIFY(QJsonDocument(partial).toJson().contains("first-59"));
+        QCOMPARE(msgs.last().toObject().value("role").toString(), QStringLiteral("user"));
+        QVERIFY(msgs.last().toObject().value("content").toString().contains("cut off"));
+        QCOMPARE(bp->responseMeta().value("continuations").toInt(), 1);
+        QCOMPARE(bp->responseMeta().value("truncated").toBool(), false);
+        QCOMPARE(bp->responseMeta().value("stopReason").toString(), QStringLiteral("end_turn"));
+        QCOMPARE(bp->streamText(), got);   // live text did not drop the first part
+    }
+
+    void maxTokensGivesUpAfterThreeContinuations() {
+        for (int i = 0; i < 4; ++i)
+            fake->queue.append(Reply{ 200, {}, sseLong(longPieces(QStringLiteral("p%1").arg(i), 5), "max_tokens"), 1 });
+        fake->queue.append({ 200, text("never asked") });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("endless");
+        QVERIFY(ready.wait(15000));
+        QCOMPARE(fake->requests.size(), 4);   // 1 + 3 continuations
+        const QString got = ready.first().first().toString();
+        QVERIFY(got.contains("p0-0") && got.contains("p3-4"));
+        QCOMPARE(bp->responseMeta().value("continuations").toInt(), 3);
+        QCOMPARE(bp->responseMeta().value("truncated").toBool(), true);
+    }
+
+    void continuationDropsOverlap() {
+        // The continuation repeats the tail of the cut text: shown once.
+        fake->queue = { Reply{ 200, {}, sseLong({ "The quick brown fox jumps over the lazy" }, "max_tokens"), 1 },
+                        Reply{ 200, {}, sseLong({ "over the lazy dog." }, "end_turn"), 1 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("fox");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("The quick brown fox jumps over the lazy dog."));
+    }
+
+    void cutToolUseIsNotRun() {
+        // max_tokens hit inside a tool_use block: the half-written call must
+        // not run with empty/partial input; the model is asked to continue.
+        const QByteArray json = "{\"command\":\"touch half";
+        QList<QByteArray> cut{
+            sseEvent("message_start", { { "type", "message_start" }, { "message", QJsonObject{
+                { "id", "m" }, { "type", "message" }, { "role", "assistant" }, { "content", QJsonArray() } } } }),
+            sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 0 },
+                { "content_block", QJsonObject{ { "type", "text" }, { "text", "" } } } })
+            + sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+                { "delta", QJsonObject{ { "type", "text_delta" }, { "text", "Let me create it. " } } } })
+            + sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 0 } }),
+            sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 1 },
+                { "content_block", QJsonObject{ { "type", "tool_use" }, { "id", "tu_cut" }, { "name", "bash" }, { "input", QJsonObject() } } } })
+            + sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 1 },
+                { "delta", QJsonObject{ { "type", "input_json_delta" }, { "partial_json", QString::fromUtf8(json) } } } }),
+            sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", "max_tokens" } } } })
+            + sseEvent("message_stop", { { "type", "message_stop" } }) };
+        fake->queue = { Reply{ 200, {}, cut, 5 }, { 200, text("Done without it.") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("make a file");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(fake->requests.size(), 2);
+        QVERIFY(bp->toolSteps().isEmpty());
+        QVERIFY(!QFile::exists(QDir(ws.path()).filePath("half")));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("Let me create it. Done without it."));
+        // No dangling tool_use in the replayed assistant message.
+        QVERIFY(!QJsonDocument(fake->requests.at(1)).toJson().contains("tu_cut"));
+    }
+
+    void openAiLengthFinishContinues() {
+        bp->setProvider("openai");
+        bp->setApiBase(fake->base() + "/v1");
+        bp->setStreamReplies(false);
+        QJsonObject cut{ { "id", "c" }, { "object", "chat.completion" },
+                         { "choices", QJsonArray{ QJsonObject{ { "index", 0 },
+                              { "message", QJsonObject{ { "role", "assistant" }, { "content", "Part one, " } } },
+                              { "finish_reason", "length" } } } } };
+        fake->queue = { { 200, QJsonDocument(cut).toJson(QJsonDocument::Compact) }, { 200, openAiText("part two.") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("long", longSession(6, 3000));
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(fake->requests.size(), 2);
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("Part one, part two."));
+        QCOMPARE(bp->responseMeta().value("continuations").toInt(), 1);
+    }
+
+    void maxTokensTooHighFallsBack() {
+        fake->queue = { { 400, "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"max_tokens: 8192 > 4096, which is the maximum allowed number of output tokens for claude-3-haiku\"}}" },
+                        { 200, text("fine") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 2);
+        QCOMPARE(fake->requests.at(1).value("max_tokens").toInt(), 4096);
+    }
+
+    void droppedMidStreamIsRetried() {
+        // 200 OK, then the connection dies before Content-Length is reached
+        // (proxy/NAT idle cut). Transient: retried instead of surfacing.
+        const QList<QByteArray> partial = sseText({ "half ", "an ", "answer" }).mid(0, 2);
+        fake->queue = { Reply{ 200, {}, partial, 10, 100000 }, Reply{ 200, {}, sseText({ "full ", "answer" }), 10 } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(10000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 2);
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("full answer"));
+    }
+
+    void longPreviousAnswerKeepsItsEnding() {
+        // A previous answer longer than the per-message history cap keeps its
+        // ending (what "continue" refers to), marked as shortened, instead of
+        // being cut mid-sentence at a fixed length.
+        QVariantList ctx{ QVariantMap{ { "role", "user" }, { "content", "explain" } },
+                          QVariantMap{ { "role", "assistant" }, { "content", "BEGIN " + QString(20000, 'x') + " THE-END" } } };
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("continue", ctx);
+        QVERIFY(ready.wait(5000));
+        const QJsonArray msgs = fake->requests.first().value("messages").toArray();
+        const QString a = msgs.at(1).toObject().value("content").toString();
+        QVERIFY(a.startsWith("BEGIN"));
+        QVERIFY(a.endsWith("THE-END"));
+        QVERIFY(a.contains("shortened"));
+        QVERIFY(a.size() < 20000);
     }
 
     void cancelDuringApprovalStopsRun() {

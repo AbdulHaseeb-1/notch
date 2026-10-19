@@ -283,6 +283,13 @@ private:
     int m_agentIteration = 0;
     bool m_toolsDisabledForTurn = false;
     QString m_accumulatedText;
+    // Output-limit continuation (stop_reason max_tokens / finish_reason
+    // length): the text of the cut turns so far, how many continuations this
+    // run asked for, and whether the answer was still cut after the last one.
+    QString m_continuedText;
+    int m_continuations = 0;
+    bool m_truncated = false;
+    int m_outputTokenLimit = 8192;   // Anthropic max_tokens; lowered if the model rejects it
 
     QVariantMap m_responseMeta;
     QVariantList m_agentTodos;
@@ -375,6 +382,7 @@ private:
     static QString badgeForTool(const QString &name, const QJsonObject &input);
 
     QString extractText(const QJsonDocument &doc) const;
+    QString rawAnswerText(const QJsonDocument &doc) const;
     static QString errorText(const QByteArray &body, int status,
                              const QString &fallback);
     static QStringList modelsIn(const QJsonDocument &doc, const QString &provider);

@@ -28,6 +28,11 @@ public:
     void reset(Format format);
     // Returns true when the visible text grew.
     bool feed(const QByteArray &bytes);
+    // End of the byte stream: a last line without "\n" and an event without
+    // its terminating blank line are still delivered.
+    bool finish();
+    // stop_reason (Anthropic) / finish_reason (OpenAI) seen so far, if any.
+    QString stopReason() const;
 
     QString text() const { return m_text; }
     QJsonObject message() const;

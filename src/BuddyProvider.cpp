@@ -45,6 +45,56 @@ constexpr int kMaxIdenticalCalls = 2;      // same tool + same input per run
 constexpr int kKeepRecentToolResults = 4;  // newest tool results kept verbatim
 constexpr int kCompactMinChars = 600;      // older results above this are cleared
 constexpr int kMaxTraceFiles = 40;
+// Long answers. The old fixed max_tokens of 2048 cut longer replies off, and
+// the cut text was shown as if it were the whole answer.
+constexpr int kDefaultOutputTokens = 8192;  // Anthropic max_tokens (all current models allow it)
+constexpr int kMinOutputTokens = 1024;
+constexpr int kMaxContinuations = 3;        // "continue" requests per run after an output-limit stop
+constexpr int kHistoryMsgChars = 6000;      // per message of earlier turns sent as context
+constexpr int kStreamIdleTimeoutMs = 120000;      // streamed: no bytes for this long = dead
+constexpr int kBufferedReplyTimeoutMs = 600000;   // buffered: the whole answer arrives at once
+
+// An earlier turn longer than the history cap keeps its opening and, most
+// importantly, its ending (what a follow-up like "continue" refers to),
+// cut on whitespace, with a visible marker instead of a mid-sentence chop.
+QString shortenForHistory(const QString &text, int cap = kHistoryMsgChars)
+{
+    if (text.size() <= cap)
+        return text;
+    const QString marker = QStringLiteral("\n\n[… earlier part of this answer shortened for context …]\n\n");
+    const int budget = qMax(200, cap - int(marker.size()));
+    int headEnd = budget * 3 / 10;
+    int tailStart = text.size() - (budget - headEnd);
+    for (int i = headEnd, stop = qMax(0, headEnd - 80); i > stop; --i)
+        if (text.at(i).isSpace()) { headEnd = i; break; }
+    for (int i = tailStart, stop = qMin(int(text.size()) - 1, tailStart + 80); i < stop; ++i)
+        if (text.at(i).isSpace()) { tailStart = i + 1; break; }
+    return text.left(headEnd).trimmed() + marker + text.mid(tailStart).trimmed();
+}
+
+// The model often repeats the last few words of a cut-off reply when asked
+// to continue. Drop that overlap (only when it starts on a word boundary and
+// is long enough not to be a coincidence) so the stitched answer reads once.
+QString dropContinuationOverlap(const QString &prev, const QString &next)
+{
+    int pe = prev.size();
+    while (pe > 0 && prev.at(pe - 1).isSpace())
+        --pe;
+    int ns = 0;
+    while (ns < next.size() && next.at(ns).isSpace())
+        ++ns;
+    const QStringView p = QStringView(prev).left(pe);
+    const QStringView n = QStringView(next).mid(ns);
+    constexpr int kMinOverlap = 12;
+    for (int k = qMin<qsizetype>(400, qMin(p.size(), n.size())); k >= kMinOverlap; --k) {
+        const qsizetype start = p.size() - k;
+        if (start > 0 && !p.at(start - 1).isSpace())
+            continue;
+        if (p.mid(start) == n.left(k))
+            return next.mid(ns + k);
+    }
+    return next;
+}
 
 QString decodeHtmlEntities(QString s)
 {
@@ -599,7 +649,7 @@ void BuddyProvider::onStreamReadyRead()
         setActiveToolState(QString(), tr("Writing…"));
     }
     if (m_stream.feed(reply->readAll()))
-        setStreamText(m_stream.text(), true);
+        setStreamText(m_continuedText + m_stream.text(), true);
 }
 
 void BuddyProvider::setKeepTraces(bool on)
@@ -797,6 +847,7 @@ void BuddyProvider::setProvider(const QString &p)
     if (m_provider == p)
         return;
     m_provider = p;
+    m_outputTokenLimit = kDefaultOutputTokens;
     m_enabled = (p != "none");
     emit providerChanged();
     emit enabledChanged();
@@ -823,6 +874,7 @@ void BuddyProvider::setModel(const QString &m)
     if (m_model == m)
         return;
     m_model = m;
+    m_outputTokenLimit = kDefaultOutputTokens;
     emit modelChanged();
 }
 
@@ -1012,6 +1064,8 @@ void BuddyProvider::updateResponseMeta()
     meta[QStringLiteral("agent")] = m_activeAgent;
     meta[QStringLiteral("agentTitle")] = activeAgentTitle();
     meta[QStringLiteral("handoffs")] = m_handoffCount;
+    meta[QStringLiteral("continuations")] = m_continuations;
+    meta[QStringLiteral("truncated")] = m_truncated;
     m_responseMeta = meta;
     emit responseMetaChanged();
 }
@@ -1596,7 +1650,7 @@ QJsonObject BuddyProvider::buildAgentPayload() const
         payload[QStringLiteral("tools")] = tools;
 
     if (m_provider == QLatin1String("anthropic")) {
-        payload[QStringLiteral("max_tokens")] = 2048;
+        payload[QStringLiteral("max_tokens")] = m_outputTokenLimit;
         // Prompt caching: the system prompt and tool definitions are identical
         // on every turn of the loop, so mark them as a cacheable prefix
         // (cache_control on the last tool caches the whole tools block).
@@ -1678,6 +1732,23 @@ QString BuddyProvider::extractText(const QJsonDocument &doc) const
         }
     }
     return QString();
+}
+
+// The answer text of one reply exactly as written (no trimming), so the
+// parts of a continued answer join without eating the space between them.
+QString BuddyProvider::rawAnswerText(const QJsonDocument &doc) const
+{
+    const QJsonObject root = doc.object();
+    if (m_provider == QLatin1String("anthropic")) {
+        QString out;
+        for (const QJsonValue &v : root.value(QStringLiteral("content")).toArray()) {
+            const QJsonObject block = v.toObject();
+            if (block.value(QStringLiteral("type")).toString() == QLatin1String("text"))
+                out += block.value(QStringLiteral("text")).toString();
+        }
+        return out;
+    }
+    return extractText(doc);
 }
 
 QString BuddyProvider::errorText(const QByteArray &body, int status,
@@ -1777,6 +1848,9 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_agentIteration = 0;
     m_toolsDisabledForTurn = false;
     m_accumulatedText.clear();
+    m_continuedText.clear();
+    m_continuations = 0;
+    m_truncated = false;
     m_handoffCount = 0;
     // One memory listing per run: a stable system prompt keeps the prompt
     // cache warm even when the model writes memories mid-run.
@@ -1804,8 +1878,8 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     {
         int used = 0;
         for (int i = (context.size() & ~1) - 2; i >= 0; i -= 2) {
-            const int len = qMin(4000, context.at(i).toMap().value(QStringLiteral("content")).toString().size())
-                          + qMin(4000, context.at(i + 1).toMap().value(QStringLiteral("content")).toString().size());
+            const int len = qMin(kHistoryMsgChars, int(context.at(i).toMap().value(QStringLiteral("content")).toString().size()))
+                          + qMin(kHistoryMsgChars, int(context.at(i + 1).toMap().value(QStringLiteral("content")).toString().size()));
             if (used + len > kHistoryBudgetChars) {
                 firstKept = i + 2;
                 break;
@@ -1837,8 +1911,8 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     for (int i = firstKept; i + 1 < context.size(); i += 2) {
         const QVariantMap q = context.at(i).toMap();
         const QVariantMap a = context.at(i + 1).toMap();
-        const QString qText = q.value(QStringLiteral("content")).toString().left(4000);
-        const QString aText = a.value(QStringLiteral("content")).toString().left(4000);
+        const QString qText = shortenForHistory(q.value(QStringLiteral("content")).toString());
+        const QString aText = shortenForHistory(a.value(QStringLiteral("content")).toString());
         if (q.value(QStringLiteral("role")).toString() != QLatin1String("user")
                 || a.value(QStringLiteral("role")).toString() != QLatin1String("assistant")
                 || qText.trimmed().isEmpty() || aText.trimmed().isEmpty())
@@ -1864,11 +1938,16 @@ void BuddyProvider::dispatchAgentTurn()
     m_modelTimer.start();
     const QString url = buildUrl();
     QNetworkRequest request = buildRequest(url);
+    // Qt's transfer timeout is an inactivity timeout. A streamed reply sends
+    // bytes (or pings) all the time; a buffered one is silent until the
+    // whole answer is ready, so 90 s used to abort long answers.
+    request.setTransferTimeout(wantsStreaming() ? kStreamIdleTimeoutMs : kBufferedReplyTimeoutMs);
     QJsonDocument doc(buildAgentPayload());
     m_streamConsumed = false;
     m_stream.reset(m_provider == QLatin1String("anthropic") ? StreamAccumulator::Format::Anthropic
                                                            : StreamAccumulator::Format::OpenAI);
-    setStreamText(QString(), false);
+    // A continuation keeps showing the text written so far.
+    setStreamText(m_continuedText, false);
     m_chatReply = m_nam.post(request, doc.toJson(QJsonDocument::Compact));
     if (wantsStreaming())
         connect(m_chatReply, &QNetworkReply::readyRead, this, &BuddyProvider::onStreamReadyRead);
@@ -2064,6 +2143,7 @@ void BuddyProvider::cancel()
     m_policy.setTainted(false);
     clearPendingApproval();
     m_streamConsumed = false;
+    m_continuedText.clear();
     setStreamText(QString(), false);
     if (m_activeAgent != QLatin1String("buddy")) {   // no specialist outlives its run
         m_activeAgent = QStringLiteral("buddy");
@@ -2395,6 +2475,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     if (streamed) {
         m_streamConsumed = false;
         m_stream.feed(data);
+        m_stream.finish();   // an event the server closed without a blank line
         if (transportOk && m_stream.hasError()) {
             const QString se = m_stream.errorMessage();
             const bool overloaded = se.contains(QLatin1String("overload"), Qt::CaseInsensitive);
@@ -2426,15 +2507,33 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
             data = QJsonDocument(m_stream.message()).toJson(QJsonDocument::Compact);
         // A dropped stream is retried or surfaced as an error: do not leave
         // its partial text behind as if it were the answer.
-        setStreamText(transportOk ? m_stream.text() : QString(), false);
+        setStreamText(transportOk ? m_continuedText + m_stream.text() : QString(), false);
     }
 
     if (!transportOk || status < 200 || status >= 300) {
         // Transient failures (rate limit, overload, 5xx, dropped connection)
         // retry with exponential backoff before surfacing an error.
-        if (scheduleRetry(status, reply->error(), reply->rawHeader("retry-after")))
+        // A stream that died after its 200 OK (connection reset, idle cut,
+        // transfer timeout) is a transport failure, not an HTTP success.
+        const int retryStatus = (streamed && !transportOk && status >= 200 && status < 300) ? 0 : status;
+        if (scheduleRetry(retryStatus, reply->error(), reply->rawHeader("retry-after")))
             return;
         const QString errMsg = errorText(data, status, errString);
+        // Older / smaller models allow fewer output tokens than our default
+        // ("max_tokens: 8192 > 4096, which is the maximum allowed ..."):
+        // lower the limit to what the error names and resend once.
+        if (status == 400 && m_provider == QLatin1String("anthropic")
+                && errMsg.contains(QLatin1String("max_tokens"))) {
+            static const QRegularExpression rx(QStringLiteral(">\\s*(\\d+)"));
+            const QRegularExpressionMatch mm = rx.match(errMsg);
+            const int allowed = mm.hasMatch() ? mm.captured(1).toInt() : m_outputTokenLimit / 2;
+            if (allowed >= kMinOutputTokens && allowed < m_outputTokenLimit) {
+                m_outputTokenLimit = allowed;
+                addSpan(QJsonObject{ { "type", "model" }, { "event", "max_tokens_lowered" }, { "limit", allowed } });
+                dispatchAgentTurn();
+                return;
+            }
+        }
         // Graceful fallback if the selected model does not support tool calling on turn 0
         if (m_agentIteration == 0 && !m_toolsDisabledForTurn && hasAnyToolEnabled()
                 && (status == 400 || status == 422)
@@ -2491,6 +2590,18 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     const QString turnText = extractText(doc).trimmed();
     if (!turnText.isEmpty())
         m_accumulatedText = turnText;
+
+    // Did the model stop because it ran out of output tokens? Then the text
+    // is only the first part of the answer (and any tool call in it is half
+    // written), so it must not be shown or run as if it were complete.
+    const QString stopNow = m_provider == QLatin1String("anthropic")
+        ? root.value(QStringLiteral("stop_reason")).toString()
+        : m_provider == QLatin1String("ollama")
+            ? root.value(QStringLiteral("done_reason")).toString()
+            : root.value(QStringLiteral("choices")).toArray().first().toObject()
+                  .value(QStringLiteral("finish_reason")).toString();
+    const bool cutByLimit = stopNow == QLatin1String("max_tokens") || stopNow == QLatin1String("length");
+    const QString rawTurnText = rawAnswerText(doc);
 
     // Extract tool calls & Anthropic Agent SDK blocks across Anthropic, OpenAI/Custom, and Ollama
     QList<PendingToolCall> toolCalls;
@@ -2556,7 +2667,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 }
             }
         }
-        if (!toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations) {
+        if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations) {
             m_agentMessages.append(QJsonObject{
                 { QStringLiteral("role"), QStringLiteral("assistant") },
                 { QStringLiteral("content"), content }
@@ -2579,7 +2690,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
             if (!tc.name.isEmpty())
                 toolCalls.append(tc);
         }
-        if (!toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations)
+        if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations)
             m_agentMessages.append(msg);
     } else {
         // OpenAI / Custom
@@ -2602,9 +2713,52 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 if (!tc.name.isEmpty())
                     toolCalls.append(tc);
             }
-            if (!toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations)
+            if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations)
                 m_agentMessages.append(msg);
         }
+    }
+
+    if (cutByLimit) {
+        m_continuedText += dropContinuationOverlap(m_continuedText, rawTurnText);
+        toolCalls.clear();   // a call cut mid-arguments never runs
+        if (m_continuations < kMaxContinuations) {
+            ++m_continuations;
+            addSpan(QJsonObject{ { "type", "model" }, { "event", "continue" }, { "stopReason", stopNow },
+                                 { "attempt", m_continuations }, { "chars", m_continuedText.size() } });
+            // Replay only the text written so far (no dangling tool_use) and
+            // ask for the rest. A user turn works on every provider; an
+            // assistant prefill would not (thinking, OpenAI, Ollama).
+            QString soFar = rawTurnText;
+            while (!soFar.isEmpty() && soFar.back().isSpace())
+                soFar.chop(1);
+            if (soFar.isEmpty())
+                soFar = QStringLiteral("…");
+            m_agentMessages.append(QJsonObject{ { QStringLiteral("role"), QStringLiteral("assistant") },
+                                                { QStringLiteral("content"), soFar } });
+            m_agentMessages.append(QJsonObject{ { QStringLiteral("role"), QStringLiteral("user") },
+                { QStringLiteral("content"), QStringLiteral(
+                    "[Your previous reply was cut off by the output length limit.] Continue exactly where it "
+                    "stopped, mid-sentence if needed. Do not repeat or summarise what you already wrote and "
+                    "do not start over. If you were about to call a tool, call it now.") } });
+            setStreamText(m_continuedText, false);
+            setActiveToolState(QString(), tr("Continuing…"));
+            dispatchAgentTurn();
+            return;
+        }
+        // Still cut after the last continuation: show everything we have and
+        // flag it (responseMeta.truncated) so the UI can say so.
+        m_truncated = true;
+        m_accumulatedText = m_continuedText.trimmed();
+        m_continuedText.clear();
+        addSpan(QJsonObject{ { "type", "model" }, { "event", "truncated" }, { "continuations", m_continuations } });
+        if (!m_streamText.isEmpty())
+            setStreamText(m_accumulatedText, false);
+    } else if (!m_continuedText.isEmpty()) {
+        // The last part of a continued answer: stitch it to the earlier parts.
+        m_accumulatedText = (m_continuedText + dropContinuationOverlap(m_continuedText, rawTurnText)).trimmed();
+        m_continuedText.clear();
+        if (!m_streamText.isEmpty())
+            setStreamText(m_accumulatedText, false);
     }
 
     if (!toolCalls.isEmpty() && m_agentIteration < kMaxAgentIterations) {

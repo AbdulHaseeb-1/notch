@@ -132,6 +132,61 @@ private slots:
         QVERIFY(!acc.hasError());
         QCOMPARE(acc.text(), QString());
     }
+    // Regression for the long-chat cut-off: a stream whose last event has no
+    // terminating blank line (server closed right after it) still completes,
+    // and max_tokens is reported, not hidden.
+    void finishFlushesLastEventAndReportsMaxTokens() {
+        StreamAccumulator acc(StreamAccumulator::Format::Anthropic);
+        QByteArray all = anthropicStream();
+        all.replace("\"tool_use\"},\"usage\"", "\"max_tokens\"},\"usage\"");
+        all.chop(2);   // "...message_stop\"}" with no "\n\n"
+        for (int i = 0; i < all.size(); i += 5)
+            acc.feed(all.mid(i, 5));
+        QVERIFY(!acc.finished());
+        acc.finish();
+        QVERIFY(acc.finished());
+        QVERIFY(acc.complete());
+        QCOMPARE(acc.stopReason(), QStringLiteral("max_tokens"));
+        const int events = acc.events();
+        acc.finish();   // idempotent
+        QCOMPARE(acc.events(), events);
+    }
+
+    void longUtf8TextSplitEverywhere() {
+        // 3000 deltas of multi-byte text, fed in 1..17-byte chunks that land
+        // inside UTF-8 sequences, "data:" prefixes and \r\n pairs.
+        QByteArray all = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n"
+                         "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n";
+        QString expect;
+        for (int i = 0; i < 3000; ++i) {
+            const QString t = QStringLiteral("ü日本%1✓ ").arg(i);
+            expect += t;
+            QJsonObject d{ { "type", "content_block_delta" }, { "index", 0 },
+                           { "delta", QJsonObject{ { "type", "text_delta" }, { "text", t } } } };
+            all += "event: content_block_delta\r\ndata: " + QJsonDocument(d).toJson(QJsonDocument::Compact) + "\r\n\r\n";
+        }
+        all += "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n"
+               "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        StreamAccumulator acc(StreamAccumulator::Format::Anthropic);
+        int step = 1;
+        for (int i = 0; i < all.size(); i += step, step = step % 17 + 1)
+            acc.feed(all.mid(i, step));
+        QVERIFY(acc.complete());
+        QCOMPARE(acc.text().size(), expect.size());
+        QCOMPARE(acc.text(), expect);
+        QCOMPARE(acc.stopReason(), QStringLiteral("end_turn"));
+    }
+
+    void openAiLengthIsReported() {
+        StreamAccumulator acc(StreamAccumulator::Format::OpenAI);
+        acc.feed("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"cut\"}}]}\n\n"
+                 "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]");
+        acc.finish();
+        QVERIFY(acc.finished());
+        QCOMPARE(acc.stopReason(), QStringLiteral("length"));
+        QCOMPARE(acc.message().value("choices").toArray().first().toObject().value("finish_reason").toString(),
+                 QStringLiteral("length"));
+    }
 };
 
 QTEST_APPLESS_MAIN(TstStream)

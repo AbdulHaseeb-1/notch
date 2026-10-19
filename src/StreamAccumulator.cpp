@@ -43,6 +43,23 @@ bool StreamAccumulator::feed(const QByteArray &bytes)
     return m_text.size() != before;
 }
 
+bool StreamAccumulator::finish()
+{
+    const int before = m_text.size();
+    if (!m_buffer.isEmpty())
+        feed(QByteArray("\n"));
+    if (!m_pendingData.isEmpty() || !m_pendingEvent.isEmpty())
+        feed(QByteArray("\n"));
+    return m_text.size() != before;
+}
+
+QString StreamAccumulator::stopReason() const
+{
+    if (m_format == Format::Anthropic)
+        return m_message.value(QStringLiteral("stop_reason")).toString();
+    return m_finishReason;
+}
+
 void StreamAccumulator::handleEvent(const QString &event, const QByteArray &data)
 {
     ++m_events;
