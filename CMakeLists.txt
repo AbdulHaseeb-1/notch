@@ -189,6 +189,20 @@ set_target_properties(noch PROPERTIES
 option(NOCH_BUILD_TESTS "Build unit tests" OFF)
 if(NOCH_BUILD_TESTS)
     enable_testing()
+
+    # How a test runs. The headless "offscreen" Qt platform plugin is not part of
+    # every Qt install (the Windows installers ship only "windows"), and asking for
+    # a plugin that is missing makes the test fail at start-up with "no Qt platform
+    # plugin could be initialized". So it is requested only where it exists; on
+    # Windows the normal platform is used (the tests open no windows). Tests never
+    # play sound.
+    function(noch_test_env target)
+        set(env "NOCH_NO_AUDIO=1")
+        if(NOT WIN32)
+            list(APPEND env "QT_QPA_PLATFORM=offscreen")
+        endif()
+        set_tests_properties(${target} PROPERTIES ENVIRONMENT "${env}")
+    endfunction()
     find_package(Qt6 REQUIRED COMPONENTS Test)
     find_package(Qt6 REQUIRED COMPONENTS Network)
     qt_add_executable(tst_agentpolicy tests/tst_agentpolicy.cpp src/AgentPolicy.cpp src/AgentPolicy.h)
@@ -205,7 +219,7 @@ if(NOCH_BUILD_TESTS)
     qt_add_executable(tst_buddysfx tests/tst_buddysfx.cpp src/BuddySfx.cpp src/BuddySfx.h)
     target_link_libraries(tst_buddysfx PRIVATE Qt6::Core Qt6::Gui Qt6::Multimedia Qt6::Test)
     add_test(NAME tst_buddysfx COMMAND tst_buddysfx)
-    set_tests_properties(tst_buddysfx PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    noch_test_env(tst_buddysfx)
     find_package(Qt6 REQUIRED COMPONENTS Network)
     qt_add_executable(tst_userquestions tests/tst_userquestions.cpp
         src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
@@ -219,19 +233,19 @@ if(NOCH_BUILD_TESTS)
         target_link_libraries(tst_voice PRIVATE user32)
     endif()
     add_test(NAME tst_voice COMMAND tst_voice)
-    set_tests_properties(tst_voice PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    noch_test_env(tst_voice)
     qt_add_executable(tst_wakeword tests/tst_wakeword.cpp
         src/WakeWord.cpp src/WakeWord.h src/SpeechOut.cpp src/SpeechOut.h
         src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h)
     target_link_libraries(tst_wakeword PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
     add_test(NAME tst_wakeword COMMAND tst_wakeword)
-    set_tests_properties(tst_wakeword PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    noch_test_env(tst_wakeword)
     qt_add_executable(tst_speechout tests/tst_speechout.cpp
         src/SpeechOut.cpp src/SpeechOut.h src/WakeWord.cpp src/WakeWord.h
         src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h)
     target_link_libraries(tst_speechout PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
     add_test(NAME tst_speechout COMMAND tst_speechout)
-    set_tests_properties(tst_speechout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    noch_test_env(tst_speechout)
     qt_add_executable(tst_chatsessions tests/tst_chatsessions.cpp
         src/ChatSessions.cpp src/ChatSessions.h src/SessionFormat.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_chatsessions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
@@ -267,8 +281,8 @@ if(NOCH_BUILD_TESTS)
         target_link_libraries(tst_computeruse PRIVATE user32)
     endif()
     add_test(NAME tst_computeruse COMMAND tst_computeruse)
-    set_tests_properties(tst_computeruse PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    set_tests_properties(tst_buddyagent PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    noch_test_env(tst_computeruse)
+    noch_test_env(tst_buddyagent)
 
     # QML component tests (tests/qml): run with Qt's qmltestrunner when it is installed.
     find_program(NOCH_QMLTESTRUNNER NAMES qmltestrunner qmltestrunner-qt6
