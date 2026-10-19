@@ -187,6 +187,27 @@ public:
         return SendInput(UINT(ev.size()), ev.data(), sizeof(INPUT)) == UINT(ev.size());
     }
 
+    bool keyState(const cu::KeyCombo &combo, bool down) override
+    {
+        QVector<WORD> vks;
+        for (const QString &m : combo.modifiers)
+            vks << vkFor(m);
+        vks << vkFor(combo.key);
+        if (vks.contains(WORD(0)))
+            return false;
+        QVector<INPUT> ev;
+        // Down in order, up in reverse, like a person pressing and letting go.
+        for (int n = 0; n < vks.size(); ++n) {
+            const WORD vk = down ? vks.at(n) : vks.at(vks.size() - 1 - n);
+            INPUT in{};
+            in.type = INPUT_KEYBOARD;
+            in.ki.wVk = vk;
+            in.ki.dwFlags = (isExtended(vk) ? KEYEVENTF_EXTENDEDKEY : 0) | (down ? 0 : KEYEVENTF_KEYUP);
+            ev << in;
+        }
+        return SendInput(UINT(ev.size()), ev.data(), sizeof(INPUT)) == UINT(ev.size());
+    }
+
     QImage grab(const ScreenInfo &screen) override
     {
         for (QScreen *s : QGuiApplication::screens())

@@ -68,6 +68,21 @@ Window {
         property bool buddyAllowToolSearch: true
         property bool buddyAllowAdvisor: true
         property bool buddyAllowTodoTask: true
+        // Claude's own computer-use tools (no extra fee; they add about 4,500
+        // input tokens per request, only while computer use is on).
+        property bool buddyOfficialComputer: true
+        // "sharp" sends bigger screenshots (more tokens); "standard" the smaller ones.
+        property string buddyComputerDetail: "sharp"
+        property int buddyMaxSteps: 40
+        property bool buddyAllowAskUser: true
+        // ---- Push-to-talk voice (off until the user adds a speech service) --
+        property bool buddyVoiceEnabled: false
+        property bool buddyVoiceHotkey: true
+        property string buddyVoiceBase: "https://api.openai.com/v1"
+        property string buddyVoiceKey: ""
+        property string buddyVoiceModel: "whisper-1"
+        property string buddyVoiceLanguage: ""
+        property bool buddyVoiceAutoSend: false
         // ---- Agent safety (see docs/agent-safety.md) -------------------------
         // "default" asks before side effects, "acceptEdits" auto-approves file
         // edits inside the workspace, "plan" is read-only, "bypass" trusts all
@@ -93,6 +108,8 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
+        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser,
+        cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceBase, cfg.buddyVoiceModel, cfg.buddyVoiceLanguage, cfg.buddyVoiceAutoSend,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyHandoffs,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
@@ -1124,6 +1141,8 @@ Window {
         onSettingsRequested: root.toggleSettings()
         onActivationRequested: root.requestActivate()
         onPlanEdited: (plan) => cfg.buddyPlan = JSON.stringify(plan)
+        onPermissionModeRequested: (mode) => cfg.buddyPermissionMode = mode
+        voiceAutoSend: cfg.buddyVoiceAutoSend
         historyJson: cfg.buddyHistory
         onHistorySaved: (json) => cfg.buddyHistory = json
     }
@@ -1162,6 +1181,18 @@ Window {
     Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
     Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
     Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
+    Binding { target: BuddyAgent; property: "officialComputerTools"; value: cfg.buddyOfficialComputer }
+    Binding { target: BuddyAgent; property: "computerDetail"; value: cfg.buddyComputerDetail }
+    Binding { target: BuddyAgent; property: "maxSteps"; value: cfg.buddyMaxSteps }
+    Binding { target: BuddyAgent; property: "allowAskUser"; value: cfg.buddyAllowAskUser }
+    Binding { target: Voice; property: "enabled"; value: cfg.buddyVoiceEnabled }
+    Binding { target: Voice; property: "apiBase"; value: cfg.buddyVoiceBase }
+    // A speech service of its own needs its own key; one left empty only works
+    // for a service on this computer. The chat key is never sent to it.
+    Binding { target: Voice; property: "apiKey"; value: cfg.buddyVoiceKey }
+    Binding { target: Voice; property: "model"; value: cfg.buddyVoiceModel }
+    Binding { target: Voice; property: "language"; value: cfg.buddyVoiceLanguage }
+    Binding { target: TalkKey; property: "enabled"; value: cfg.buddyVoiceEnabled && cfg.buddyVoiceHotkey }
     Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
     Binding { target: BuddySound; property: "volume"; value: cfg.buddySfxVolume }
     Binding { target: BuddySound; property: "style"; value: cfg.buddySfxStyle }

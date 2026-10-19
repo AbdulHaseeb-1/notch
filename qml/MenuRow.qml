@@ -33,7 +33,7 @@ Item {
         text: row.label
         color: row.fg
         font.family: Theme.font
-        font.pixelSize: 14
+        font.pixelSize: Theme.fontMd
         font.weight: Font.DemiBold
     }
 
@@ -44,7 +44,7 @@ Item {
         text: row.hint
         color: Theme.textDim
         font.family: Theme.font
-        font.pixelSize: 12
+        font.pixelSize: Theme.fontBase
     }
 
     MouseArea {

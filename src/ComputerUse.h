@@ -30,6 +30,7 @@ enum class Action {
     Screenshot, Zoom, CursorPosition, Wait,                    // observe
     MouseMove, LeftClick, RightClick, MiddleClick, DoubleClick, TripleClick,
     LeftClickDrag, Scroll, Type, Key,                           // input
+    LeftMouseDown, LeftMouseUp, HoldKey,                        // fine-grained input
 };
 
 struct KeyCombo {
@@ -51,7 +52,10 @@ struct ParsedAction {
     KeyCombo combo;          // key
     QString scrollDirection; // up / down / left / right
     int scrollAmount = 3;
-    double duration = 1.0;   // wait, seconds
+    double duration = 1.0;   // wait / hold_key, seconds
+    bool durationClamped = false;   // the model asked for longer than we allow
+    QStringList modifiers;   // click / scroll / drag: keys held for just this action (canonical)
+    int repeat = 1;          // key: press this many times
     QRect region;            // zoom, agent space
     int display = -1;        // screenshot: switch to this display first
     QString error;
@@ -61,6 +65,30 @@ struct ParsedAction {
 
 constexpr int kMaxTypeChars = 2000;
 constexpr int kMaxScrollAmount = 25;
+constexpr double kMaxWaitSeconds = 30.0;   // wait / hold_key: Stop must stay responsive
+constexpr int kMaxKeyRepeat = 100;
+
+// The screenshot size a model accepts. The official computer toolset does
+// not resize for us: an image over the model's limits is rejected, so the
+// screenshot space must be chosen to fit. All fields 0 = no extra limit.
+struct ImageLimits {
+    QSize box = QSize(1280, 800);   // bounding box (Anthropic's recommended 1280x800)
+    bool matchOrientation = false;  // swap the box for portrait screens
+    int maxLongEdge = 0;
+    qint64 maxPixels = 0;
+    int maxVisualTokens = 0;        // ceil(w/28) * ceil(h/28)
+};
+// 1280x800: what Buddy has always used. Cheap, and fine for most screens.
+ImageLimits standardLimits();
+// Up to 1920x1080: sharper text for models that take 2576 px / 4784 visual
+// tokens (everything the computer toolset supports). Docs advise against
+// going above 1920x1080.
+ImageLimits sharpLimits();
+// Older models (computer_20251124 / 20250124): 1568 px long edge, ~1.15 MP.
+ImageLimits legacySharpLimits();
+int visualTokens(const QSize &size);
+// Largest size inside the limits with the screen's aspect ratio; never upscales.
+QSize fitToLimits(const QSize &logical, const ImageLimits &limits);
 
 QStringList actionNames();
 bool isInputAction(Action a);
@@ -94,6 +122,11 @@ public:
     static QSize agentSizeFor(const QSize &logical, const QSize &maxSize = QSize(1280, 800));
     static QList<ScreenInfo> qtScreens();
 
+    // What the model's screenshots may measure. The default is the 1280x800
+    // box; the provider widens it for models that accept sharper images.
+    void setLimits(const cu::ImageLimits &limits) { m_limits = limits; }
+    cu::ImageLimits limits() const { return m_limits; }
+
     void setScreens(const QList<ScreenInfo> &screens);
     QList<ScreenInfo> screens() const { return m_screens; }
     bool setDisplay(int index);   // false if out of range
@@ -111,6 +144,7 @@ public:
 private:
     QList<ScreenInfo> m_screens;
     int m_display = 0;
+    cu::ImageLimits m_limits;
 };
 
 // At most `burst` input actions per `windowMs`, and at least `minGapMs`
@@ -143,6 +177,9 @@ public:
     virtual void scroll(int dx, int dy) = 0;              // wheel notches; +dy = up
     virtual bool typeText(const QString &text) = 0;
     virtual bool keyCombo(const cu::KeyCombo &combo) = 0;
+    // Press (down) or release (up) every key of a combo without the other
+    // half: modifiers held around a click, and hold_key.
+    virtual bool keyState(const cu::KeyCombo &combo, bool down) = 0;
     virtual QImage grab(const ScreenInfo &screen) = 0;    // physical-resolution image of one monitor
     virtual bool focusedIsPassword() const = 0;
     // Watch for real (non-injected) user input while the agent is in control.
@@ -167,6 +204,7 @@ public:
     void scroll(int dx, int dy) override;
     bool typeText(const QString &text) override;
     bool keyCombo(const cu::KeyCombo &combo) override;
+    bool keyState(const cu::KeyCombo &combo, bool down) override;
     QImage grab(const ScreenInfo &screen) override;
     bool focusedIsPassword() const override { return passwordFocused; }
 
@@ -210,7 +248,8 @@ class ComputerUse : public QObject
 public:
     struct Result {
         QString text;
-        QString imageBase64;   // JPEG for the model (screenshot / zoom)
+        QString imageBase64;   // for the model (screenshot / zoom)
+        QString mediaType = QStringLiteral("image/jpeg");   // of imageBase64
         QString thumbnail;     // data: URL for the trace UI
         bool isError = false;
     };
@@ -229,6 +268,9 @@ public:
     // 1 = real animation timing; 0 = no waits (tests).
     void setAnimationScale(double s) { m_animScale = qMax(0.0, s); }
     RateLimiter &rateLimiter() { return m_limiter; }
+    // Screenshots for the model: lossless PNG (sharp text) or JPEG.
+    void setLosslessScreenshots(bool on) { m_lossless = on; }
+    bool losslessScreenshots() const { return m_lossless; }
 
     bool active() const { return m_active; }
     bool paused() const { return m_paused; }
@@ -289,6 +331,10 @@ private:
     void later(int ms, std::function<void()> fn);
     QString thumbnailFor(const QImage &img, const QPointF &markLogical = QPointF(-1, -1)) const;
     static QString jpegBase64(const QImage &img, int quality);
+    static QString pngBase64(const QImage &img);
+    void encodeForModel(const QImage &img, int jpegQuality, Result *r) const;
+    void releaseHeldInput();
+    bool runModified(const cu::ParsedAction &a, bool down);
     void finishInput(const cu::ParsedAction &a, const QPoint &target, Done done);
 
     std::unique_ptr<ComputerBackend> m_backend;
@@ -298,6 +344,9 @@ private:
     quint64 m_generation = 0;
     bool m_autoScreens = true;
     double m_animScale = 1.0;
+    bool m_lossless = false;
+    bool m_leftHeld = false;       // left_mouse_down without its left_mouse_up yet
+    QList<cu::KeyCombo> m_heldKeys; // modifiers / hold_key currently pressed
     bool m_active = false;
     bool m_paused = false;
     QString m_pauseReason;

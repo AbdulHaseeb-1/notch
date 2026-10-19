@@ -123,7 +123,7 @@ Item {
                         : (view.running ? qsTr("Focusing") : (view.timerActive ? qsTr("Paused") : qsTr("Ready")))
                     color: Theme.textDim
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     font.weight: Font.DemiBold
                 }
             }
@@ -179,7 +179,7 @@ Item {
             text: qsTr("minutes  ·  keeps running when this panel is closed")
             color: Theme.textFaint
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
         }
     }
 }

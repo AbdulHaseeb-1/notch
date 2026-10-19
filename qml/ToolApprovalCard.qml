@@ -24,7 +24,7 @@ Rectangle {
     radius: Theme.radiusMd
     color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.07)
     border.width: 1
-    border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.38)
+    border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.24)
     focus: visible
     activeFocusOnTab: true
     Accessible.role: Accessible.Dialog
@@ -226,6 +226,23 @@ Rectangle {
             wrapMode: Text.WordWrap
             maximumLineCount: 2
             elide: Text.ElideRight
+        }
+
+        // What "Always allow" would really do: save this narrow rule, or (when
+        // no safe rule exists) allow the tool until Noch is restarted.
+        Text {
+            width: parent.width
+            visible: String(card.request.alwaysLabel || "").length > 0
+            text: card.request.alwaysSaved
+                  ? qsTr("“Always allow” saves: %1").arg(String(card.request.alwaysLabel))
+                  : qsTr("“Always allow” covers %1").arg(String(card.request.alwaysLabel))
+            color: Theme.textFaint
+            font.family: Theme.font
+            font.pixelSize: Theme.fontXs
+            wrapMode: Text.WrapAnywhere
+            maximumLineCount: 2
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
         }
 
         Row {

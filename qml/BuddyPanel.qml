@@ -33,7 +33,12 @@ Item {
     readonly property real pad: 14
     readonly property real headerH: 48
     readonly property real footerH: kind === "chat" ? 50 : 42
-    readonly property real width_: Math.min(Theme.buddyPanelWidth, Math.max(320, (desktop ? desktop.width : Theme.buddyPanelWidth) - 2 * Theme.screenMargin))
+    readonly property real width_: {
+        const avail = (desktop ? desktop.width : Theme.buddyPanelWidth) - 2 * Theme.screenMargin
+        // Roomier on big screens, never wider than the screen on small ones.
+        const preferred = Math.max(Theme.buddyPanelWidth, Math.min(680, (desktop ? desktop.width : 0) * 0.32))
+        return Math.min(preferred, Math.max(320, avail))
+    }
     property real dragX: 0
     property real dragY: 0
 
@@ -41,11 +46,13 @@ Item {
     property real bodyH: 356
     readonly property var pendingApproval: BuddyAgent ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    readonly property var pendingQuestion: BuddyAgent ? BuddyAgent.pendingQuestion : ({})
+    readonly property bool awaitingQuestion: pendingQuestion && pendingQuestion.id !== undefined
     readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
                                        ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "loading"
     // Room the loading view gives up for approval cards or live text.
-    readonly property bool compactLoading: awaitingApproval || hasLive
+    readonly property bool compactLoading: awaitingApproval || awaitingQuestion || hasLive
     property bool userResized: false
     readonly property bool interacting: dragHit.pressed || resizeHit.pressed
 
@@ -343,7 +350,7 @@ Item {
                     text: panel.kind === "chat" ? qsTr("Noch Buddy") : panel.title
                     color: Theme.ink
                     font.family: Theme.font
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontMd
                     font.weight: Font.Bold
                     elide: Text.ElideRight
                 }
@@ -351,7 +358,7 @@ Item {
                     width: parent.width
                     visible: panel.kind === "chat"
                     text: panel.phase === "loading"
-                          ? (panel.awaitingApproval ? qsTr("Paused on one step")
+                          ? (panel.awaitingQuestion ? qsTr("Waiting for your answer") : panel.awaitingApproval ? qsTr("Paused on one step")
                              : panel.hasLive ? qsTr("Answering live")
                              : (BuddyAgent.activeAgent !== "buddy" && BuddyAgent.activeAgentTitle.length > 0)
                                ? qsTr("%1 is on it").arg(BuddyAgent.activeAgentTitle)
@@ -360,7 +367,7 @@ Item {
                         : (BuddyAgent && BuddyAgent.model ? BuddyAgent.model : qsTr("Companion")))
                     color: Theme.textDim
                     font.family: Theme.font
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSm
                     elide: Text.ElideRight
                 }
             }
@@ -390,12 +397,12 @@ Item {
                     id: chipLabel
                     anchors.centerIn: parent
                     text: panel.phase === "error" ? qsTr("Failed")
-                        : (panel.phase === "loading" ? (panel.awaitingApproval ? qsTr("Needs you") : panel.hasLive ? qsTr("Writing…") : qsTr("Thinking…"))
+                        : (panel.phase === "loading" ? (panel.awaitingApproval || panel.awaitingQuestion ? qsTr("Needs you") : panel.hasLive ? qsTr("Writing…") : qsTr("Thinking…"))
                         : (panel.isStreaming ? qsTr("Live") : qsTr("Ready")))
                     color: panel.phase === "error" ? Theme.danger
                         : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.success)
                     font.family: Theme.font
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.fontXs
                     font.weight: Font.DemiBold
                 }
             }
@@ -463,7 +470,7 @@ Item {
                     height: Math.min(68, promptPreviewText.implicitHeight + 18)
                     radius: 12
                     color: Theme.raised
-                    border.width: 1
+                    border.width: 0
                     border.color: Theme.borderSoft
 
                     Text {
@@ -474,7 +481,7 @@ Item {
                         text: panel.userPrompt
                         color: Theme.textDim
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontBase
                         font.weight: Font.Medium
                         wrapMode: Text.WordWrap
                         maximumLineCount: 2
@@ -558,7 +565,7 @@ Item {
                             : panel.thinkPhrases[panel.thinkStep])))
                         color: Theme.ink
                         font.family: Theme.font
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontMd
                         font.weight: Font.DemiBold
                     }
 
@@ -617,7 +624,7 @@ Item {
                                                       - (loadTools.visible ? loadTools.height + loadCol.spacing : 0)))
                         radius: Theme.radiusMd
                         color: Theme.glassFill
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.glassBorder
                         clip: true
                         Text {
@@ -629,7 +636,7 @@ Item {
                             textFormat: Text.PlainText
                             color: Theme.text
                             font.family: Theme.font
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontMd
                             lineHeight: 1.2
                             wrapMode: Text.Wrap
                         }
@@ -651,6 +658,17 @@ Item {
                         visible: panel.awaitingApproval
                         request: panel.pendingApproval
                         onDecided: (approve, always) => BuddyAgent.resolveApproval(approve, always)
+                    }
+
+                    // Buddy would rather ask than guess.
+                    BuddyQuestionCard {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: panel.width_ - 48
+                        maxCardHeight: Math.max(160, panel.bodyH - 60)
+                        visible: panel.awaitingQuestion
+                        request: panel.pendingQuestion
+                        onAnswered: (answers) => BuddyAgent.answerQuestion(answers)
+                        onSkipped: BuddyAgent.skipQuestion()
                     }
                 }
             }
@@ -696,7 +714,7 @@ Item {
                         text: panel.errorMessage
                         color: Theme.textDim
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontBase
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignHCenter
                     }
@@ -707,7 +725,7 @@ Item {
                         radius: 15
                         color: retryBtn.pressed ? Theme.press
                              : (retryBtn.containsMouse ? Theme.tileActive : Theme.tile)
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.border
 
                         Text {
@@ -715,7 +733,7 @@ Item {
                             text: qsTr("Try again")
                             color: Theme.ink
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                         }
                         MouseArea {
@@ -776,7 +794,7 @@ Item {
                         height: userBubbleText.implicitHeight + 16
                         radius: 13
                         color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.15)
-                        border.width: 1
+                        border.width: 0
                         border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
 
                         Text {
@@ -787,7 +805,7 @@ Item {
                             text: panel.userPrompt
                             color: Theme.ink
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                             wrapMode: Text.WordWrap
                         }
@@ -801,6 +819,7 @@ Item {
 
                         ToolTraceBar {
                             width: parent.width
+                            undoSource: BuddyAgent
                             steps: panel.toolSteps
                             icons: panel.distinctToolIcons
                             durationMs: panel.responseMeta ? Number(panel.responseMeta.durationMs || 0) : 0
@@ -832,7 +851,7 @@ Item {
                         height: pAdvisorCol.implicitHeight + 18
                         radius: 12
                         color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.08)
-                        border.width: 1
+                        border.width: 0
                         border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.30)
 
                         Column {
@@ -857,7 +876,7 @@ Item {
                                           .arg(String(panel.responseMeta && panel.responseMeta.advisorFocus ? panel.responseMeta.advisorFocus : "GENERAL").toUpperCase())
                                     color: Theme.accent
                                     font.family: Theme.font
-                                    font.pixelSize: 10
+                                    font.pixelSize: Theme.fontXs
                                     font.weight: Font.Bold
                                     font.letterSpacing: 0.6
                                 }
@@ -869,7 +888,7 @@ Item {
                                       .replace(/[#*`]/g, "").trim()
                                 color: Theme.inkSoft
                                 font.family: Theme.font
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontBase
                                 wrapMode: Text.WordWrap
                                 maximumLineCount: 4
                                 elide: Text.ElideRight
@@ -885,7 +904,7 @@ Item {
                         height: pTodoCol.implicitHeight + 18
                         radius: 12
                         color: Theme.raised
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.borderSoft
 
                         Column {
@@ -909,7 +928,7 @@ Item {
                                     text: qsTr("AGENT TASK CHECKLIST (%1)").arg(panel.agentTodos.length)
                                     color: Theme.textDim
                                     font.family: Theme.font
-                                    font.pixelSize: 10
+                                    font.pixelSize: Theme.fontXs
                                     font.weight: Font.Bold
                                     font.letterSpacing: 0.6
                                 }
@@ -951,7 +970,7 @@ Item {
                                         text: String(todoRow.modelData.content || "")
                                         color: parent.done ? Theme.textDim : Theme.ink
                                         font.family: Theme.font
-                                        font.pixelSize: 12
+                                        font.pixelSize: Theme.fontBase
                                         font.strikeout: parent.done
                                         elide: Text.ElideRight
                                     }
@@ -966,7 +985,7 @@ Item {
                         height: chatText.implicitHeight + lengthNote.h + actionRow.height + 30
                         radius: 14
                         color: Theme.raised
-                        border.width: 1
+                        border.width: 0
                         border.color: panel.isStreaming
                                       ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.45)
                                       : Theme.borderSoft
@@ -987,7 +1006,7 @@ Item {
                                   : qsTr("No response.")
                             color: Theme.ink
                             font.family: Theme.font
-                            font.pixelSize: 13
+                            font.pixelSize: Theme.fontMd
                             wrapMode: TextEdit.WordWrap
 
                             MouseArea {
@@ -1019,7 +1038,7 @@ Item {
                                       : qsTr("Long reply, continued %n time(s)", "", parts)
                             color: cut ? Theme.warning : Theme.textFaint
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap
                             Accessible.role: Accessible.StaticText
                             Accessible.name: text
@@ -1042,7 +1061,7 @@ Item {
                                 height: 24
                                 radius: 12
                                 color: copyHit.containsMouse ? Theme.tileActive : Theme.tile
-                                border.width: 1
+                                border.width: 0
                                 border.color: panel.copiedFeedback ? Theme.success : Theme.border
 
                                 Row {
@@ -1060,7 +1079,7 @@ Item {
                                         text: panel.copiedFeedback ? qsTr("Copied") : qsTr("Copy")
                                         color: panel.copiedFeedback ? Theme.success : Theme.ink
                                         font.family: Theme.font
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.fontSm
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -1088,7 +1107,7 @@ Item {
                                 height: 24
                                 radius: 12
                                 color: retryActionHit.containsMouse ? Theme.tileActive : Theme.tile
-                                border.width: 1
+                                border.width: 0
                                 border.color: Theme.border
 
                                 Row {
@@ -1106,7 +1125,7 @@ Item {
                                         text: qsTr("Regenerate")
                                         color: Theme.ink
                                         font.family: Theme.font
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.fontSm
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -1149,7 +1168,7 @@ Item {
                                         text: panel.responseLoved ? qsTr("Loved!") : qsTr("Thank Buddy")
                                         color: panel.responseLoved ? Theme.love : Theme.ink
                                         font.family: Theme.font
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.fontSm
                                         font.weight: Font.DemiBold
                                     }
                                 }
@@ -1177,7 +1196,7 @@ Item {
                                 width: Math.min(pSdkMetaRow.implicitWidth + 14, room)
                                 radius: 12
                                 color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.04)
-                                border.width: 1
+                                border.width: 0
                                 border.color: Theme.borderSoft
 
                                 Row {
@@ -1209,8 +1228,8 @@ Item {
                                         width: Math.min(implicitWidth, pMetaChip.room - 14 - 15)
                                         elide: Text.ElideRight
                                         color: Theme.textDim
-                                        font.family: "Consolas"
-                                        font.pixelSize: 10
+                                        font.family: Theme.monoFont
+                                        font.pixelSize: Theme.fontXs
                                     }
                                 }
                             }
@@ -1233,7 +1252,7 @@ Item {
                                 height: 24
                                 radius: 12
                                 color: pCiteHit.containsMouse ? Theme.hover : Theme.raised
-                                border.width: 1
+                                border.width: 0
                                 border.color: pCiteHit.containsMouse ? Theme.accent : Theme.borderSoft
 
                                 Row {
@@ -1256,7 +1275,7 @@ Item {
                                         text: String(pCiteChip.modelData.title || pCiteChip.modelData.url || "")
                                         color: Theme.inkSoft
                                         font.family: Theme.font
-                                        font.pixelSize: 11
+                                        font.pixelSize: Theme.fontSm
                                         font.weight: Font.Medium
                                         elide: Text.ElideRight
                                     }
@@ -1319,7 +1338,7 @@ Item {
                     selectionColor: Theme.accent
                     selectedTextColor: Theme.inverse
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     font.weight: Font.Medium
                     clip: true
                     selectByMouse: true
@@ -1429,7 +1448,7 @@ Item {
                         text: panel.simulated ? qsTr("Sample content") : qsTr("Handled by Noch")
                         color: panel.simulated ? Theme.textDim : Theme.accent
                         font.family: Theme.font
-                        font.pixelSize: 10
+                        font.pixelSize: Theme.fontXs
                         font.weight: Font.DemiBold
                     }
                 }
@@ -1451,7 +1470,7 @@ Item {
                         text: qsTr("New request")
                         color: Theme.ink
                         font.family: Theme.font
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSm
                         font.weight: Font.DemiBold
                     }
                     MouseArea {

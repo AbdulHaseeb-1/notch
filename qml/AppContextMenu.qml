@@ -55,8 +55,8 @@ Flyout {
                     color: Theme.ink
                     elide: Text.ElideRight
                     font.family: Theme.font
-                    font.pixelSize: 15
-                    font.weight: Font.ExtraBold
+                    font.pixelSize: Theme.fontLg
+                    font.weight: Font.Bold
                 }
                 Rectangle {
                     visible: menu.renaming
@@ -76,7 +76,7 @@ Flyout {
                         selectionColor: Theme.ink
                         selectedTextColor: Theme.inverse
                         font.family: Theme.font
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontMd
                         font.weight: Font.Bold
                         clip: true
                         onAccepted: {
@@ -94,7 +94,7 @@ Flyout {
                     color: Theme.textDim
                     elide: Text.ElideMiddle
                     font.family: Theme.font
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSm
                 }
             }
         }

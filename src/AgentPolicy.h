@@ -65,6 +65,38 @@ public:
     void setScreenTainted(bool on) { m_screenTainted = on; }
     bool screenTainted() const { return m_screenTainted; }
 
+    // A saved "always allow" decision. Deliberately narrow, and never wider
+    // than what the user was looking at when they chose it:
+    //  * bash:  `exact` (this command) or `prefix` (a curated build/test/vcs
+    //           command and whatever arguments follow), only for commands with
+    //           no shell syntax in them, only in the folder it was approved in;
+    //  * str_replace_editor: `dir`, edits to files under that folder (symlinks
+    //           resolved), never a secrets file.
+    // Saved rules only turn a plain "ask" into "allow". Hard-deny rules, Plan
+    // mode, protected paths, opaque commands, secrets files, the prompt-injection
+    // taint and every other special ask are checked first and still win.
+    struct SavedRule {
+        QString id;
+        QString tool;        // "bash" | "str_replace_editor"
+        QString kind;        // "exact" | "prefix" | "dir"
+        QString pattern;     // normalized command / command prefix / directory
+        QString scope;       // bash: the folder it runs in
+        QString label;       // for the settings list and the approval card
+        qint64 createdAt = 0;
+        bool valid() const { return !tool.isEmpty() && !kind.isEmpty() && !pattern.isEmpty(); }
+    };
+    void setSavedRules(const QList<SavedRule> &rules) { m_savedRules = rules; }
+    const QList<SavedRule> &savedRules() const { return m_savedRules; }
+    // The rule an "always allow" on this very call would save; invalid when no
+    // safe rule exists (the card then offers a session grant instead). A
+    // relative path or a command without working_dir means the workspace base.
+    SavedRule suggestRule(const QString &tool, const QJsonObject &input) const;
+    bool matchesSavedRule(const QString &tool, const QJsonObject &input) const;
+    // The command with its whitespace tidied, or "" when it uses shell syntax
+    // (separators, pipes, redirects, substitution, variables, line breaks), has
+    // unbalanced quotes or is too long: such a command never gets a rule.
+    static QString normalizeCommand(const QString &command);
+
     // Session-scoped "always allow" grants from the approval card.
     void allowForSession(const QString &tool) { m_sessionAllow.insert(tool); }
     void clearSessionGrants() { m_sessionAllow.clear(); }
@@ -84,6 +116,11 @@ public:
     // *.pem, id_rsa, browser profiles: reading them asks.
     static QString credentialPathReason(const QString &path, const QString &base = QString());
     static bool isSecretsFile(const QString &path);
+    // Files whose content steers Buddy from now on: instruction files (NOCH.md,
+    // AGENTS.md, CLAUDE.md) and anything under a .noch folder (slash commands).
+    // A run that changes one is changing its own future instructions, so any
+    // write to them asks - in Trusted mode, with a grant or a saved rule too.
+    static bool isInstructionPath(const QString &path);
     bool insideWorkspace(const QString &path) const;
     // Lexically cleaned absolute path (relative paths join the workspace
     // base). What BuddyProvider executes, so the gate and the tool agree.
@@ -95,7 +132,9 @@ public:
     static QString opaqueCommandReason(const QString &command);
     // Every path-like word a shell command mentions, with write targets
     // (redirects, cp/mv/rm/Set-Content ... arguments) listed separately.
-    struct ShellPaths { QStringList reads; QStringList writes; };
+    // `moved` lists what mv / move / Move-Item take away from its place: the
+    // gate treats those as reads, but undoing a run has to put them back.
+    struct ShellPaths { QStringList reads; QStringList writes; QStringList moved; };
     static ShellPaths shellPaths(const QString &command);
 
     // web_fetch / web_search urls: only http(s) is fetched; private,
@@ -127,6 +166,7 @@ private:
     QString m_base;           // first root, original case
     QStringList m_private;    // lowercased lexical + resolved forms
     QSet<QString> m_sessionAllow;
+    QList<SavedRule> m_savedRules;
     bool m_tainted = false;
     bool m_screenTainted = false;
 

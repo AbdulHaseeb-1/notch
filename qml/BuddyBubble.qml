@@ -47,6 +47,9 @@ Item {
     readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
     readonly property var pendingApproval: (BuddyAgent) ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
+    // Buddy is asking the user a multiple-choice question (ask_user_question).
+    readonly property var pendingQuestion: (BuddyAgent) ? BuddyAgent.pendingQuestion : ({})
+    readonly property bool awaitingQuestion: pendingQuestion && pendingQuestion.id !== undefined
     // Specialist currently in charge (handoffs), "" for Buddy itself.
     readonly property string specialist: (BuddyAgent
                                           && BuddyAgent.activeAgent !== "buddy")
@@ -121,8 +124,8 @@ Item {
     readonly property color buddySurface: Qt.darker(Theme.surface, 1.22)
     readonly property color buddyField: Qt.darker(Theme.field, 1.22)
     readonly property color buddyRaised: Qt.darker(Theme.raised, 1.12)
-    FontMetrics { id: bodyMetrics; font.family: Theme.font; font.pixelSize: 13 }
-    FontMetrics { id: codeMetrics; font.family: "Consolas"; font.pixelSize: 12 }
+    FontMetrics { id: bodyMetrics; font.family: Theme.font; font.pixelSize: Theme.fontMd }
+    FontMetrics { id: codeMetrics; font.family: Theme.monoFont; font.pixelSize: Theme.fontBase }
 
     visible: bp > 0.001 || d1 > 0.001
 
@@ -131,6 +134,17 @@ Item {
         noteTimer.stop()
         present("input")
         Qt.callLater(focusInput)
+    }
+    // Dictated words go where the caret is, with a space between them and what was typed.
+    function insertText(t) {
+        const add = String(t || "").trim()
+        if (add.length === 0)
+            return
+        const before = field.text.slice(0, field.cursorPosition)
+        const lead = before.length > 0 && !/\s$/.test(before) ? " " : ""
+        field.insert(field.cursorPosition, lead + add)
+        field.forceActiveFocus()
+        field.deselect()
     }
     function focusInput() {
         field.forceActiveFocus()
@@ -263,11 +277,18 @@ Item {
     }
 
     // ---- sizes ----------------------------------------------------------------
-    readonly property real rowH: 44
+    readonly property real rowH: 46
     readonly property real pad: 14
-    readonly property real inputW: 400
-    readonly property real chatW: 460
-    readonly property real cardW: 480
+    // Widths follow the screen: roomy on a big monitor, never wider than the
+    // screen on a small one (every pane lays itself out from these).
+    readonly property real screenW: Math.max(320, bounds.width)
+    function fitW(frac, lo, hi) {
+        return Math.round(Math.min(screenW - 16, Math.max(lo, Math.min(hi, screenW * frac))))
+    }
+    readonly property real inputW: fitW(0.26, 360, 540)
+    readonly property real chatW: fitW(0.30, 420, 600)
+    readonly property real cardW: fitW(0.32, 440, 620)
+    readonly property real errW: fitW(0.20, 300, 380)
     readonly property real footH: 32
     readonly property real maxH: Math.max(150, bounds.height - 16)
 
@@ -281,18 +302,19 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: (awaitingApproval || hasLive || (hasTools && specialist.length > 0)) ? 460
+    readonly property real thinkW: (awaitingApproval || awaitingQuestion || hasLive || (hasTools && specialist.length > 0)) ? chatW
                                  : (hasTools || activeToolSummary.length > 0)
-                                 ? 420
+                                 ? histW
                                  : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
     readonly property real thinkH: (hasTools
                                  ? (rowH + Math.min(toolSteps.length, 4) * 31 + 10)
                                  : rowH)
                                  + (awaitingApproval ? approvalCard.implicitHeight + 10 : 0)
+                                 + (awaitingQuestion ? questionCard.implicitHeight + 10 : 0)
                                  + (hasLive ? liveH + 6 : 0)
     readonly property real noteW: 46 + noteLabel.implicitWidth + 18
     readonly property real errorH: 16 + errText.implicitHeight + 12 + 28 + 14
-    readonly property real histW: 420
+    readonly property real histW: fitW(0.27, 400, 540)
     readonly property real histRowH: 54
     readonly property real histH: 46 + (history.length > 0
                                         ? Math.min(history.length, 6) * histRowH + 8
@@ -300,7 +322,7 @@ Item {
 
     readonly property real rawW: phase === "thinking" ? thinkW
                                : phase === "history" ? histW
-                               : phase === "error" ? 300
+                               : phase === "error" ? errW
                                : phase === "answer" ? (kind === "chat" ? chatW
                                                      : kind === "note" ? noteW : cardW)
                                : inputW
@@ -744,6 +766,52 @@ Item {
         }
     }
 
+    // Press and hold to dictate; the words land in the text field. The ring
+    // follows how loud you are, so it is clear the microphone is listening.
+    component MicButton: Item {
+        id: mb
+        readonly property bool listening: Voice.listening
+        readonly property bool working: Voice.busy
+        visible: Voice.enabled
+        width: visible ? 28 : 0
+        height: 28
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 26
+            height: 26
+            radius: 13
+            color: mb.listening ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.22)
+                                : (micHit.containsMouse ? Theme.hover : "transparent")
+            border.width: mb.listening ? 1 : 0
+            border.color: Theme.danger
+            scale: mb.listening ? 1 + 0.35 * Math.min(1, Voice.level) : 1
+            Behavior on scale { NumberAnimation { duration: 90 } }
+            Behavior on color { ColorAnimation { duration: 120 } }
+        }
+        Glyph {
+            anchors.centerIn: parent
+            name: Voice.configured ? "mic" : "mic-off"
+            size: 14
+            stroke: 1.7
+            color: mb.listening ? Theme.danger : (mb.working ? Theme.accent : (micHit.containsMouse ? Theme.ink : Theme.textFaint))
+            opacity: mb.working ? 0.55 : 1
+        }
+        MouseArea {
+            id: micHit
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("Hold to talk")
+            Accessible.description: Voice.error.length > 0 ? Voice.error
+                                    : (Voice.configured ? "" : qsTr("Voice input needs a speech service: Settings > Buddy"))
+            onPressed: Voice.beginListening()
+            onReleased: Voice.endListening()
+            onCanceled: Voice.cancel()
+        }
+    }
+
     component SendButton: Item {
         id: sb
         property bool active: false
@@ -809,7 +877,7 @@ Item {
             selectionColor: Theme.accent
             selectedTextColor: Theme.inverse
             font.family: Theme.font
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontBase
             font.weight: Font.Medium
             clip: true
             selectByMouse: true
@@ -960,14 +1028,14 @@ Item {
                     id: field
                     anchors.left: parent.left
                     anchors.leftMargin: 38
-                    anchors.right: histBtn.left
+                    anchors.right: micBtn.left
                     anchors.rightMargin: 2
                     anchors.verticalCenter: parent.verticalCenter
                     color: Theme.ink
                     selectionColor: Theme.accent
                     selectedTextColor: Theme.inverse
                     font.family: Theme.font
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontMd
                     font.weight: Font.Medium
                     clip: true
                     selectByMouse: true
@@ -1003,6 +1071,12 @@ Item {
                     }
                 }
 
+                // Hold to talk. Only there once voice input is switched on in Settings.
+                MicButton {
+                    id: micBtn
+                    anchors.right: histBtn.left
+                    anchors.verticalCenter: parent.verticalCenter
+                }
                 IconButton {
                     id: histBtn
                     anchors.right: sendBtn.left
@@ -1078,7 +1152,7 @@ Item {
                         height: 18
                         radius: 9
                         color: Theme.glassFill
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.glassBorder
                         Text {
                             id: histCount
@@ -1119,7 +1193,7 @@ Item {
                                 text: tb.clearArmed ? qsTr("Clear all?") : qsTr("Clear")
                                 color: tb.clearArmed ? Theme.danger : Theme.textDim
                                 font.family: Theme.font
-                                font.pixelSize: 11
+                                font.pixelSize: Theme.fontSm
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -1195,7 +1269,7 @@ Item {
                             height: 32
                             radius: Theme.radiusMd
                             color: hrow.lit ? Theme.glassFillActive : Theme.glassFill
-                            border.width: 1
+                            border.width: 0
                             border.color: Theme.glassBorder
                             Glyph {
                                 anchors.centerIn: parent
@@ -1284,7 +1358,7 @@ Item {
                         text: qsTr("Nothing here yet — ask me something!")
                         color: Theme.textDim
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: Theme.fontBase
                     }
                 }
             }
@@ -1386,7 +1460,7 @@ Item {
                                 height: 20
                                 radius: 10
                                 color: Theme.tile
-                                border.width: 1
+                                border.width: 0
                                 border.color: Theme.border
                                 Row {
                                     id: specialistRow
@@ -1433,7 +1507,7 @@ Item {
                             text: tb.thinkPhrases[tb.thinkStep]
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.Medium
                             onTextChanged: phraseFade.restart()
                             NumberAnimation {
@@ -1485,7 +1559,7 @@ Item {
                     height: tb.liveH
                     radius: Theme.radiusMd
                     color: Theme.glassFill
-                    border.width: 1
+                    border.width: 0
                     border.color: Theme.glassBorder
                     clip: true
 
@@ -1528,6 +1602,25 @@ Item {
                             BuddyAgent.resolveApproval(approve, always)
                     }
                 }
+
+                // Buddy would rather ask than guess.
+                BuddyQuestionCard {
+                    id: questionCard
+                    x: 10
+                    y: tb.hasTools ? tb.rowH + 4 + Math.min(tb.toolSteps.length, 4) * 31 + 4 : tb.rowH
+                    width: parent.width - 20
+                    maxCardHeight: Math.max(160, tb.maxH - 120)
+                    visible: tb.awaitingQuestion && tb.phase === "thinking"
+                    request: tb.pendingQuestion
+                    onAnswered: (answers) => {
+                        if (BuddyAgent)
+                            BuddyAgent.answerQuestion(answers)
+                    }
+                    onSkipped: {
+                        if (BuddyAgent)
+                            BuddyAgent.skipQuestion()
+                    }
+                }
             }
 
             // ---- chat answer ---------------------------------------------------
@@ -1553,6 +1646,7 @@ Item {
                     ToolTraceBar {
                         id: toolSummaryBar
                         width: parent.width
+                        undoSource: BuddyAgent
                         steps: tb.toolSteps
                         icons: tb.distinctToolIcons
                         durationMs: tb.responseMeta ? Number(tb.responseMeta.durationMs || 0) : 0
@@ -1622,7 +1716,7 @@ Item {
                             height: advisorInner.implicitHeight + 14
                             radius: 9
                             color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.08)
-                            border.width: 1
+                            border.width: 0
                             border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.28)
 
                             Column {
@@ -1647,7 +1741,7 @@ Item {
                                               .arg(String(tb.responseMeta && tb.responseMeta.advisorFocus ? tb.responseMeta.advisorFocus : "GENERAL").toUpperCase())
                                         color: Theme.accent
                                         font.family: Theme.font
-                                        font.pixelSize: 10
+                                        font.pixelSize: Theme.fontXs
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
                                     }
@@ -1659,7 +1753,7 @@ Item {
                                           .replace(/[#*`]/g, "").trim()
                                     color: Theme.inkSoft
                                     font.family: Theme.font
-                                    font.pixelSize: 11
+                                    font.pixelSize: Theme.fontSm
                                     wrapMode: Text.WordWrap
                                     maximumLineCount: 3
                                     elide: Text.ElideRight
@@ -1675,7 +1769,7 @@ Item {
                             height: agentTodoCol.implicitHeight + 14
                             radius: 9
                             color: Theme.tile
-                            border.width: 1
+                            border.width: 0
                             border.color: Theme.borderSoft
 
                             Column {
@@ -1699,7 +1793,7 @@ Item {
                                         text: qsTr("AGENT TASKS (%1)").arg(tb.agentTodos.length)
                                         color: Theme.textDim
                                         font.family: Theme.font
-                                        font.pixelSize: 10
+                                        font.pixelSize: Theme.fontXs
                                         font.weight: Font.Bold
                                         font.letterSpacing: 0.5
                                     }
@@ -1741,7 +1835,7 @@ Item {
                                             text: String(todoRow.modelData.content || "")
                                             color: parent.done ? Theme.textDim : Theme.ink
                                             font.family: Theme.font
-                                            font.pixelSize: 11
+                                            font.pixelSize: Theme.fontSm
                                             font.strikeout: parent.done
                                             elide: Text.ElideRight
                                         }
@@ -1810,7 +1904,7 @@ Item {
                                     height: 20
                                     radius: 10
                                     color: citeHit.containsMouse ? Theme.hover : Theme.tile
-                                    border.width: 1
+                                    border.width: 0
                                     border.color: citeHit.containsMouse ? Theme.accent : Theme.borderSoft
 
                                     Row {
@@ -1833,7 +1927,7 @@ Item {
                                             text: String(citeChip.modelData.title || citeChip.modelData.url || "")
                                             color: Theme.inkSoft
                                             font.family: Theme.font
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.fontXs
                                             font.weight: Font.Medium
                                             elide: Text.ElideRight
                                         }
@@ -1862,7 +1956,7 @@ Item {
                                       : qsTr("Long reply, continued %n time(s)", "", parts)
                             color: cut ? Theme.warning : Theme.textFaint
                             font.family: Theme.font
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap
                             Accessible.role: Accessible.StaticText
                             Accessible.name: text
@@ -1878,7 +1972,7 @@ Item {
                                 width: sdkMetaRow.implicitWidth + 12
                                 radius: 5
                                 color: Qt.rgba(Theme.ink.r, Theme.ink.g, Theme.ink.b, 0.04)
-                                border.width: 1
+                                border.width: 0
                                 border.color: Theme.borderSoft
 
                                 Row {
@@ -1907,8 +2001,8 @@ Item {
                                             return parts.join(" · ")
                                         }
                                         color: Theme.textFaint
-                                        font.family: "Consolas"
-                                        font.pixelSize: 10
+                                        font.family: Theme.monoFont
+                                        font.pixelSize: Theme.fontXs
                                     }
                                 }
                             }
@@ -2050,7 +2144,7 @@ Item {
                         height: 22
                         radius: 11
                         color: tb.simulated ? Theme.tile : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.14)
-                        border.width: 1
+                        border.width: 0
                         border.color: tb.simulated ? Theme.border : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.4)
                         Text {
                             id: sampleLabel
@@ -2058,7 +2152,7 @@ Item {
                             text: tb.simulated ? qsTr("Sample content") : qsTr("Handled by Noch")
                             color: tb.simulated ? Theme.textDim : Theme.accent
                             font.family: Theme.font
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontXs
                             font.weight: Font.DemiBold
                         }
                     }
@@ -2110,7 +2204,7 @@ Item {
                     height: 24
                     radius: 12
                     color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.16)
-                    border.width: 1
+                    border.width: 0
                     border.color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.5)
                     scale: 0.6 + 0.4 * tb.contentIn
                     Glyph {
@@ -2128,7 +2222,7 @@ Item {
                     text: tb.noteText
                     color: Theme.ink
                     font.family: Theme.font
-                    font.pixelSize: 13
+                    font.pixelSize: Theme.fontMd
                     font.weight: Font.DemiBold
                 }
                 MouseArea {
@@ -2141,7 +2235,7 @@ Item {
             // ---- error ---------------------------------------------------------
             Item {
                 id: errorPane
-                width: 300
+                width: tb.errW
                 height: tb.errorH
                 x: tb.paneX(width)
                 opacity: tb.phase === "error" ? 1 : 0
@@ -2157,7 +2251,7 @@ Item {
                     text: tb.errorMessage
                     color: Theme.text
                     font.family: Theme.font
-                    font.pixelSize: 12
+                    font.pixelSize: Theme.fontBase
                     wrapMode: Text.WordWrap
                     maximumLineCount: 4
                     elide: Text.ElideRight
@@ -2173,7 +2267,7 @@ Item {
                         height: 28
                         radius: 14
                         color: retryHit.pressed ? Theme.press : (retryHit.containsMouse ? Theme.tileActive : Theme.tile)
-                        border.width: 1
+                        border.width: 0
                         border.color: Theme.border
                         Row {
                             id: retryRow
@@ -2185,7 +2279,7 @@ Item {
                                 text: qsTr("Try again")
                                 color: Theme.ink
                                 font.family: Theme.font
-                                font.pixelSize: 12
+                                font.pixelSize: Theme.fontBase
                                 font.weight: Font.DemiBold
                             }
                         }
@@ -2209,7 +2303,7 @@ Item {
                             text: qsTr("Close")
                             color: Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                         }
                         MouseArea {

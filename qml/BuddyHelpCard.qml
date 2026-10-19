@@ -50,7 +50,7 @@ Item {
                 text: qsTr("I'm Noch's little helper — no online model, no secret sauce. Here's what this desktop can really do:")
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSm
                 wrapMode: Text.WordWrap
                 lineHeight: 1.15
             }
@@ -106,7 +106,7 @@ Item {
                             text: row.modelData.text
                             color: Theme.text
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
                         }
@@ -115,7 +115,7 @@ Item {
                             text: row.modelData.sub
                             color: Theme.textFaint
                             font.family: Theme.font
-                            font.pixelSize: 10
+                            font.pixelSize: Theme.fontXs
                             elide: Text.ElideRight
                         }
                     }
@@ -137,7 +137,7 @@ Item {
                 text: qsTr("Try: “Analyze BTC/USDT”, “Summarize gold news”, “Plan my day”, or “Open Spotify”.")
                 color: Theme.textFaint
                 font.family: Theme.font
-                font.pixelSize: 10
+                font.pixelSize: Theme.fontXs
                 wrapMode: Text.WordWrap
             }
         }

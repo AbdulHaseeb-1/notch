@@ -79,16 +79,25 @@ Agent SDK deny reason.
 
 ## Context and cost
 
-- **Context editing:** before each model call, the newest 4 tool results stay
-  verbatim. Older results over 600 characters are replaced with a short
-  placeholder, and older screenshots are dropped. This follows Anthropic's
-  "clear tool uses" strategy.
+- **Context editing, in batches:** the newest 4 tool results always stay
+  verbatim. Older bulky results (over 600 characters) and older screenshots are
+  replaced with a short placeholder, but only once 6 results or 4 screenshots
+  have piled up, and then all at once. Changing an earlier message invalidates
+  the prompt cache from that point on, so doing it every turn (as before) paid
+  for the whole conversation again each time. In a batch, the cached prefix
+  holds for several turns in a row. This follows Anthropic's "clear tool uses"
+  strategy.
 - **Prompt caching (Anthropic):** the system prompt and the tool block carry
-  `cache_control: {type: "ephemeral"}`. Cache hits are counted from
+  `cache_control: {type: "ephemeral"}`, and so does the end of the conversation
+  (the newest message, and the previous request's end, so the next turn reads
+  what this one wrote; 4 breakpoints at most). Cache hits are counted from
   `cache_read_input_tokens` (Anthropic) or `prompt_tokens_details.cached_tokens`
   (OpenAI) and reported in the response meta.
-- **Max turns:** after 12 tool rounds the run stops and says so (as with
-  `max_turns` in the OpenAI Agents SDK).
+- **Max steps:** a run stops after *Steps per task* tool rounds (Settings,
+  Buddy; 40 by default, 4 to 100) and says so (as with `max_turns` in the
+  OpenAI Agents SDK). Repeating the same call back to back is stopped sooner by
+  the loop guard; for computer use only consecutive repeats count, plus a cap of
+  8 identical input actions, so taking several screenshots in a row is fine.
 
 ## Streaming
 
@@ -124,15 +133,105 @@ permission policy still applies to everything a specialist runs. Each handoff
 is a span in the trace. Every run, and every cancel, starts back at Buddy. The
 whole feature can be turned off with *Specialist handoffs*.
 
-## Session memory
+## Chats and session memory
 
-Earlier turns of the conversation are sent within a 24 000-character budget.
-Older turns are folded into one short "[Session memory] Earlier in this
-session I asked about: …" note instead of being dropped silently. When the
-memory tool is on, the system prompt lists up to 16 saved `/memories` files
-(the Claude Agent SDK memory-tool pattern). This list is taken once at the
+Every finished question and answer is saved to a chat on disk
+(`<AppData>/sessions/`, up to 100 chats, 400 turns each), so a chat can be
+picked up after Noch was closed: `/resume` lists them, `/resume 2` opens one,
+`/branch` (or `/branch 2`) starts a new chat from a copy of it and leaves the
+original as it was.
+
+What goes along with the next question is the chat's **summary** (when it has
+one) followed by the newest turns word for word. Once a chat passes 10 turns
+or about 12 000 characters, a separate model call with no tools folds the older
+turns into a rolling summary (also on demand with `/compact`). That call is
+redacted like any other, queued behind a running request, never touches it, and
+a failure is not retried until two more turns exist. The summary stays within
+4 000 characters; the 4 newest turns are never replaced by it.
+
+When the memory tool is on, the system prompt lists up to 16 saved `/memories`
+files (the Claude Agent SDK memory-tool pattern). This list is taken once at the
 start of a run, so the system prompt stays byte-identical across turns and the
 prompt cache survives memory writes.
+
+## Questions
+
+Buddy has an `ask_user_question` tool for the moments it would otherwise
+guess: 1 to 4 questions with 2 to 4 options each, shown as chips to tap, plus
+"Other" to type an answer. It needs no approval (it only talks to you), but
+everything is treated as untrusted model output: text is stripped of hidden and
+bidirectional characters and length-capped, answers are validated against the
+options, and the answer reaches the model as an ordinary tool result. An
+unanswered question is skipped after 5 minutes (the model is told to go with its
+best assumption), and cancelling the run closes it. Turn it off with *Ask me
+questions*.
+
+## Always-allow rules
+
+On an approval card, **Always allow** can save a *rule* instead of a one-off
+grant. A rule is deliberately narrow:
+
+- an exact tool and a pattern: for the editor, a folder (a file inside it, resolved
+  through symlinks; never a drive root, your home folder or above); for the shell,
+  the exact command you approved, or, for a short list of ordinary read/inspect
+  commands such as `git status`, that command with any arguments, in both cases
+  bound to the working folder it was approved in;
+- never for commands with shell syntax (pipes, redirects, `&&`, substitutions),
+  and never for computer control or any other tool: for those the button saves
+  nothing and falls back to a grant for the current session, which the card says
+  before you click;
+- it never overrides a hard stop (destructive commands, system folders, credential
+  stores) or the injection taint, and it never covers the instruction files below.
+
+Rules live in `<AppData>/permission-rules.json` (up to 200) and are listed under
+Settings, Buddy, *Always-allow rules*, with Remove and Remove all. Changing the
+permission mode clears session grants but keeps saved rules.
+
+## Instruction files and slash commands
+
+A `NOCH.md` in the workspace folder (or `.noch/NOCH.md`; `AGENTS.md` and
+`CLAUDE.md` are read when there is no `NOCH.md`) and one in Noch's data folder
+are added to the system prompt as standing instructions, 16 KB per file and 24 KB
+in all. They are read once per run, so the prompt stays stable within it.
+
+Because a file like that steers every later run, Buddy **always asks** before
+creating or changing one (instruction files and anything under `.noch/`), even in
+Trusted mode, with a session grant or with a saved rule. A repository's
+instruction file is still text written by someone else; it cannot widen what
+Buddy may do, only what it is asked to do.
+
+Slash commands: `/help`, `/new`, `/resume`, `/branch`, `/compact`, `/undo`,
+`/mode`, `/init` and `/instructions` are built in and answer locally (nothing is
+sent to the model). Your own commands are Markdown files in
+`<workspace>/.noch/commands/` or `<AppData>/commands/`, run as `/name arguments`
+(`$ARGUMENTS`, `$1`..`$9`); they cannot replace a built-in.
+
+## Undo for a run
+
+While a run works, each file it is about to change is first copied into
+`<AppData>/undo/<run>/` (up to 25 MB per file, 200 MB per run, the last 10 runs
+kept). *Undo N files* on the run summary, or `/undo`, puts everything back: old
+contents restored, files the run created removed, files it deleted or moved
+returned. A file you changed since the run is **left alone** and reported;
+`/undo force` or *Undo anyway* overrides that.
+
+What it covers: the editor tool (always one named file) and the files a shell
+command names (redirects, `cp`, `mv`, `rm`, `Set-Content`, wildcards, folders).
+What it cannot: whatever a program the command launches does (a build, an
+installer, a script), the memory tool's files, computer control, and files over
+25 MB. The run's summary lists these as untracked instead of promising more than
+it can do.
+
+## Voice input
+
+Hold the microphone button (or Ctrl+Alt+V; Ctrl+Alt+Shift+V if that is taken) and
+speak. Off by default, and it needs a speech-to-text service you provide: any
+OpenAI-style `/audio/transcriptions` endpoint, over https or on this computer
+only. Audio is recorded only while you hold, kept in memory (60 s at most, never
+written to disk), sent to that service and then discarded; the key you enter for
+it is used for nothing else and your chat key is never sent there. What comes
+back is text: it goes into the input field to check, or is sent straight away
+with *Send right away*. Dictation does not bypass any approval.
 
 ## Error recovery
 
@@ -143,18 +242,42 @@ returns `is_error: true` to the model, so the model can recover.
 
 ## Computer use
 
-Buddy's `computer` tool follows Claude's computer-use action set: `screenshot`,
-`zoom`, `mouse_move`, `left_click`, `right_click`, `middle_click`,
-`double_click`, `triple_click`, `left_click_drag`, `scroll`, `type`, `key`,
-`wait` and `cursor_position`. Screenshots are scaled to fit within 1280×800
-with the aspect ratio kept, and coordinates are mapped back to the real
-display, so DPI scaling and multiple monitors work (`display` picks a screen).
-On Windows the input goes through `SendInput`. Other platforms get a simulated
-backend that only logs actions.
+By default Buddy uses Claude's own computer-use tools, the ones Claude was trained
+on (`computer_toolset_20260801`, with the 17 actions `screenshot`, `zoom`,
+`mouse_move`, `left_click`, `right_click`, `middle_click`, `double_click`,
+`triple_click`, `left_click_drag`, `left_mouse_down`, `left_mouse_up`, `scroll`,
+`type`, `key`, `hold_key`, `wait` and `cursor_position`). Two things follow:
+
+- **Several actions per step.** The model may send a batch of actions in one reply.
+  Every action still goes through the gate on its own: an approval for each
+  click or keystroke, as before. If one is declined, denied or fails, the rest of
+  the batch is not run and shows as *skipped*.
+- **Cost.** There is no separate fee for these tools: they are billed as ordinary
+  tokens. The tool definitions add about 4,500 input tokens to a request, which are
+  cached after the first, and only while computer use is switched on. The
+  *Screenshot detail* setting trades tokens for sharpness: *Sharp* sends up to
+  1920×1080 (about 4,800 tokens per screenshot), *Standard* up to 1280×800.
+
+If a model does not know the toolset, the request is retried once with the
+previous computer tool (`computer_20251124`, then `computer_20250124`), and finally
+with Buddy's own look-alike set, and that stays so until the model or the setting
+changes (only while the chat holds no computer call yet, since those blocks would not
+match the older definitions). Switch
+*Use Claude's own computer tools* off to use the look-alike set from the start.
+The official toolset drives the primary display only. The bash and text-editor
+tools stay Buddy's own (with its policy gate): Anthropic's bash tool assumes one
+persistent shell, which Buddy's gated, per-command execution is not.
+
+Screenshots are scaled to fit within the limits above with the aspect ratio kept,
+and coordinates are mapped back to the real display, so DPI scaling and multiple
+monitors work. Modifier keys can be held while clicking, dragging or scrolling
+(`text`), and a key or button held down is always released when a run ends or
+pauses. On Windows the input goes through `SendInput`. Other platforms get a
+simulated backend that only logs actions.
 
 Guardrails:
 
-- Clicks, drags, scrolling, typing and keys ask in Ask and Auto-edit mode and
+- Clicks, drags, scrolling, typing, keys and held keys or buttons ask in Ask and Auto-edit mode and
   are denied in Plan mode. Only screenshot, zoom, cursor position and wait run
   without asking.
 - Every screenshot marks the run as having seen untrusted screen content.

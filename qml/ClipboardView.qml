@@ -43,7 +43,7 @@ Item {
             height: 56
             radius: 28
             color: Theme.raised
-            border.width: 1
+            border.width: 0
             border.color: Theme.borderSoft
             Glyph {
                 anchors.centerIn: parent
@@ -57,7 +57,7 @@ Item {
             text: qsTr("Clipboard history")
             color: Theme.ink
             font.family: Theme.font
-            font.pixelSize: 16
+            font.pixelSize: Theme.fontLg
             font.weight: Font.Bold
         }
         Text {
@@ -69,7 +69,7 @@ Item {
             text: qsTr("Keeps the text you copy so you can copy it again. It stays in memory only and is gone when Noch quits. Copies from password managers are skipped.")
             color: Theme.textDim
             font.family: Theme.font
-            font.pixelSize: 12
+            font.pixelSize: Theme.fontBase
         }
         Item { width: 1; height: 2 }
         Rectangle {
@@ -87,7 +87,7 @@ Item {
                 text: qsTr("Turn on")
                 color: Theme.inverse
                 font.family: Theme.font
-                font.pixelSize: 14
+                font.pixelSize: Theme.fontMd
                 font.weight: Font.Bold
             }
             MouseArea {
@@ -118,7 +118,7 @@ Item {
                     : (Clipboard.count === 1 ? qsTr("1 item") : qsTr("%1 items").arg(Clipboard.count))
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 12
+                font.pixelSize: Theme.fontBase
                 font.weight: Font.DemiBold
             }
             Row {
@@ -142,7 +142,7 @@ Item {
                             text: link.modelData.label
                             color: linkHit.containsMouse ? Theme.ink : Theme.textDim
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.fontBase
                             font.weight: Font.DemiBold
                         }
                         MouseArea {
@@ -177,7 +177,7 @@ Item {
                 text: qsTr("Copy some text and it shows up here.")
                 color: Theme.textDim
                 font.family: Theme.font
-                font.pixelSize: 13
+                font.pixelSize: Theme.fontMd
             }
         }
 
@@ -237,7 +237,7 @@ Item {
                     height: 28
                     radius: Theme.radiusSm + 1
                     color: Theme.glassFillActive
-                    border.width: 1
+                    border.width: 0
                     border.color: Theme.glassBorder
                     Glyph {
                         anchors.centerIn: parent
@@ -265,7 +265,7 @@ Item {
                         wrapMode: Text.Wrap
                         lineHeight: 1.05
                         font.family: Theme.font
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.fontMd
                         font.weight: Font.DemiBold
                     }
                     Text {
@@ -276,7 +276,7 @@ Item {
                         color: Theme.textFaint
                         elide: Text.ElideRight
                         font.family: Theme.font
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.fontSm
                     }
                 }
 

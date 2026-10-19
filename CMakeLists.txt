@@ -44,6 +44,25 @@ qt_add_executable(noch
     src/QmlSingletons.h
     src/BuddyProvider.cpp
     src/BuddyProvider.h
+    src/UserQuestions.cpp
+    src/UserQuestions.h
+    src/RunJournal.cpp
+    src/RunJournal.h
+    src/SavedRules.cpp
+    src/SavedRules.h
+    src/ProjectContext.cpp
+    src/ProjectContext.h
+    src/ChatSessions.cpp
+    src/ChatSessions.h
+    src/SessionLink.cpp
+    src/SessionLink.h
+    src/SessionFormat.h
+    src/VoiceAudio.cpp
+    src/VoiceAudio.h
+    src/VoiceInput.cpp
+    src/VoiceInput.h
+    src/PushToTalkKey.cpp
+    src/PushToTalkKey.h
     src/ComputerUse.cpp
     src/ComputerUse.h
     src/ComputerUseWin.cpp
@@ -128,6 +147,7 @@ qt_add_qml_module(noch
         qml/BuddyResearchCard.qml
         qml/BuddyTasksCard.qml
         qml/BuddyHelpCard.qml
+        qml/BuddyQuestionCard.qml
         qml/ToolStatusIcon.qml
         qml/ToolStepRow.qml
         qml/ToolStepCard.qml
@@ -183,8 +203,40 @@ if(NOCH_BUILD_TESTS)
     add_test(NAME tst_buddysfx COMMAND tst_buddysfx)
     set_tests_properties(tst_buddysfx PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
     find_package(Qt6 REQUIRED COMPONENTS Network)
+    qt_add_executable(tst_userquestions tests/tst_userquestions.cpp
+        src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_userquestions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_userquestions COMMAND tst_userquestions)
+    qt_add_executable(tst_voice tests/tst_voice.cpp
+        src/VoiceAudio.cpp src/VoiceAudio.h src/VoiceInput.cpp src/VoiceInput.h
+        src/PushToTalkKey.cpp src/PushToTalkKey.h)
+    target_link_libraries(tst_voice PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Test)
+    if(WIN32)
+        target_link_libraries(tst_voice PRIVATE user32)
+    endif()
+    add_test(NAME tst_voice COMMAND tst_voice)
+    set_tests_properties(tst_voice PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;NOCH_NO_AUDIO=1")
+    qt_add_executable(tst_chatsessions tests/tst_chatsessions.cpp
+        src/ChatSessions.cpp src/ChatSessions.h src/SessionFormat.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_chatsessions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_chatsessions COMMAND tst_chatsessions)
+    qt_add_executable(tst_projectcontext tests/tst_projectcontext.cpp
+        src/ProjectContext.cpp src/ProjectContext.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_projectcontext PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_projectcontext COMMAND tst_projectcontext)
+    qt_add_executable(tst_savedrules tests/tst_savedrules.cpp
+        src/SavedRules.cpp src/SavedRules.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_savedrules PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_savedrules COMMAND tst_savedrules)
+    qt_add_executable(tst_runjournal tests/tst_runjournal.cpp
+        src/RunJournal.cpp src/RunJournal.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_runjournal PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_runjournal COMMAND tst_runjournal)
     qt_add_executable(tst_buddyagent tests/tst_buddyagent.cpp
         src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
+        src/UserQuestions.cpp src/UserQuestions.h src/RunJournal.cpp src/RunJournal.h
+        src/SavedRules.cpp src/SavedRules.h src/ProjectContext.cpp src/ProjectContext.h
+        src/ChatSessions.cpp src/ChatSessions.h src/SessionLink.cpp src/SessionLink.h src/SessionFormat.h
         src/StreamAccumulator.cpp src/StreamAccumulator.h
         src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
     target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
@@ -201,4 +253,15 @@ if(NOCH_BUILD_TESTS)
     add_test(NAME tst_computeruse COMMAND tst_computeruse)
     set_tests_properties(tst_computeruse PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     set_tests_properties(tst_buddyagent PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # QML component tests (tests/qml): run with Qt's qmltestrunner when it is installed.
+    find_program(NOCH_QMLTESTRUNNER NAMES qmltestrunner qmltestrunner-qt6
+                 HINTS "${Qt6_DIR}/../../../bin" "${QT6_INSTALL_PREFIX}/bin" /usr/lib/qt6/bin)
+    if(NOCH_QMLTESTRUNNER AND NOT WIN32)
+        add_test(NAME tst_qml
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/run_qml_tests.sh
+                         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/qmltests ${NOCH_QMLTESTRUNNER})
+    else()
+        message(STATUS "qmltestrunner not found (or Windows): QML tests are not registered")
+    endif()
 endif()

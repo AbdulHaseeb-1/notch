@@ -18,7 +18,12 @@
 
 #include "AgentPolicy.h"
 #include "ComputerUse.h"
+#include "ProjectContext.h"
+#include "RunJournal.h"
+#include "SessionFormat.h"
+#include "SavedRules.h"
 #include "StreamAccumulator.h"
+#include "UserQuestions.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
 // Anthropic Agent SDK / Computer Use multi-turn tool loop across all providers:
@@ -70,6 +75,8 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowToolSearch READ allowToolSearch WRITE setAllowToolSearch NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowAdvisor READ allowAdvisor WRITE setAllowAdvisor NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowTodoTask READ allowTodoTask WRITE setAllowTodoTask NOTIFY agentConfigChanged)
+    // Clarifying questions: Buddy may pause to ask a multiple-choice question.
+    Q_PROPERTY(bool allowAskUser READ allowAskUser WRITE setAllowAskUser NOTIFY agentConfigChanged)
 
     // Live tool-execution telemetry & Anthropic Agent SDK response metadata for the UI
     // Permission mode: "default" | "acceptEdits" | "plan" | "bypass".
@@ -81,6 +88,19 @@ class BuddyProvider : public QObject
     // Streaming (SSE) replies: streamText is the answer text of the model
     // turn in flight, updated live (coalesced to ~25 fps, secrets redacted).
     Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
+    // Computer use with Anthropic's own tool definitions (the computer toolset
+    // or, for older models, computer_20251124 / computer_20250124) instead of
+    // Noch's function-style look-alike. Only the Anthropic provider can use
+    // them; anything else always gets the look-alike.
+    Q_PROPERTY(bool officialComputerTools READ officialComputerTools WRITE setOfficialComputerTools NOTIFY agentConfigChanged)
+    // Screenshot detail for computer use: "sharp" (up to 1920x1080, lossless)
+    // or "standard" (1280x800, JPEG).
+    Q_PROPERTY(QString computerDetail READ computerDetail WRITE setComputerDetail NOTIFY agentConfigChanged)
+    // Tool rounds per task (each round may hold several actions).
+    Q_PROPERTY(int maxSteps READ maxSteps WRITE setMaxSteps NOTIFY agentConfigChanged)
+    // Which computer tool the next request uses: "toolset", "computer_20251124",
+    // "computer_20250124" or "custom".
+    Q_PROPERTY(QString computerToolMode READ computerToolMode NOTIFY agentConfigChanged)
     // Agent cursor / edge glow / control HUD state for computer use.
     Q_PROPERTY(ComputerUse *computer READ computer CONSTANT)
     Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
@@ -93,6 +113,16 @@ class BuddyProvider : public QObject
     // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
     // badge, icon, title, detail, reason, rule, secondsLeft }.
     Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
+    // Non-empty while Buddy waits for answers: { id, stepIndex, title, secondsLeft,
+    // questions: [{ question, header, multiSelect, options: [{ label, description }] }] }.
+    Q_PROPERTY(QVariantMap pendingQuestion READ pendingQuestion NOTIFY pendingQuestionChanged)
+    // The file changes the run that just finished made and that can be undone:
+    // { runId, count, created, modified, deleted, files: [{ path, action }],
+    //   untracked: [{ path, reason }] }. Empty when it changed nothing.
+    Q_PROPERTY(QVariantMap lastRunChanges READ lastRunChanges NOTIFY lastRunChangesChanged)
+    // The "always allow" rules the user saved (see AgentPolicy::SavedRule), for
+    // the settings list: [{ id, tool, kind, pattern, scope, label, createdAt }].
+    Q_PROPERTY(QVariantList savedRules READ savedRules NOTIFY savedRulesChanged)
 
     Q_PROPERTY(QVariantList toolSteps READ toolSteps NOTIFY toolStepsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
@@ -142,6 +172,8 @@ public:
     void setAllowAdvisor(bool on);
     bool allowTodoTask() const { return m_allowTodoTask; }
     void setAllowTodoTask(bool on);
+    bool allowAskUser() const { return m_allowAskUser; }
+    void setAllowAskUser(bool on);
 
     QString permissionMode() const { return m_permissionMode; }
     void setPermissionMode(const QString &m);
@@ -157,6 +189,19 @@ public:
     bool streaming() const { return m_streamingNow; }
     bool handoffs() const { return m_handoffs; }
     void setHandoffs(bool on);
+    bool officialComputerTools() const { return m_officialComputer; }
+    void setOfficialComputerTools(bool on);
+    QString computerDetail() const { return m_computerDetail; }
+    void setComputerDetail(const QString &d);
+    int maxSteps() const { return m_maxSteps; }
+    void setMaxSteps(int n);
+    // The tool-version ladder. A model starts at the newest version it
+    // accepts; a 400 that names the computer tool steps down one rung.
+    enum class ComputerMode { Toolset = 0, V20251124 = 1, V20250124 = 2, Custom = 3 };
+    static ComputerMode computerModeForModel(const QString &model);
+    static QString computerModeName(ComputerMode m);
+    ComputerMode computerMode() const;
+    QString computerToolMode() const { return computerModeName(computerMode()); }
     QString activeAgent() const { return m_activeAgent; }
     QString activeAgentTitle() const;
     // Specialist registry (static): id -> title, icon, allowed tools, instructions.
@@ -171,6 +216,13 @@ public:
     static const QList<AgentProfile> &agentProfiles();
     static const AgentProfile *profileFor(const QString &id);
     QVariantMap pendingApproval() const { return m_pendingApproval; }
+    QVariantMap pendingQuestion() const { return m_pendingQuestion; }
+    QVariantMap lastRunChanges() const { return m_lastRunChanges; }
+    QVariantList savedRules() const { return m_savedRules.toVariant(); }
+    Q_INVOKABLE void removeSavedRule(const QString &id);
+    Q_INVOKABLE void clearSavedRules();
+    Q_INVOKABLE QString savedRulesPath() const;
+    void setSavedRulesPath(const QString &path);
 
     QVariantList toolSteps() const { return m_toolSteps; }
     QString activeTool() const { return m_activeTool; }
@@ -193,6 +245,45 @@ public:
     // Answer the pending approval: approve (once, or for the rest of the
     // session with always=true) or reject; a reject tells the model why.
     Q_INVOKABLE void resolveApproval(bool approve, bool always = false);
+    // Answer the pending question: one { selected: [option index, ...], other: "text" }
+    // per question. Ignored until every question has an answer.
+    Q_INVOKABLE void answerQuestion(const QVariantList &answers);
+    // "Skip": the model is told to carry on with its best assumption.
+    Q_INVOKABLE void skipQuestion();
+    // How long a question waits before it is skipped (tests shorten it).
+    void setQuestionTimeoutSeconds(int seconds) { m_questionTimeoutSec = qMax(1, seconds); }
+    // Undo a run's file changes. undoLastRun() takes the newest run that changed
+    // anything, which may be older than the last one. Files changed since the
+    // run are left alone and listed under `conflicts` unless force is set.
+    // Returns { ok, runId, restored, removed, conflicts, failed, message }.
+    Q_INVOKABLE QVariantMap pendingUndo() const;
+    Q_INVOKABLE QVariantMap undoLastRun(bool force = false);
+    Q_INVOKABLE QVariantMap undoRun(const QString &runId, bool force = false);
+    Q_INVOKABLE QString undoPath() const;
+    void setUndoPath(const QString &path) { m_journal.setRoot(path); }
+    // Slash commands. resolveSlash() reads what the user typed:
+    //   { kind: "none" }                                  not a command
+    //   { kind: "builtin", name, args }                   the UI does it (/new, /undo ...)
+    //   { kind: "prompt", name, args, prompt, source }    a user's template, expanded: send `prompt`
+    //   { kind: "unknown", name, message, suggestion }
+    Q_INVOKABLE QVariantMap resolveSlash(const QString &text) const;
+    // [{ name, description, argumentHint, source }] for the suggestion list; `prefix` is typed after the slash.
+    Q_INVOKABLE QVariantList slashCommands(const QString &prefix = QString()) const;
+    // The instruction files Buddy reads for this workspace, read fresh:
+    // { empty, text, truncated, sources: [{ name, path, bytes, truncated }] }.
+    Q_INVOKABLE QVariantMap projectInstructions() const;
+    // /init: write a starter NOCH.md into the workspace unless it has instructions already.
+    Q_INVOKABLE QVariantMap initProjectInstructions();
+    // Noch's own data folder (user-level NOCH.md and commands/). Tests point it elsewhere.
+    Q_INVOKABLE QString userDataDir() const;
+    void setUserDataDir(const QString &dir) { m_userDataDir = dir; }
+    // Write a rolling summary of chat turns (see ChatSessions): one plain
+    // model call with no tools, queued behind any other. `prior` is the summary so far,
+    // `turns` the [{ q, a }] to fold in, `upTo` how many turns the result will cover.
+    // Answers with sessionSummaryReady() or sessionSummaryFailed(); never touches
+    // the run in progress.
+    Q_INVOKABLE void summarizeSession(const QString &sessionId, const QString &prior,
+                                      const QVariantList &turns, int upTo);
     Q_INVOKABLE QString tracesPath() const;
     Q_INVOKABLE QString effectiveWorkspace() const;
     void syncPrivatePaths();
@@ -215,6 +306,11 @@ signals:
     void responseMetaChanged();
     void agentTodosChanged();
     void pendingApprovalChanged();
+    void pendingQuestionChanged();
+    void lastRunChangesChanged();
+    void sessionSummaryReady(const QString &sessionId, const QString &summary, int upTo);
+    void sessionSummaryFailed(const QString &sessionId, const QString &error);
+    void savedRulesChanged();
     void streamTextChanged();
     void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
@@ -235,6 +331,7 @@ private:
         QString name;
         QJsonObject input;
         int stepIndex = -1;
+        QString toolsetName;   // set when the model called a toolset member (e.g. left_click of "computer")
     };
 
     struct ToolOutcome {
@@ -242,6 +339,8 @@ private:
         QString name;
         QString output;
         QString imageBase64;
+        QString imageMediaType;
+        QString toolsetName;   // echoed on the tool_result of a toolset member
         bool isError = false;
     };
 
@@ -262,6 +361,7 @@ private:
     bool m_allowToolSearch = true;
     bool m_allowAdvisor = true;
     bool m_allowTodoTask = true;
+    bool m_allowAskUser = true;
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
@@ -272,13 +372,29 @@ private:
     QVariantMap m_pendingApproval;
     QTimer m_approvalTimer;      // 1 s ticks for the countdown, auto-deny at 0
     int m_approvalSecondsLeft = 0;
+    // The question being asked (ask_user_question) and its countdown.
+    QString m_instructionsSection;   // system-prompt text from the instruction files, read once per run
+    QString m_userDataDir;
+    SavedRules m_savedRules;
+    AgentPolicy::SavedRule m_approvalRule;   // what "Always allow" on the pending card would save
+    RunJournal m_journal;
+    QVariantMap m_lastRunChanges;
+    QVariantMap m_pendingQuestion;
+    QList<uq::Question> m_questions;
+    PendingToolCall m_questionCall;
+    QTimer m_questionTimer;
+    int m_questionSecondsLeft = 0;
+    int m_questionTimeoutSec = 300;
     QTimer m_retryTimer;         // backoff before re-sending a failed model call
     int m_retryCount = 0;
     QHash<QString, int> m_callRepeats;  // name+input fingerprint -> count in this run
+    QString m_lastComputerFp;           // computer calls: the previous call's fingerprint ...
+    int m_computerRepeat = 0;           // ... and how many times in a row it has come
     QJsonArray m_traceSpans;
     QString m_traceId;
     QElapsedTimer m_modelTimer;
     int m_compactedResults = 0;
+    mutable int m_lastCacheMark = -1;   // message index the previous request ended its cacheable prefix at
     int m_cachedTokens = 0;
     int m_deniedCalls = 0;
 
@@ -296,6 +412,11 @@ private:
     int m_continuations = 0;
     bool m_truncated = false;
     int m_outputTokenLimit = 8192;   // Anthropic max_tokens; lowered if the model rejects it
+    bool m_officialComputer = true;
+    QString m_computerDetail = QStringLiteral("sharp");
+    int m_maxSteps = 40;
+    int m_computerFallback = 0;      // rungs the 400 fallback has stepped down; reset with the model
+    bool m_computerBatchFailed = false;   // an action in this turn's batch failed: the rest are not run
 
     QVariantMap m_responseMeta;
     QVariantList m_agentTodos;
@@ -344,6 +465,18 @@ private:
     QPointer<QNetworkReply> m_probeReply;
     QPointer<QNetworkReply> m_webSearchReply;
     QPointer<QNetworkReply> m_advisorReply;
+    // Summaries of chat turns, one request at a time.
+    struct SummaryJob {
+        QString id;
+        QString prior;
+        QVariantList turns;
+        int upTo = 0;
+    };
+    QList<SummaryJob> m_summaryQueue;
+    SummaryJob m_summaryActive;
+    QPointer<QNetworkReply> m_summaryReply;
+    void startNextSummary();
+    void onSummaryReply(bool transportOk, int status, const QByteArray &body, const QString &errString);
     QPointer<QProcess> m_activeProcess;
     QNetworkAccessManager m_nam;
 
@@ -359,7 +492,13 @@ private:
     void gateAndExecute(const PendingToolCall &call);
     void setStepFields(int stepIndex, const QVariantMap &fields);
     void clearPendingApproval();
+    void clearPendingQuestion();
+    void beginJournalRun();
+    void finalizeJournal();
+    void journalBefore(const PendingToolCall &call);
     void onApprovalTick();
+    void onQuestionTick();
+    void executeAskUserTool(const PendingToolCall &call);
     int compactContext();
     bool scheduleRetry(int status, QNetworkReply::NetworkError err, const QByteArray &retryAfter);
     QString guardToolOutput(const PendingToolCall &call, const QString &output, bool *flagged) const;
@@ -369,7 +508,12 @@ private:
     void emitFinal(const QString &text);
     void processNextToolCall();
     void finishCurrentToolCall(const PendingToolCall &call, const QString &output,
-                               const QString &imageBase64, bool isError);
+                               const QString &imageBase64, bool isError,
+                               const QString &imageMediaType = QString());
+    void applyComputerProfile() const;
+    void addBetaHeaders(QNetworkRequest &request, const QJsonObject &payload) const;
+    bool historyHasComputerToolUse() const;
+    static bool mentionsComputerTool(const QString &error);
     void updateResponseMeta();
     void addCitation(const QString &title, const QString &url);
 

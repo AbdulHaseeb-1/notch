@@ -55,7 +55,7 @@ Item {
             color: Theme.ink
             elide: Text.ElideRight
             font.family: Theme.font
-            font.pixelSize: 13
+            font.pixelSize: Theme.fontMd
             font.weight: Font.Bold
         }
 
@@ -66,7 +66,7 @@ Item {
             text: preview.windowCount === 1 ? qsTr("1 window") : qsTr("%1 windows").arg(preview.windowCount)
             color: Theme.textDim
             font.family: Theme.font
-            font.pixelSize: 11
+            font.pixelSize: Theme.fontSm
             font.weight: Font.DemiBold
         }
     }
@@ -121,7 +121,7 @@ Item {
                     elide: Text.ElideRight
                     color: thumb.hot ? Theme.ink : Theme.text
                     font.family: Theme.font
-                    font.pixelSize: 11
+                    font.pixelSize: Theme.fontSm
                     font.weight: Font.DemiBold
                 }
 
