@@ -136,6 +136,14 @@ void BuddyProvider::setAllowAskUser(bool on)
     emit agentConfigChanged();
 }
 
+void BuddyProvider::setAllowScreenshots(bool on)
+{
+    if (m_allowScreenshots == on)
+        return;
+    m_allowScreenshots = on;
+    emit agentConfigChanged();
+}
+
 QString BuddyProvider::memoriesPath() const
 {
     QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -150,7 +158,9 @@ void BuddyProvider::clearToolSteps()
 {
     const bool hadData = !m_toolSteps.isEmpty() || !m_activeTool.isEmpty()
                          || !m_responseMeta.isEmpty() || !m_citations.isEmpty()
-                         || !m_agentTodos.isEmpty();
+                         || !m_agentTodos.isEmpty() || !m_attachments.isEmpty();
+    const bool hadAttachments = !m_attachments.isEmpty();
+    m_attachments.clear();
     m_toolSteps.clear();
     m_responseMeta.clear();
     m_citations.clear();
@@ -171,6 +181,8 @@ void BuddyProvider::clearToolSteps()
     m_deniedCalls = 0;
     clearPendingApproval();
     clearPendingQuestion();
+    if (hadAttachments)
+        emit attachmentsChanged();
     if (hadData) {
         emit toolStepsChanged();
         emit responseMetaChanged();
@@ -250,7 +262,7 @@ bool BuddyProvider::hasAnyToolEnabled() const
     return m_agentMode && !m_toolsDisabledForTurn
            && (m_allowBash || m_allowComputer || m_allowEditor || m_allowCodeSearch
                || m_allowMemory || m_allowWebSearch || m_allowToolSearch
-               || m_allowAdvisor || m_allowTodoTask || m_allowAskUser);
+               || m_allowAdvisor || m_allowTodoTask || m_allowAskUser || m_allowScreenshots);
 }
 
 bool BuddyProvider::needsApiKey() const

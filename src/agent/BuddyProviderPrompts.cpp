@@ -58,6 +58,10 @@ QString BuddyProvider::systemPrompt() const
     if (m_allowTodoTask)
         caps << QStringLiteral("- `todo_write`: Anthropic Task & Desktop Context tool (`action`: `\"todos\"` to create/update a live multi-step checklist in the UI, `\"clipboard_read\"` / `\"clipboard_write\"` to access the Windows clipboard, or `\"system_info\"` to inspect OS/CPU/RAM/processes).");
 
+    if (m_allowScreenshots)
+        caps << QStringLiteral("- `share_screenshot`: Put a screenshot of the user's screen into the chat so THEY can see it (optional `caption`, optional `display`). "
+                               "Use it when they ask to see their screen or want a picture of the result of your work. You do not receive the image; "
+                               "to look at the screen yourself use the `computer` tool.");
     if (m_allowAskUser)
         caps << QStringLiteral("- `ask_user_question`: Ask the user 1-4 quick multiple-choice questions (2-4 options each; they can always type their own answer). "
                                "Use it when a request is ambiguous or the choice is theirs (which file, which format, which of several approaches) and you cannot find out with the other tools. "
@@ -530,6 +534,28 @@ QJsonArray BuddyProvider::buildToolsArray() const
         tools.append(wrapSchema(
             QStringLiteral("todo_write"),
             QStringLiteral("Anthropic Agent SDK TodoWrite & Desktop Context tool: manage a live structured task checklist, read/write the Windows clipboard, or inspect system info."),
+            schema));
+    }
+
+    if (m_allowScreenshots) {
+        QJsonObject props{
+            { QStringLiteral("caption"), QJsonObject{
+                { QStringLiteral("type"), QStringLiteral("string") },
+                { QStringLiteral("description"), QStringLiteral("One short line shown under the picture (optional).") }
+            }},
+            { QStringLiteral("display"), QJsonObject{
+                { QStringLiteral("type"), QStringLiteral("integer") },
+                { QStringLiteral("description"), QStringLiteral("Which monitor, 0-based (optional; default is the one computer use is looking at).") }
+            }}
+        };
+        QJsonObject schema{
+            { QStringLiteral("type"), QStringLiteral("object") },
+            { QStringLiteral("properties"), props }
+        };
+        tools.append(wrapSchema(
+            QStringLiteral("share_screenshot"),
+            QStringLiteral("Take a screenshot of the user's screen and show it to the user in the chat. The user sees the picture; you "
+                           "only get a confirmation, not the image. Use it when they ask for a screenshot or to see the result."),
             schema));
     }
 

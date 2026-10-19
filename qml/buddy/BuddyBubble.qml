@@ -38,13 +38,37 @@ Item {
     property var history: []              // [{ q, kind, title, a, t }], newest first
 
     // Live Anthropic Agent SDK tool & response telemetry state
-    readonly property var toolSteps: (BuddyAgent) ? BuddyAgent.toolSteps : []
-    readonly property string activeTool: (BuddyAgent) ? BuddyAgent.activeTool : ""
-    readonly property string activeToolBadge: (BuddyAgent) ? BuddyAgent.activeToolBadge : ""
-    readonly property string activeToolSummary: (BuddyAgent) ? BuddyAgent.activeToolSummary : ""
+    // Settings > Buddy > Show thinking. Off hides the work (steps, the draft as
+    // it is written, the model's reasoning); approvals and questions still show.
+    readonly property bool showThinking: BuddyAgent ? BuddyAgent.showThinking : true
+    readonly property var toolSteps: (BuddyAgent && showThinking) ? BuddyAgent.toolSteps : []
+    readonly property string activeTool: (BuddyAgent && showThinking) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolBadge: (BuddyAgent && showThinking) ? BuddyAgent.activeToolBadge : ""
+    readonly property string activeToolSummary: (BuddyAgent && showThinking) ? BuddyAgent.activeToolSummary : ""
     readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
     readonly property var agentTodos: (BuddyAgent) ? BuddyAgent.agentTodos : []
     readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
+    // Screenshots Buddy put into this reply (share_screenshot).
+    readonly property var attachments: (BuddyAgent) ? BuddyAgent.attachments : []
+    readonly property bool hasShots: attachments && attachments.length > 0
+    // A screenshot arrives under the text: scroll it into view.
+    onHasShotsChanged: if (hasShots) scrollSoon.restart()
+    // After the card has grown to fit, so the overflow it measures is the real one.
+    Timer { id: scrollSoon; interval: 450; onTriggered: tb.scrollToEnd() }
+    function scrollToEnd() {
+        const to = Math.max(0, chatFlick.contentHeight - chatFlick.height)
+        if (to > chatFlick.contentY) {
+            scrollEnd.to = to
+            scrollEnd.restart()
+        }
+    }
+    NumberAnimation {
+        id: scrollEnd
+        target: chatFlick
+        property: "contentY"
+        duration: 360
+        easing.type: Easing.OutCubic
+    }
     readonly property var pendingApproval: (BuddyAgent) ? BuddyAgent.pendingApproval : ({})
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
     // Buddy is asking the user a multiple-choice question (ask_user_question).
@@ -55,12 +79,12 @@ Item {
                                           && BuddyAgent.activeAgent !== "buddy")
                                          ? String(BuddyAgent.activeAgentTitle).replace(" specialist", "") : ""
     // Live streamed answer text while the model is still writing.
-    readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
+    readonly property string liveText: (BuddyAgent && showThinking && BuddyAgent.streaming)
                                        ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "thinking"
     readonly property real liveH: hasLive ? Math.min(liveBody.implicitHeight, 168) + 22 : 0
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
-    readonly property bool hasAdvisor: !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
+    readonly property bool hasAdvisor: showThinking && !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
     readonly property bool hasCitations: citations && citations.length > 0
     readonly property bool hasSdkTelemetry: !!(responseMeta && String(responseMeta.model || "").length > 0)
@@ -171,6 +195,9 @@ Item {
             resumeFrom = 0
             finishedSent = revealed >= tokens.length
             chatFlick.contentY = 0
+            growH = 0
+            // Once the words are laid out, open at the size of the first line.
+            Qt.callLater(function() { tb.trackGrowth() })
             if (revealed > 0)
                 Qt.callLater(function() { tb.followReveal() })
         }
@@ -179,6 +206,7 @@ Item {
         cardAsk.input.text = ""
         present("answer")
         entrance.restart()
+        arrivalPulse.restart()
         // Rich cards are ready at once; chat waits for its cascade to finish.
         if (richKind)
             Qt.callLater(function() { cardAsk.input.forceActiveFocus() })
@@ -296,8 +324,27 @@ Item {
         ? Math.min(Math.max(120, maxH * 0.42), toolDrawerCol.implicitHeight)
         : 0
     readonly property real chatHeaderH: hasTools ? (36 + (toolsExpanded ? toolDrawerH + 6 : 0)) : 0
-    readonly property real chatContentH: Math.max(22, Math.min(chatBodyCol.implicitHeight,
-                                                               Math.min(310, maxH - 64 - chatHeaderH)))
+    // The text area is capped (it scrolls past that); a shared screenshot gets more room.
+    readonly property real chatCap: Math.min(hasShots ? 480 : 310, maxH - 64 - chatHeaderH)
+    readonly property real chatFullH: Math.max(22, Math.min(chatBodyCol.implicitHeight, chatCap))
+    // While the words arrive the bubble grows with them, one line at a time,
+    // instead of opening at its final size around empty space. growH only
+    // changes when a new line starts, so the click-through mask is not rebuilt
+    // for every word; the morph spring smooths the steps.
+    property real growH: 0
+    readonly property real chatContentH: revealing ? Math.min(chatFullH, Math.max(22, growH)) : chatFullH
+    function trackGrowth() {
+        if (!revealing)
+            return
+        // Make room for the next batch of words just before they appear.
+        const ahead = Math.min(tokens.length - 1, revealed + Math.max(1, revealStep))
+        const item = words.itemAt(Math.max(0, ahead))
+        if (!item)
+            return
+        const need = Math.ceil(flow.y + item.y + item.height + 4)
+        if (need > growH)
+            growH = need
+    }
     readonly property real cardBodyH: Math.min(maxH - 48,
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
@@ -329,7 +376,8 @@ Item {
     readonly property real rawH: phase === "thinking" ? thinkH
                                : phase === "history" ? histH
                                : phase === "error" ? errorH
-                               : phase === "answer" ? (kind === "chat" ? 12 + chatHeaderH + chatContentH + 10 + footH + 8
+                               : phase === "answer" ? (kind === "chat" ? 12 + chatHeaderH + chatContentH
+                                                                          + (revealing ? 8 : 10 + footH + 8)
                                                      : kind === "note" ? rowH
                                                      : cardBodyH + 48)
                                : rowH
@@ -341,13 +389,16 @@ Item {
     property bool morphing: true
     property real w: targetW
     property real h: targetH
+    // Playful while a bubble pops up or takes a question; calmer once an answer
+    // is arriving, so the card does not wobble under the words as they appear.
+    readonly property real springDamping: tb.mo < 1 ? 0.95 : (tb.phase === "answer" ? 0.66 : 0.38)
     Behavior on w {
         enabled: tb.morphing
-        SpringAnimation { spring: 3.4; damping: tb.mo < 1 ? 0.95 : 0.38; epsilon: 0.2 }
+        SpringAnimation { spring: 3.4; damping: tb.springDamping; epsilon: 0.2 }
     }
     Behavior on h {
         enabled: tb.morphing
-        SpringAnimation { spring: 3.4; damping: tb.mo < 1 ? 0.95 : 0.40; epsilon: 0.2 }
+        SpringAnimation { spring: 3.4; damping: tb.springDamping + 0.02; epsilon: 0.2 }
     }
 
     // ---- placement --------------------------------------------------------------
@@ -502,6 +553,14 @@ Item {
         NumberAnimation { target: tb; property: "shakeX"; to: 0; duration: 90; easing.type: Easing.OutQuad }
     }
 
+    // A soft swell as an answer lands, so its arrival reads as an event.
+    property real arrival: 0
+    SequentialAnimation {
+        id: arrivalPulse
+        NumberAnimation { target: tb; property: "arrival"; to: 0.016 * tb.mo; duration: 150; easing.type: Easing.OutQuad }
+        NumberAnimation { target: tb; property: "arrival"; to: 0; duration: 520; easing.type: Easing.OutBack; easing.overshoot: 2.2 }
+    }
+
     // Answer content fades up once the bubble has had a moment to grow.
     property real contentIn: 0
     property real footIn: 0
@@ -509,8 +568,8 @@ Item {
         id: entrance
         SequentialAnimation {
             PropertyAction { target: tb; property: "contentIn"; value: 0 }
-            PauseAnimation { duration: 150 }
-            NumberAnimation { target: tb; property: "contentIn"; to: 1; duration: 380; easing.type: Easing.OutCubic }
+            PauseAnimation { duration: 70 }
+            NumberAnimation { target: tb; property: "contentIn"; to: 1; duration: 360; easing.type: Easing.OutCubic }
         }
         SequentialAnimation {
             PropertyAction { target: tb; property: "footIn"; value: 0 }
@@ -581,7 +640,7 @@ Item {
         id: revealTimer
         interval: tb.revealInterval
         repeat: true
-        running: tb.revealing && tb.contentIn > 0.15 && tb.visible && !tb.closing
+        running: tb.revealing && tb.contentIn > 0.04 && tb.visible && !tb.closing
         onTriggered: {
             const n = tb.tokens.length
             let next = Math.min(n, tb.revealed + tb.revealStep)
@@ -595,10 +654,13 @@ Item {
         }
     }
     onRevealedChanged: {
+        trackGrowth()
         if (phase === "answer" && kind === "chat" && tokens.length > 0
                 && revealed >= tokens.length && !finishedSent) {
             finishedSent = true
             followReveal()
+            if (hasShots)
+                scrollSoon.restart()
             followField.input.forceActiveFocus()
             revealFinished()
         }
@@ -774,8 +836,8 @@ Item {
                 origin.y: tb.centered ? (tb.above ? body.height : 0)
                                       : (tb.above ? body.height - Math.min(body.height, tb.rowH) / 2
                                                   : Math.min(body.height, tb.rowH) / 2)
-                xScale: (0.3 + 0.7 * tb.bp) * tb.breath
-                yScale: (0.3 + 0.7 * tb.bp) * tb.breath
+                xScale: (0.3 + 0.7 * tb.bp) * tb.breath * (1 + tb.arrival)
+                yScale: (0.3 + 0.7 * tb.bp) * tb.breath * (1 + tb.arrival)
             },
             Translate { x: tb.shakeX }
         ]
@@ -1315,7 +1377,7 @@ Item {
                         x: 84
                         width: thinkLabel.implicitWidth
                         height: parent.height
-                        visible: !tb.hasTools && tb.activeToolSummary.length === 0
+                        visible: tb.showThinking && !tb.hasTools && tb.activeToolSummary.length === 0
                         opacity: tb.longThink ? 1 : 0
                         Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.InOutSine } }
 
@@ -1517,6 +1579,8 @@ Item {
                     interactive: contentHeight > height + 1
                     boundsBehavior: Flickable.StopAtBounds
                     clip: true
+                    // The text settles into place a beat after the card has grown.
+                    transform: Translate { y: (1 - tb.contentIn) * 7 }
                     Behavior on contentY {
                         enabled: tb.revealing
                         NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
@@ -1695,13 +1759,33 @@ Item {
                                     // settles into ink: a soft trail of light.
                                     color: !lit ? Theme.accent
                                            : (modelData.m ? Theme.accent : (modelData.c ? Theme.inkSoft : Theme.ink))
-                                    Behavior on color { ColorAnimation { duration: 620; easing.type: Easing.OutCubic } }
+                                    Behavior on color { ColorAnimation { duration: 520; easing.type: Easing.OutCubic } }
                                     opacity: lit ? 1 : 0
-                                    Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+                                    // On the render thread: fading a few words per tick costs the GUI thread nothing.
+                                    Behavior on opacity { OpacityAnimator { duration: 280; easing.type: Easing.OutCubic } }
                                     transform: Translate {
-                                        y: word.lit ? 0 : 6 * tb.mo
-                                        Behavior on y { NumberAnimation { duration: 360; easing.type: Easing.OutCubic } }
+                                        y: word.lit ? 0 : 4 * tb.mo
+                                        Behavior on y { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
                                     }
+                                }
+                            }
+                        }
+
+                        // Screenshots Buddy shared, once the words are in.
+                        Column {
+                            id: shotsCol
+                            width: chatBodyCol.width
+                            spacing: 8
+                            visible: tb.attachments.length > 0 && !tb.revealing
+                            Repeater {
+                                model: tb.attachments
+                                BuddyShot {
+                                    required property var modelData
+                                    width: shotsCol.width
+                                    source: modelData.url
+                                    caption: modelData.caption || ""
+                                    pixelWidth: modelData.width || 0
+                                    pixelHeight: modelData.height || 0
                                 }
                             }
                         }
@@ -1867,8 +1951,14 @@ Item {
                     y: 12 + tb.chatHeaderH + tb.chatContentH + 10
                     width: tb.chatW - 20
                     height: tb.footH
-                    opacity: tb.footIn
-                    transform: Translate { y: (1 - tb.footIn) * 6 }
+                    id: chatFoot
+                    // The follow-up field and actions settle in once the words are
+                    // all there, instead of showing half-clipped while the card grows.
+                    property real ready: tb.revealing ? 0 : 1
+                    enabled: ready > 0.5
+                    Behavior on ready { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+                    opacity: tb.footIn * ready
+                    transform: Translate { y: (1 - tb.footIn * chatFoot.ready) * 6 }
 
                     BuddyAskField {
                         id: followField

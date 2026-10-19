@@ -218,6 +218,14 @@ void BuddyProvider::setStreamReplies(bool on)
     emit agentConfigChanged();
 }
 
+void BuddyProvider::setShowThinking(bool on)
+{
+    if (on == m_showThinking)
+        return;
+    m_showThinking = on;
+    emit agentConfigChanged();
+}
+
 // ---- handoffs ------------------------------------------------------------------
 // Modelled on OpenAI Agents SDK handoffs: each handoff is exposed to the model
 // as a `transfer_to_<agent>` tool; the receiving agent sees the whole

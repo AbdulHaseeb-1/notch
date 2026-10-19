@@ -25,6 +25,8 @@ QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input
     }
     if (name == QLatin1String("ask_user_question"))
         return QStringLiteral("chat");
+    if (name == QLatin1String("share_screenshot"))
+        return QStringLiteral("eye");
     if (name == QLatin1String("str_replace_editor"))
         return QStringLiteral("doc");
     if (name == QLatin1String("glob_grep"))
@@ -61,6 +63,8 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
         return QStringLiteral("COMPUTER");
     if (name == QLatin1String("ask_user_question"))
         return QStringLiteral("QUESTION");
+    if (name == QLatin1String("share_screenshot"))
+        return QStringLiteral("SCREENSHOT");
     if (name == QLatin1String("str_replace_editor"))
         return QStringLiteral("EDITOR");
     if (name == QLatin1String("glob_grep")) {
@@ -153,6 +157,10 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
     }
     if (name == QLatin1String("ask_user_question"))
         return uq::summary(uq::parse(input).questions);
+    if (name == QLatin1String("share_screenshot")) {
+        const QString caption = input.value(QStringLiteral("caption")).toString().simplified().left(60);
+        return caption.isEmpty() ? QStringLiteral("Show you the screen") : QStringLiteral("Show you the screen: %1").arg(caption);
+    }
     if (name == QLatin1String("str_replace_editor")) {
         const QString cmd = input.value(QStringLiteral("command")).toString();
         const QString path = QFileInfo(input.value(QStringLiteral("path")).toString()).fileName();
@@ -235,6 +243,10 @@ QString BuddyProvider::detailForToolCall(const QString &name, const QJsonObject 
         if (c.size() >= 2)
             return QStringLiteral("action: %1  coord: [%2, %3]").arg(act).arg(c.at(0).toInt()).arg(c.at(1).toInt());
         return QStringLiteral("action: %1").arg(act);
+    }
+    if (name == QLatin1String("share_screenshot")) {
+        const int display = input.value(QStringLiteral("display")).toInt(-1);
+        return display >= 0 ? QStringLiteral("display %1").arg(display) : QStringLiteral("the screen Buddy is looking at");
     }
     if (name == QLatin1String("ask_user_question")) {
         QStringList lines;
@@ -418,6 +430,73 @@ void BuddyProvider::executeComputerTool(const PendingToolCall &call)
         }
         setStepFields(call.stepIndex, fields);
         finishCurrentToolCall(call, r.text, r.imageBase64, r.isError, r.mediaType);
+    });
+}
+
+// Where a shared screenshot is kept: Noch's own data folder, which the agent's
+// file tools cannot read (it is a private path), pruned to the newest few.
+QString BuddyProvider::saveScreenshot(const QImage &image, QString *error) const
+{
+    constexpr int kKeep = 40;
+    const QString dirPath = QDir(userDataDir()).filePath(QStringLiteral("screenshots"));
+    if (!QDir().mkpath(dirPath)) {
+        *error = QStringLiteral("the screenshots folder could not be created");
+        return QString();
+    }
+    QDir dir(dirPath);
+    const QString path = dir.filePath(QStringLiteral("shot-%1.png")
+                                          .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"))));
+    if (!image.save(path, "PNG")) {
+        *error = QStringLiteral("the screenshot could not be saved");
+        return QString();
+    }
+    const QFileInfoList old = dir.entryInfoList({ QStringLiteral("shot-*.png") }, QDir::Files, QDir::Time);
+    for (int i = kKeep; i < old.size(); ++i)
+        QFile::remove(old.at(i).absoluteFilePath());
+    return path;
+}
+
+void BuddyProvider::addAttachment(const QVariantMap &attachment)
+{
+    m_attachments.append(attachment);
+    emit attachmentsChanged();
+}
+
+// share_screenshot: take the screen and put it in the chat for the user. The
+// model is told it was shown, not given the pixels (it can look with the
+// computer tool if it needs to), so nothing here sends the screen anywhere.
+void BuddyProvider::executeScreenshotTool(const PendingToolCall &call)
+{
+    const int display = call.input.value(QStringLiteral("display")).toInt(-1);
+    const QString caption = call.input.value(QStringLiteral("caption")).toString().simplified().left(160);
+    const quint64 gen = m_runGeneration;
+    setActiveToolState(QStringLiteral("share_screenshot"), tr("Taking a screenshot…"));
+    m_computer->captureForUser(display, [this, call, gen, caption](const QImage &image, const QString &why) {
+        if (gen != m_runGeneration)
+            return;
+        if (image.isNull()) {
+            finishCurrentToolCall(call, QStringLiteral("Error: %1.").arg(why), QString(), true);
+            return;
+        }
+        QString saveError;
+        const QString path = saveScreenshot(image, &saveError);
+        if (path.isEmpty()) {
+            finishCurrentToolCall(call, QStringLiteral("Error: %1.").arg(saveError), QString(), true);
+            return;
+        }
+        addAttachment(QVariantMap{
+            { QStringLiteral("url"), QUrl::fromLocalFile(path).toString() },
+            { QStringLiteral("path"), QDir::toNativeSeparators(path) },
+            { QStringLiteral("caption"), caption },
+            { QStringLiteral("width"), image.width() },
+            { QStringLiteral("height"), image.height() },
+        });
+        setStepFields(call.stepIndex, { { QStringLiteral("thumbnail"), m_computer->thumbnail(image) } });
+        finishCurrentToolCall(call,
+            QStringLiteral("The screenshot (%1x%2) is now shown to the user in the chat. You cannot see it yourself; "
+                           "use the computer tool's screenshot action if you need to look at the screen. "
+                           "Do not describe it as if you had seen it.").arg(image.width()).arg(image.height()),
+            QString(), false);
     });
 }
 

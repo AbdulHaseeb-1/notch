@@ -317,6 +317,30 @@ QImage ComputerUse::captureDisplay()
     return m_backend ? m_backend->grab(m_mapper.current()) : QImage();
 }
 
+void ComputerUse::captureForUser(int display, std::function<void(const QImage &, const QString &)> done)
+{
+    if (!m_backend) {
+        done(QImage(), QStringLiteral("no screen capture is available"));
+        return;
+    }
+    if (m_autoScreens)
+        refreshScreens();
+    const QList<ScreenInfo> &screens = m_mapper.screens();
+    if (display >= screens.size()) {
+        done(QImage(), QStringLiteral("display %1 does not exist (%2 connected)").arg(display).arg(screens.size()));
+        return;
+    }
+    const ScreenInfo screen = display >= 0 ? screens.at(display) : m_mapper.current();
+    m_capturing = true;       // the overlays hide themselves while this is set
+    emit stateChanged();
+    later(int(60 * m_animScale), [this, screen, done] {
+        const QImage image = m_backend ? m_backend->grab(screen) : QImage();
+        m_capturing = false;
+        emit stateChanged();
+        done(image, image.isNull() ? QStringLiteral("the screen could not be captured") : QString());
+    });
+}
+
 QString ComputerUse::describe(const cu::ParsedAction &a)
 {
     using cu::Action;

@@ -111,6 +111,8 @@ set(NOCH_SOURCES
 
     src/voice/BuddySfx.cpp
     src/voice/BuddySfx.h
+    src/voice/OrtRuntime.cpp
+    src/voice/OrtRuntime.h
     src/voice/PushToTalkKey.cpp
     src/voice/PushToTalkKey.h
     src/voice/SpeechOut.cpp
@@ -119,6 +121,8 @@ set(NOCH_SOURCES
     src/voice/VoiceAudio.h
     src/voice/VoiceInput.cpp
     src/voice/VoiceInput.h
+    src/voice/WakeDetector.cpp
+    src/voice/WakeDetector.h
     src/voice/WakeWord.cpp
     src/voice/WakeWord.h
 )
@@ -134,6 +138,7 @@ set(NOCH_SOURCE_INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/media
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform
     ${CMAKE_CURRENT_SOURCE_DIR}/src/voice
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime
 )
 add_library(noch_includes INTERFACE)
 target_include_directories(noch_includes INTERFACE ${NOCH_SOURCE_INCLUDE_DIRS})
@@ -207,6 +212,7 @@ set(NOCH_QML_FILES
     qml/buddy/components/BuddyIconButton.qml
     qml/buddy/components/BuddyMicButton.qml
     qml/buddy/components/BuddySendButton.qml
+    qml/buddy/components/BuddyShot.qml
 
     qml/agent/AgentControlOverlay.qml
     qml/agent/AgentCursor.qml
@@ -231,12 +237,17 @@ set_source_files_properties(qml/theme/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE
 # IconSet.cpp reads them from :/qt/qml/noch/qml/icons at start-up.
 file(GLOB NOCH_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/icons/*.svg)
 
+# The wake word models (openWakeWord's two shared feature models and the
+# "Hey Buddy" classifier, ~2.8 MB). They are read from the resources at start-up;
+# a model dropped into %APPDATA%\noch\wakeword takes their place.
+file(GLOB NOCH_WAKEWORD_MODELS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS resources/wakeword/*.onnx)
+
 qt_add_qml_module(noch
     URI noch
     VERSION 1.0
     DEPENDENCIES QtQuick
     QML_FILES ${NOCH_QML_FILES}
-    RESOURCES ${NOCH_ICONS}
+    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS}
 )
 
 # Lets the generated QML type registration find src/app/QmlSingletons.h.
@@ -258,6 +269,47 @@ set_target_properties(noch PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
+# ONNX Runtime runs the wake word models. Noch loads onnxruntime.dll when it is
+# needed (see src/voice/OrtRuntime.cpp) instead of linking it, so the app builds
+# and starts without it and the wake word then falls back to the speech service.
+# On Windows the official build is downloaded once (hash-checked) and copied next
+# to noch.exe. Turn this off to supply your own onnxruntime.dll.
+option(NOCH_FETCH_ONNXRUNTIME "Download onnxruntime.dll for the local wake word (Windows)" ON)
+if(WIN32 AND NOCH_FETCH_ONNXRUNTIME)
+    set(NOCH_ORT_VERSION 1.20.1)
+    set(NOCH_ORT_ZIP_SHA256 78d447051e48bd2e1e778bba378bec4ece11191c9e538cf7b2c4a4565e8f5581)
+    set(NOCH_ORT_DEPS ${CMAKE_BINARY_DIR}/_deps/onnxruntime)
+    set(NOCH_ORT_DLL ${NOCH_ORT_DEPS}/onnxruntime.dll)
+    if(NOT EXISTS ${NOCH_ORT_DLL})
+        set(_ort_zip ${NOCH_ORT_DEPS}/onnxruntime-win-x64-${NOCH_ORT_VERSION}.zip)
+        message(STATUS "Downloading ONNX Runtime ${NOCH_ORT_VERSION} for the wake word...")
+        file(DOWNLOAD
+            https://github.com/microsoft/onnxruntime/releases/download/v${NOCH_ORT_VERSION}/onnxruntime-win-x64-${NOCH_ORT_VERSION}.zip
+            ${_ort_zip}
+            EXPECTED_HASH SHA256=${NOCH_ORT_ZIP_SHA256}
+            STATUS _ort_status)
+        list(GET _ort_status 0 _ort_code)
+        if(_ort_code EQUAL 0)
+            file(ARCHIVE_EXTRACT INPUT ${_ort_zip} DESTINATION ${NOCH_ORT_DEPS}/unpacked
+                 PATTERNS "*/lib/onnxruntime.dll")
+            file(GLOB_RECURSE _ort_found ${NOCH_ORT_DEPS}/unpacked/*/onnxruntime.dll)
+            if(_ort_found)
+                list(GET _ort_found 0 _ort_first)
+                file(COPY_FILE ${_ort_first} ${NOCH_ORT_DLL})
+            endif()
+            file(REMOVE ${_ort_zip})
+        else()
+            message(WARNING "Could not download ONNX Runtime (${_ort_status}). The wake word will check each "
+                            "sentence with your speech service instead. Put onnxruntime.dll next to noch.exe "
+                            "to use the local detector.")
+        endif()
+    endif()
+    if(EXISTS ${NOCH_ORT_DLL})
+        add_custom_command(TARGET noch POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NOCH_ORT_DLL} $<TARGET_FILE_DIR:noch>)
+    endif()
+endif()
 
 # Unit tests (pure-logic modules only): cmake -DNOCH_BUILD_TESTS=ON, then ctest.
 option(NOCH_BUILD_TESTS "Build unit tests" OFF)

@@ -48,7 +48,10 @@ Item {
     readonly property bool awaitingApproval: pendingApproval && pendingApproval.id !== undefined
     readonly property var pendingQuestion: BuddyAgent ? BuddyAgent.pendingQuestion : ({})
     readonly property bool awaitingQuestion: pendingQuestion && pendingQuestion.id !== undefined
-    readonly property string liveText: (BuddyAgent && BuddyAgent.streaming)
+    // Settings > Buddy > Show thinking. Off hides the work (steps, the draft as
+    // it is written, the model's reasoning); approvals and questions still show.
+    readonly property bool showThinking: BuddyAgent ? BuddyAgent.showThinking : true
+    readonly property string liveText: (BuddyAgent && showThinking && BuddyAgent.streaming)
                                        ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "loading"
     // Room the loading view gives up for approval cards or live text.
@@ -65,15 +68,17 @@ Item {
     property bool copiedFeedback: false
     property int thinkStep: 0
 
-    readonly property var toolSteps: (BuddyAgent) ? BuddyAgent.toolSteps : []
-    readonly property string activeTool: (BuddyAgent) ? BuddyAgent.activeTool : ""
-    readonly property string activeToolBadge: (BuddyAgent) ? BuddyAgent.activeToolBadge : ""
-    readonly property string activeToolSummary: (BuddyAgent) ? BuddyAgent.activeToolSummary : ""
+    readonly property var toolSteps: (BuddyAgent && showThinking) ? BuddyAgent.toolSteps : []
+    readonly property string activeTool: (BuddyAgent && showThinking) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolBadge: (BuddyAgent && showThinking) ? BuddyAgent.activeToolBadge : ""
+    readonly property string activeToolSummary: (BuddyAgent && showThinking) ? BuddyAgent.activeToolSummary : ""
     readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
     readonly property var agentTodos: (BuddyAgent) ? BuddyAgent.agentTodos : []
     readonly property var citations: (BuddyAgent) ? BuddyAgent.citations : []
+    // Screenshots Buddy put into this reply (share_screenshot).
+    readonly property var attachments: (BuddyAgent) ? BuddyAgent.attachments : []
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
-    readonly property bool hasAdvisor: !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
+    readonly property bool hasAdvisor: showThinking && !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
     readonly property bool hasCitations: citations && citations.length > 0
     readonly property bool hasSdkTelemetry: !!(responseMeta && String(responseMeta.model || "").length > 0)
@@ -210,6 +215,11 @@ Item {
     opacity: Math.min(1, pc * 1.8)
     scale: 0.95 + 0.05 * pc
     transformOrigin: Item.Top
+
+    // The reply (chat card, chart, plan...) eases in when it lands, instead of
+    // popping in while the loading view fades out.
+    property real readyIn: panel.phase === "ready" ? 1 : 0
+    Behavior on readyIn { NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }
 
     onKindChanged: resetBody()
     onOpenChanged: {
@@ -558,7 +568,8 @@ Item {
                         width: panel.width_ - 48
                         horizontalAlignment: Text.AlignHCenter
                         elide: Text.ElideRight
-                        text: panel.activeToolSummary.length > 0 ? panel.activeToolSummary
+                        text: !panel.showThinking ? qsTr("Working on it…")
+                            : panel.activeToolSummary.length > 0 ? panel.activeToolSummary
                             : (panel.kind === "chart" ? qsTr("Pulling up the demo chart…")
                             : (panel.kind === "research" ? qsTr("Gathering sample notes…")
                             : (panel.kind === "tasks" ? qsTr("Sketching a plan…")
@@ -778,11 +789,12 @@ Item {
                 boundsBehavior: Flickable.StopAtBounds
                 clip: true
                 visible: panel.phase === "ready" && panel.kind === "chat"
+                opacity: panel.readyIn
 
                 Column {
                     id: chatCol
                     x: 14
-                    y: 14
+                    y: 14 + (1 - panel.readyIn) * 10
                     width: parent.width - 28
                     spacing: 12
 
@@ -982,7 +994,7 @@ Item {
                     // Buddy response bubble card
                     Rectangle {
                         width: parent.width
-                        height: chatText.implicitHeight + lengthNote.h + actionRow.height + 30
+                        height: chatText.implicitHeight + lengthNote.h + shotsCol.h + actionRow.height + 30
                         radius: 14
                         color: Theme.raised
                         border.width: 0
@@ -1044,11 +1056,34 @@ Item {
                             Accessible.name: text
                         }
 
+                        // Screenshots Buddy shared, once the words are in.
+                        Column {
+                            id: shotsCol
+                            readonly property real h: visible ? implicitHeight + 8 : 0
+                            x: 14
+                            y: chatText.y + chatText.implicitHeight + lengthNote.h + 8
+                            width: parent.width - 28
+                            spacing: 8
+                            visible: panel.kind === "chat" && panel.phase === "ready" && !panel.isStreaming
+                                     && panel.attachments.length > 0
+                            Repeater {
+                                model: panel.attachments
+                                BuddyShot {
+                                    required property var modelData
+                                    width: shotsCol.width
+                                    source: modelData.url
+                                    caption: modelData.caption || ""
+                                    pixelWidth: modelData.width || 0
+                                    pixelHeight: modelData.height || 0
+                                }
+                            }
+                        }
+
                         // Action pills row (Copy, Regenerate, Love reaction)
                         Row {
                             id: actionRow
                             x: 12
-                            y: chatText.y + chatText.implicitHeight + lengthNote.h + 10
+                            y: chatText.y + chatText.implicitHeight + lengthNote.h + shotsCol.h + 10
                             height: 26
                             spacing: 6
                             opacity: panel.isStreaming ? 0.45 : 1.0

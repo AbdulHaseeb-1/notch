@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAudioDevice>
 #include <QAudioFormat>
 #include <QElapsedTimer>
 #include <QHash>
@@ -34,6 +35,9 @@ class BuddySfx final : public QObject
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(QString style READ style WRITE setStyle NOTIFY styleChanged)
     Q_PROPERTY(bool outputAvailable READ outputAvailable NOTIFY outputChanged)
+    // Keep the sound device open between cues (the wake word chimes the moment
+    // it hears its phrase, which must not wait for the device to open).
+    Q_PROPERTY(bool keepOpen READ keepOpen WRITE setKeepOpen NOTIFY keepOpenChanged)
 
 public:
     explicit BuddySfx(QObject *parent = nullptr);
@@ -47,6 +51,9 @@ public:
 
     QString style() const { return m_style; }
     void setStyle(const QString &s);
+
+    bool keepOpen() const { return m_keepOpen; }
+    void setKeepOpen(bool on);
 
     // True while a sound device is open (or could be opened on the next cue).
     bool outputAvailable() const { return m_outputAvailable; }
@@ -64,6 +71,11 @@ public:
     // Aliases: open -> wake, success -> reply, love -> happy.
     // Returns true when the cue was let through (enabled, not rate limited).
     Q_INVOKABLE bool play(const QString &cue);
+    // Opens the sound device ahead of the first cue. Opening it takes long
+    // enough to stall the frame it happens in, and the device is released after
+    // a quiet spell, so the UI calls this when the pointer reaches the buddy:
+    // by the click the device is already open and the bubble opens smoothly.
+    Q_INVOKABLE void prewarm();
 
     // ---- pure helpers (unit tested) -----------------------------------------
     static constexpr int kSynthRate = 44100;
@@ -87,10 +99,12 @@ signals:
     void volumeChanged();
     void styleChanged();
     void outputChanged();
+    void keepOpenChanged();
 
 private:
     void rebuildCues();
     bool ensureSink();
+    bool resolveFormat();
     void dropSink();
     void stopSoon();
     double pitchMultiplier() const;
@@ -99,6 +113,7 @@ private:
     double m_volume = 0.75;
     QString m_style = QStringLiteral("warm"); // "cute" | "warm" | "mellow"
     bool m_deviceDisabled = false;
+    bool m_keepOpen = false;
     bool m_outputAvailable = true;
 
     // Rendered cues at kSynthRate, and the same converted to the sink's rate.
@@ -113,6 +128,8 @@ private:
     QAudioSink *m_sink = nullptr;
     SfxMixer *m_mixer = nullptr;
     QAudioFormat m_format;
+    QAudioDevice m_device;        // the device m_format was negotiated for
+    bool m_formatReady = false;   // m_device / m_format are current
     QTimer m_idleTimer;           // closes the device after a quiet spell
     int m_failures = 0;           // consecutive sink open failures
     qint64 m_retryAfterMs = 0;    // back-off after a failure

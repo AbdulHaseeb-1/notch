@@ -283,9 +283,9 @@ BuddySfx::BuddySfx(QObject *parent)
     if (qEnvironmentVariableIntValue("NOCH_FORCE_AUDIO") != 0)   // diagnostics
         m_deviceDisabled = false;
     m_idleTimer.setSingleShot(true);
-    m_idleTimer.setInterval(4000);
+    m_idleTimer.setInterval(25000);   // reopening stalls a frame, so hold the device a while
     connect(&m_idleTimer, &QTimer::timeout, this, [this] {
-        if (m_mixer && !m_mixer->idle())
+        if (m_keepOpen || (m_mixer && !m_mixer->idle()))
             m_idleTimer.start();
         else
             dropSink();     // release the device while the buddy is quiet
@@ -294,6 +294,8 @@ BuddySfx::BuddySfx(QObject *parent)
         // Default device switched, headphones plugged, etc.: reopen lazily on
         // the next cue, in that device's own format.
         dropSink();
+        m_formatReady = false;
+        m_device = QAudioDevice();
         m_failures = 0;
         m_retryAfterMs = 0;
         const bool avail = !QMediaDevices::defaultAudioOutput().isNull();
@@ -329,6 +331,16 @@ void BuddySfx::setEnabled(bool on)
     if (!on && m_mixer)
         m_mixer->fadeAll(12);   // a short fade, never a click
     emit enabledChanged();
+}
+
+void BuddySfx::setKeepOpen(bool on)
+{
+    if (m_keepOpen == on)
+        return;
+    m_keepOpen = on;
+    if (on)
+        prewarm();
+    emit keepOpenChanged();
 }
 
 void BuddySfx::setVolume(double v)
@@ -444,15 +456,14 @@ bool BuddySfx::play(const QString &cue)
     return true;
 }
 
-bool BuddySfx::ensureSink()
+// Finds the default output and the format it mixes in natively, and converts
+// the cues to that rate. Both are remembered until the device list changes:
+// asking the platform for them again on every reopen is most of what made the
+// first cue after a quiet spell stall the UI.
+bool BuddySfx::resolveFormat()
 {
-    if (m_sink && m_mixer)
+    if (m_formatReady && !m_device.isNull())
         return true;
-    if (m_deviceDisabled)
-        return false;
-    const qint64 now = m_clock.elapsed();
-    if (now < m_retryAfterMs)
-        return false;
 
     const QAudioDevice dev = QMediaDevices::defaultAudioOutput();
     if (dev.isNull()) {
@@ -480,6 +491,7 @@ bool BuddySfx::ensureSink()
             fmt = f;
     }
     m_format = fmt;
+    m_device = dev;
 
     if (m_deviceCueRate != fmt.sampleRate()) {
         m_deviceCueRate = fmt.sampleRate();
@@ -488,10 +500,37 @@ bool BuddySfx::ensureSink()
             m_deviceCues.insert(it.key(), QSharedPointer<const QVector<float>>::create(
                                               resampleStereo(*it.value(), kSynthRate, m_deviceCueRate)));
     }
+    m_formatReady = true;
+    return true;
+}
+
+void BuddySfx::prewarm()
+{
+    if (!m_enabled || m_volume <= 0.001 || m_deviceDisabled)
+        return;
+    if (ensureSink())
+        m_idleTimer.start();
+}
+
+bool BuddySfx::ensureSink()
+{
+    if (m_sink && m_mixer)
+        return true;
+    if (m_deviceDisabled)
+        return false;
+    const qint64 now = m_clock.elapsed();
+    if (now < m_retryAfterMs)
+        return false;
+
+    if (!resolveFormat())
+        return false;
+    const QAudioDevice dev = m_device;
+    const QAudioFormat fmt = m_format;
 
     auto fail = [this, now](const char *why) {
         qWarning() << "BuddySfx: cannot open sound output:" << why << m_format;
         dropSink();
+        m_formatReady = false;      // negotiate again on the retry
         ++m_failures;
         m_retryAfterMs = now + std::min<qint64>(30000, 500LL << std::min(m_failures, 6));
         return false;
@@ -508,6 +547,7 @@ bool BuddySfx::ensureSink()
         const QAudio::Error err = sink->error();
         if (st == QAudio::StoppedState && err != QAudio::NoError && err != QAudio::UnderrunError) {
             qWarning() << "BuddySfx: sound output stopped with error" << err;
+            m_formatReady = false;
             ++m_failures;
             m_retryAfterMs = m_clock.elapsed() + std::min<qint64>(30000, 500LL << std::min(m_failures, 6));
             QMetaObject::invokeMethod(this, [this, sink] { if (sink == m_sink) dropSink(); },

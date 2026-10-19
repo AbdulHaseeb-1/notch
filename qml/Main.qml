@@ -75,6 +75,7 @@ Window {
         property string buddyComputerDetail: "sharp"
         property int buddyMaxSteps: 40
         property bool buddyAllowAskUser: true
+        property bool buddyAllowScreenshots: true
         // ---- Push-to-talk voice (off until the user adds a speech service) --
         property bool buddyVoiceEnabled: false
         property bool buddyVoiceHotkey: true
@@ -89,6 +90,8 @@ Window {
         // Everything the microphone hears is sent to the speech service to check
         // for the phrase: a service on the internet needs this explicit yes.
         property bool buddyWakeCloudOk: false
+        // How sure the local model has to be (0.2 easy .. 0.9 strict); 0.5 is its own default.
+        property real buddyWakeThreshold: 0.5
         property bool buddySpeakReports: false
         // ---- Agent safety (see docs/agent-safety.md) -------------------------
         // "default" asks before side effects, "acceptEdits" auto-approves file
@@ -99,6 +102,8 @@ Window {
         property bool buddyRedactSecrets: true
         property bool buddyKeepTraces: true
         property bool buddyStreamReplies: true
+        // Show what Buddy is doing while it works (steps, draft, reasoning).
+        property bool buddyShowThinking: true
         property bool buddyHandoffs: true
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
@@ -115,10 +120,10 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
-        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser,
+        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceBase, cfg.buddyVoiceModel, cfg.buddyVoiceLanguage, cfg.buddyVoiceAutoSend,
-        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeCloudOk, cfg.buddySpeakReports,
-        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyHandoffs,
+        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeCloudOk, cfg.buddyWakeThreshold, cfg.buddySpeakReports,
+        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking, cfg.buddyHandoffs,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
@@ -1133,11 +1138,13 @@ Window {
     Binding { target: BuddyAgent; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
     Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
     Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
+    Binding { target: BuddyAgent; property: "showThinking"; value: cfg.buddyShowThinking }
     Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
     Binding { target: BuddyAgent; property: "officialComputerTools"; value: cfg.buddyOfficialComputer }
     Binding { target: BuddyAgent; property: "computerDetail"; value: cfg.buddyComputerDetail }
     Binding { target: BuddyAgent; property: "maxSteps"; value: cfg.buddyMaxSteps }
     Binding { target: BuddyAgent; property: "allowAskUser"; value: cfg.buddyAllowAskUser }
+    Binding { target: BuddyAgent; property: "allowScreenshots"; value: cfg.buddyAllowScreenshots }
     Binding { target: Voice; property: "enabled"; value: cfg.buddyVoiceEnabled }
     Binding { target: Voice; property: "apiBase"; value: cfg.buddyVoiceBase }
     // A speech service of its own needs its own key; one left empty only works
@@ -1149,8 +1156,11 @@ Window {
     Binding { target: Wake; property: "enabled"; value: cfg.buddyWakeEnabled }
     Binding { target: Wake; property: "phrase"; value: cfg.buddyWakePhrase }
     Binding { target: Wake; property: "allowCloud"; value: cfg.buddyWakeCloudOk }
+    Binding { target: Wake; property: "threshold"; value: cfg.buddyWakeThreshold }
     Binding { target: Speech; property: "enabled"; value: cfg.buddySpeakReports }
     Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
+    // The wake word chimes the instant it hears its phrase: keep the device open for it.
+    Binding { target: BuddySound; property: "keepOpen"; value: Wake.active }
     Binding { target: BuddySound; property: "volume"; value: cfg.buddySfxVolume }
     Binding { target: BuddySound; property: "style"; value: cfg.buddySfxStyle }
 

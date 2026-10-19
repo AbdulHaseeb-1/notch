@@ -3,7 +3,9 @@
 #include <QtTest>
 #include <QSignalSpy>
 
+#include "OrtRuntime.h"
 #include "SpeechOut.h"
+#include "WakeDetector.h"
 #include "WakeWord.h"
 #include "SpeechFakes.h"
 
@@ -16,6 +18,30 @@ QByteArray hum(double seconds, double amp) { return tone(seconds, 50, amp); }
 QByteArray reply(const QString &text)
 {
     return QByteArray("{\"text\":\"") + text.toUtf8() + "\"}";
+}
+
+// 16 kHz mono 16-bit PCM out of a canonical 44-byte-header WAV fixture.
+QByteArray fixturePcm(const QString &name)
+{
+    QFile f(QStringLiteral(NOCH_TEST_DATA_DIR "/") + name);
+    if (!f.open(QIODevice::ReadOnly))
+        return QByteArray();
+    const QByteArray wav = f.readAll();
+    const int at = wav.indexOf("data");
+    return at < 0 ? QByteArray() : wav.mid(at + 8);
+}
+
+// Feeds audio the way a microphone delivers it: in 20 ms pieces, here at about
+// ten times real time (a burst would look like a detector that has fallen behind).
+void play(FakeCapture *mic, const QByteArray &pcm)
+{
+    constexpr int piece = 640;
+    int n = 0;
+    for (int at = 0; at < pcm.size(); at += piece) {
+        mic->feed(pcm.mid(at, piece));
+        if (++n % 4 == 0)
+            QTest::qWait(8);
+    }
 }
 
 // One utterance as the microphone would hear it: speech, then enough quiet to end it.
@@ -614,6 +640,77 @@ private slots:
             QVERIFY2(!v.toString().contains("party"), mo->property(i).name());
         }
     }
+
+    // ---- the local detector (needs ONNX Runtime; skipped without it) ---------------------
+
+    void localDetectorWakesOnThePhraseAndOnlyTheRequestGoesToWhisper() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        Rig r(false);
+        r.stt.reply = reply("open notepad");
+        r.wake.setModelFolder(QStringLiteral(NOCH_WAKEWORD_DIR));
+        r.wake.setEnabled(true);
+        QTRY_COMPARE_WITH_TIMEOUT(r.wake.detector(), QStringLiteral("local"), 20000);
+        QTRY_VERIFY(r.mic->open);
+        QCOMPARE(r.wake.blockedReason(), QString());   // no consent needed: nothing is sent while it listens
+
+        play(r.mic, silence(1.0) + fixturePcm("hey_buddy_tts.wav"));
+        QTRY_COMPARE_WITH_TIMEOUT(r.woke.count(), 1, 10000);
+        QCOMPARE(r.wake.state(), QStringLiteral("awaiting"));
+        QCOMPARE(r.stt.requests, 0);              // the phrase itself was never sent anywhere
+
+        play(r.mic, speech(1.0) + silence(1.6));  // "open notepad", then the pause that ends a request
+        QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 10000);
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
+        QCOMPARE(r.stt.requests, 1);              // only the request
+    }
+
+    void localDetectorIgnoresOrdinarySpeechWithoutSendingIt() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        Rig r(false);
+        r.wake.setModelFolder(QStringLiteral(NOCH_WAKEWORD_DIR));
+        r.wake.setEnabled(true);
+        QTRY_COMPARE_WITH_TIMEOUT(r.wake.detector(), QStringLiteral("local"), 20000);
+        QTRY_VERIFY(r.mic->open);
+        // More sentences in a minute than the speech fallback's cap would allow.
+        for (int i = 0; i < 20; ++i)
+            play(r.mic, fixturePcm("other_phrase_tts.wav"));
+        QTest::qWait(1500);
+        QCOMPARE(r.woke.count(), 0);
+        QCOMPARE(r.stt.requests, 0);
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+    }
+
+    void thresholdIsKeptInASaneRange() {
+        Rig r(false);
+        r.wake.setThreshold(0.99);
+        QCOMPARE(r.wake.threshold(), 0.9);
+        r.wake.setThreshold(0.01);
+        QCOMPARE(r.wake.threshold(), 0.2);
+        r.wake.setThreshold(0.6);
+        QCOMPARE(r.wake.threshold(), 0.6);
+    }
+
+    void localRequestRepeatingThePhraseIsNotTakenAsPartOfIt() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        Rig r(false);
+        r.stt.reply = reply("Hey buddy, open notepad");
+        r.wake.setModelFolder(QStringLiteral(NOCH_WAKEWORD_DIR));
+        r.wake.setEnabled(true);
+        QTRY_COMPARE_WITH_TIMEOUT(r.wake.detector(), QStringLiteral("local"), 20000);
+        QTRY_VERIFY(r.mic->open);
+        play(r.mic, silence(1.0) + fixturePcm("hey_buddy_tts.wav"));
+        QTRY_COMPARE_WITH_TIMEOUT(r.woke.count(), 1, 10000);
+        play(r.mic, speech(1.0) + silence(1.6));
+        QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 10000);
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
+    }
+
 };
 
 QTEST_MAIN(TstWakeWord)

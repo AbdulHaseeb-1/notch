@@ -201,8 +201,12 @@ compaction, loop guard, cancel during an approval, streamed text and tool
 calls, cancel mid-stream, stream error and truncation retries, specialist
 handoffs and their toolsets, session memory, and the per-run memory index.
 `tst_computeruse` covers the computer-use actions, screenshot scaling, held keys
-and the simulated backend. `tst_wakeword` (82 tests: phrase matching, utterance detection, consent, rate limit, pausing, back-off) and `tst_speechout`
-cover the wake word and spoken reports. `tst_userquestions`, `tst_runjournal`,
+and the simulated backend. `tst_wakeword` (phrase matching, utterance detection,
+consent, rate limit, pausing, back-off, and the local detector's whole flow with a
+fake microphone and a fake Whisper server), `tst_wakedetector` (the openWakeWord
+pipeline against the reference implementation's scores; needs ONNX Runtime, set
+`NOCH_ORT_LIBRARY` to its path, skipped otherwise) and `tst_speechout` cover the
+wake word and spoken reports. `tst_userquestions`, `tst_runjournal`,
 `tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
 the question, undo, saved-rule, instruction/slash-command, chat-session and voice
 modules (the last one with a fake microphone and a fake speech server).

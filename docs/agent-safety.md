@@ -306,38 +306,51 @@ Guardrails:
 ## Wake word
 
 *Wake word* (Settings, Buddy, Voice input; off by default, and it needs Voice
-input set up first) lets you say "hey buddy" (or a phrase you choose) instead of
-clicking. Say it alone and Buddy listens for your request; or add the request in
-the same breath: "hey buddy, open notepad". Buddy then does the work like any
-typed request and reports back: the answer pops up as usual, and with *Read
-reports aloud* a short summary is also spoken when the run finishes, needs your
-approval, asks a question or fails. (Spoken reports are Windows' built-in voice,
-or espeak-ng elsewhere; never code, links or Markdown, at most about 280
-characters.)
+input set up first) lets you say "Hey Buddy" instead of clicking. Say it alone and
+Buddy listens for your request; or add the request in the same breath: "hey buddy,
+open notepad". Buddy then does the work like any typed request and reports back:
+the answer pops up as usual, and with *Read reports aloud* a short summary is also
+spoken when the run finishes, needs your approval, asks a question or fails.
+(Spoken reports are Windows' built-in voice, or espeak-ng elsewhere; never code,
+links or Markdown, at most about 280 characters.)
 
 This is the one feature with an open microphone, so it is built to hold less than
-it could:
+it could.
 
-- **Why it needs consent.** There is no local keyword model; each utterance is
-  transcribed by your speech-to-text service to look for the phrase. With a
-  service on the internet that means *everything said near the microphone* is
-  sent there, so Noch refuses to run until you tick *Allow sending everything it
-  hears*. A speech service on this computer needs no consent: nothing leaves it.
-  Taking the consent back closes the microphone at once.
-- **What leaves the computer.** Only utterances: a small local detector cuts the
-  audio into sentences and learns the room's noise level, so silence, fans and
-  clicks are never sent. At most 12 utterances a minute are checked, one at a
-  time; the rest are dropped, not queued. A service that fails closes the
-  microphone and backs off (10 s, doubling to 5 min); a refused key stops it
-  until the key is changed.
-- **What is kept.** Nothing. A transcript is compared with the phrase and
-  dropped, and is not stored, logged or exposed to the UI unless the phrase
-  started it, and then only the request after the phrase is used. Audio stays in
-  memory.
-- **False wake-ups.** The phrase only counts at the very start of an utterance
-  (after at most one "hey", "ok", ...), so the word inside ordinary conversation
-  does nothing. Phrases under four letters are refused. A second wake within 1.5 s
-  is ignored. Say it and nothing more, and Buddy gives up after 7 s.
+**The phrase is found on this computer.** An [openWakeWord](https://github.com/dscripka/openWakeWord)
+model for "Hey Buddy" (`resources/wakeword/`, about 2.8 MB, compiled into Noch) runs
+through ONNX Runtime on its own thread. It listens to the microphone in 80 ms steps
+(about 1.5 ms of CPU each) and scores how much the last 1.3 seconds sounded like the
+phrase. Nothing is sent anywhere while it listens. When the score passes the
+*Sensitivity* setting (the model's own default of 0.5), Buddy perks up and records
+**only the request that follows**, which goes to your speech-to-text service
+(Whisper, or any OpenAI-style `/audio/transcriptions` endpoint; a local Whisper
+server keeps even that on this computer). Say it and nothing more and Buddy gives
+up after 7 s. If the request itself starts with the phrase again, it is stripped.
+
+- **Different wake word.** Drop an openWakeWord `.onnx` classifier into
+  `%APPDATA%\noch\wakeword\` (Settings, *Open models folder*); it replaces the
+  bundled one. Files there called `melspectrogram.onnx` and `embedding_model.onnx`
+  replace the shared feature models.
+- **The runtime.** Noch loads `onnxruntime.dll` when needed instead of linking it,
+  so a missing or broken runtime never stops Noch from starting. The Windows build
+  downloads it once (hash-checked) and puts it beside `noch.exe`.
+- **Fallback.** If the runtime or a model cannot be loaded, Settings says why and
+  Noch falls back to the older method: a small local detector cuts the sound into
+  sentences, and each one is transcribed by your speech service to look for a phrase
+  you type. That sends *everything said near the microphone* to the service, so
+  in this mode Noch refuses to run until you tick *Allow sending everything it
+  hears* (a service on this computer needs no consent), checks at most 12 sentences
+  a minute, and the phrase only counts at the very start of a sentence. A failing
+  service closes the microphone and backs off (10 s, doubling to 5 min); a refused
+  key stops it until the key is changed.
+- **What is kept.** Nothing. The detector keeps ten seconds of its own working
+  numbers in memory; audio is never written anywhere, and what the service
+  transcribes is only used if it follows the phrase.
+- **False wake-ups.** A second wake within 1.5 s is ignored, and after a wake the
+  detector forgets what it heard so the same words cannot wake it twice. Raise
+  *Sensitivity* towards *strict* if it wakes on TV or music. A single TTS-voiced
+  phrase can score differently from a real voice: try it and adjust.
 - **Always visible.** A small microphone badge sits on the orb whenever the
   microphone is open for this (it turns red once the phrase was heard), and the OS
   shows its own microphone indicator.
@@ -348,6 +361,34 @@ it could:
   hard stops and the instruction-file protection apply unchanged. Because sound
   from speakers or a video could say the phrase too, keep the permission mode on
   *Ask* if you leave the wake word on in a room with other audio.
+
+## Screenshots in chat
+
+With *Screenshots in chat* on (Settings, Buddy, Agent tools; on by default), Buddy has
+a `share_screenshot` tool: it puts a picture of your screen into the reply, under
+the words, so you can see it ("show me my screen", "send a screenshot of the
+result"). Click a picture to open it full size.
+
+- **The model does not get the image.** It is told that the picture was shown to
+  you, and nothing else. To look at the screen itself Buddy uses the `computer`
+  tool, which is a separate, gated capability that marks the run as having seen
+  untrusted screen content. The shared picture is not sent to the model provider
+  and cannot be used to read the screen.
+- **No approval.** Showing you your own screen is read-only and local, so it runs
+  without asking, also in Plan mode. Switch the setting off to remove the tool.
+- **Where it is kept.** As a PNG in `<AppData>/screenshots/`, a private Noch
+  folder that Buddy's file and shell tools cannot read. Only the newest 40 are
+  kept. Noch's own overlays (the notch, the glow, the HUD) are hidden for the
+  instant of the capture. The pictures live for the reply they were made for: they
+  are not restored when an old chat is reopened (the files stay in the folder).
+
+## Show thinking
+
+*Show thinking* (Settings, Buddy; on by default) controls how much of the work is
+shown while Buddy works: the tool steps, the draft as it is written, the model's
+reasoning and the steps drawer above an answer. Off gives a quiet bubble (three
+dots) that only shows the answer. Approvals and questions always show, because the
+run waits for them.
 
 ## Traces
 

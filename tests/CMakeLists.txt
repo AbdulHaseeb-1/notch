@@ -65,15 +65,29 @@ noch_add_unit_test(tst_voice
 noch_add_unit_test(tst_wakeword
     SOURCES tests/tst_wakeword.cpp
             src/voice/WakeWord.cpp src/voice/WakeWord.h
+            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
+            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h
             src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
             src/voice/VoiceInput.cpp src/voice/VoiceInput.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia
+    DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
+         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+
+noch_add_unit_test(tst_wakedetector
+    SOURCES tests/tst_wakedetector.cpp
+            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
+            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
+    LIBS Qt6::Core
+    DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
+         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
 
 noch_add_unit_test(tst_speechout
     SOURCES tests/tst_speechout.cpp
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h
             src/voice/WakeWord.cpp src/voice/WakeWord.h
+            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
+            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
             src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
             src/voice/VoiceInput.cpp src/voice/VoiceInput.h
     LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)

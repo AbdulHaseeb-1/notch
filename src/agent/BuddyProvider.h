@@ -77,6 +77,9 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowTodoTask READ allowTodoTask WRITE setAllowTodoTask NOTIFY agentConfigChanged)
     // Clarifying questions: Buddy may pause to ask a multiple-choice question.
     Q_PROPERTY(bool allowAskUser READ allowAskUser WRITE setAllowAskUser NOTIFY agentConfigChanged)
+    // Lets Buddy put a screenshot of the screen into the chat for the user to see
+    // (share_screenshot). The image stays on this computer: the model is only told it was shown.
+    Q_PROPERTY(bool allowScreenshots READ allowScreenshots WRITE setAllowScreenshots NOTIFY agentConfigChanged)
 
     // Live tool-execution telemetry & Anthropic Agent SDK response metadata for the UI
     // Permission mode: "default" | "acceptEdits" | "plan" | "bypass".
@@ -88,6 +91,10 @@ class BuddyProvider : public QObject
     // Streaming (SSE) replies: streamText is the answer text of the model
     // turn in flight, updated live (coalesced to ~25 fps, secrets redacted).
     Q_PROPERTY(bool streamReplies READ streamReplies WRITE setStreamReplies NOTIFY agentConfigChanged)
+    // Show what Buddy is doing while it works (tool steps, the draft as it is written,
+    // the model's reasoning). Off: a quiet bubble that only shows the answer; approvals
+    // and questions still appear, because the run waits on them.
+    Q_PROPERTY(bool showThinking READ showThinking WRITE setShowThinking NOTIFY agentConfigChanged)
     // Computer use with Anthropic's own tool definitions (the computer toolset
     // or, for older models, computer_20251124 / computer_20250124) instead of
     // Noch's function-style look-alike. Only the Anthropic provider can use
@@ -125,6 +132,8 @@ class BuddyProvider : public QObject
     Q_PROPERTY(QVariantList savedRules READ savedRules NOTIFY savedRulesChanged)
 
     Q_PROPERTY(QVariantList toolSteps READ toolSteps NOTIFY toolStepsChanged)
+    // Images Buddy put into this reply: [{ url, path, caption, width, height }].
+    Q_PROPERTY(QVariantList attachments READ attachments NOTIFY attachmentsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
     Q_PROPERTY(QString activeToolBadge READ activeToolBadge NOTIFY activeToolChanged)
     Q_PROPERTY(QString activeToolSummary READ activeToolSummary NOTIFY activeToolChanged)
@@ -174,6 +183,8 @@ public:
     void setAllowTodoTask(bool on);
     bool allowAskUser() const { return m_allowAskUser; }
     void setAllowAskUser(bool on);
+    bool allowScreenshots() const { return m_allowScreenshots; }
+    void setAllowScreenshots(bool on);
 
     QString permissionMode() const { return m_permissionMode; }
     void setPermissionMode(const QString &m);
@@ -185,6 +196,8 @@ public:
     void setKeepTraces(bool on);
     bool streamReplies() const { return m_streamReplies; }
     void setStreamReplies(bool on);
+    bool showThinking() const { return m_showThinking; }
+    void setShowThinking(bool on);
     QString streamText() const { return m_streamText; }
     bool streaming() const { return m_streamingNow; }
     bool handoffs() const { return m_handoffs; }
@@ -225,6 +238,7 @@ public:
     void setSavedRulesPath(const QString &path);
 
     QVariantList toolSteps() const { return m_toolSteps; }
+    QVariantList attachments() const { return m_attachments; }
     QString activeTool() const { return m_activeTool; }
     QString activeToolBadge() const { return m_activeToolBadge; }
     QString activeToolSummary() const { return m_activeToolSummary; }
@@ -302,6 +316,7 @@ signals:
     void agentConfigChanged();
 
     void toolStepsChanged();
+    void attachmentsChanged();
     void activeToolChanged();
     void responseMetaChanged();
     void agentTodosChanged();
@@ -362,6 +377,7 @@ private:
     bool m_allowAdvisor = true;
     bool m_allowTodoTask = true;
     bool m_allowAskUser = true;
+    bool m_allowScreenshots = true;
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
@@ -399,6 +415,7 @@ private:
     int m_deniedCalls = 0;
 
     QVariantList m_toolSteps;
+    QVariantList m_attachments;
     QString m_activeTool;
     QString m_activeToolBadge;
     QString m_activeToolSummary;
@@ -441,6 +458,7 @@ private:
     void onStreamReadyRead();
     void setStreamText(const QString &text, bool live);
     bool m_streamReplies = true;
+    bool m_showThinking = true;
     ComputerUse *m_computer = nullptr;
     bool m_computerAutoScreens = true;
     StreamAccumulator m_stream;
@@ -499,6 +517,9 @@ private:
     void onApprovalTick();
     void onQuestionTick();
     void executeAskUserTool(const PendingToolCall &call);
+    void executeScreenshotTool(const PendingToolCall &call);
+    QString saveScreenshot(const QImage &image, QString *error) const;
+    void addAttachment(const QVariantMap &attachment);
     int compactContext();
     bool scheduleRetry(int status, QNetworkReply::NetworkError err, const QByteArray &retryAfter);
     QString guardToolOutput(const PendingToolCall &call, const QString &output, bool *flagged) const;

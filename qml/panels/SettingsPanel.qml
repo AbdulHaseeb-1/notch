@@ -1138,6 +1138,15 @@ Item {
                         SettingsCardDivider {}
 
                         SettingsToggleRow {
+                            label: qsTr("Show thinking")
+                            sub: qsTr("Show what Buddy is doing while it works: the tool steps, the draft as it is written and its reasoning. Turn off for a quiet bubble that only shows the answer. Approvals and questions always show.")
+                            checked: panel.prefs.buddyShowThinking
+                            onToggled: (c) => panel.prefs.buddyShowThinking = c
+                        }
+
+                        SettingsCardDivider {}
+
+                        SettingsToggleRow {
                             label: qsTr("Real chat (AI provider)")
                             sub: panel.realChat
                                  ? qsTr("Questions go to %1 (%2). Local timers, app launch and plans still run directly.")
@@ -1648,6 +1657,16 @@ Item {
 
                         SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
 
+                        SettingsToggleRow {
+                            visible: panel.prefs.buddyAgentMode
+                            label: qsTr("Screenshots in chat")
+                            sub: qsTr("Buddy can show you a screenshot of your screen in the chat when you ask for one or want to see the result. The picture stays on this computer; Buddy is only told that it was shown. The newest 40 are kept in Noch's data folder.")
+                            checked: panel.prefs.buddyAllowScreenshots
+                            onToggled: (c) => panel.prefs.buddyAllowScreenshots = c
+                        }
+
+                        SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
+
                         Column {
                             visible: panel.prefs.buddyAgentMode
                             width: parent.width
@@ -1913,13 +1932,35 @@ Item {
                         SettingsToggleRow {
                             visible: panel.prefs.buddyVoiceEnabled
                             label: qsTr("Wake word")
-                            sub: qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is checked against the phrase by your speech service, then forgotten.")
+                            sub: Wake.detector === "speech"
+                                 ? qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is checked against the phrase by your speech service, then forgotten.")
+                                 : qsTr("Say “Hey Buddy” and Buddy starts listening, then does what you ask and reports back. The phrase is recognised on this computer; only the request after it is sent to your speech service. The microphone stays open while this is on (Windows shows its microphone icon).")
                             checked: panel.prefs.buddyWakeEnabled
                             onToggled: (c) => panel.prefs.buddyWakeEnabled = c
                         }
 
+                        SettingsLabeledSlider {
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
+                            label: qsTr("Sensitivity")
+                            decimals: 2
+                            // Left: strict (fewer false wake-ups). Right: easy (wakes on a quieter or less clear “Hey Buddy”).
+                            value: (0.9 - panel.prefs.buddyWakeThreshold) / 0.7
+                            onMoved: (v) => panel.prefs.buddyWakeThreshold = Math.round((0.9 - 0.7 * v) * 100) / 100
+                        }
+
+                        Flow {
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
+                            width: parent.width
+                            spacing: 8
+                            SettingsPillButton {
+                                icon: "folder"
+                                label: qsTr("Open models folder")
+                                onClicked: Wake.openModelFolder()
+                            }
+                        }
+
                         SettingsFieldBox {
-                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector === "speech"
                             width: parent.width
                             label: qsTr("Wake phrase")
                             placeholder: "hey buddy"
@@ -1929,7 +1970,7 @@ Item {
                         }
 
                         SettingsToggleRow {
-                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && !Voice.localService()
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector === "speech" && !Voice.localService()
                             label: qsTr("Allow sending everything it hears")
                             sub: qsTr("Your speech service is on the internet, so every sentence spoken near the microphone is sent there to check for the phrase. Nothing is kept by Noch, but your service may keep it. A speech service on this computer avoids this. Capped at 12 checks a minute.")
                             checked: panel.prefs.buddyWakeCloudOk
@@ -1941,10 +1982,24 @@ Item {
                             width: parent.width
                             text: Wake.blocked.length > 0 ? Wake.blocked
                                   : Wake.error.length > 0 ? Wake.error
-                                  : Wake.state === "listening" ? qsTr("Listening for “%1”.").arg(panel.prefs.buddyWakePhrase)
+                                  : Wake.state === "loading" ? qsTr("Starting the local detector…")
+                                  : Wake.state === "listening" ? (Wake.detector === "local"
+                                        ? qsTr("Listening for “Hey Buddy” on this computer.")
+                                        : qsTr("Listening for “%1”.").arg(panel.prefs.buddyWakePhrase))
                                   : Wake.state === "awaiting" ? qsTr("Heard it. Listening for your request…")
                                   : Wake.state === "paused" ? qsTr("Paused for a moment.") : ""
                             color: Wake.blocked.length > 0 || Wake.error.length > 0 ? Theme.warning : Theme.textDim
+                            font.family: Theme.font
+                            font.pixelSize: Theme.fontSm
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            // The local detector could not start: say why, and that the speech service is checking instead.
+                            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.localProblem.length > 0
+                            width: parent.width
+                            text: qsTr("Local detector unavailable: %1").arg(Wake.localProblem)
+                            color: Theme.warning
                             font.family: Theme.font
                             font.pixelSize: Theme.fontSm
                             wrapMode: Text.WordWrap

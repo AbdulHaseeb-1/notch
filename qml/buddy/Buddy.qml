@@ -1946,6 +1946,10 @@ Item {
             buddy.springing = true
             buddy.wake()
             dozeTimer.restart()
+            // Open the sound device now, so the click that follows does not
+            // stall the bubble's opening animation while it is created.
+            if (BuddySound)
+                BuddySound.prewarm()
         }
         onExited: buddy.springing = true
         onPressed: (mouse) => {

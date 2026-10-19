@@ -243,6 +243,10 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         return allow(QStringLiteral("safe-tool"));
     }
 
+    // Shows the user their own screen in the chat; the image never goes to the model.
+    if (tool == QLatin1String("share_screenshot"))
+        return allow(QStringLiteral("read-only"));
+
     // Sandboxed or read-only tools.
     if (tool == QLatin1String("memory") || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
             || tool == QLatin1String("tool_search") || tool.startsWith(QLatin1String("tool_search_tool"))

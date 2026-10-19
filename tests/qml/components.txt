@@ -1,3 +1,4 @@
 buddy/BuddyQuestionCard
 agent/ToolTraceBar
 panels/FocusTimer
+buddy/components/BuddyShot

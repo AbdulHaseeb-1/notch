@@ -314,6 +314,13 @@ public:
 
     static QString describe(const cu::ParsedAction &a);
     QImage captureDisplay();   // current display, physical resolution, overlays hidden
+    // A screenshot to show the USER (it is never sent to the model): full
+    // resolution, with Noch's own overlays hidden for the instant of the grab.
+    // `display` is 0-based, -1 for the one computer use is looking at (it is not
+    // switched). `done` gets a null image and a message if it cannot be taken.
+    void captureForUser(int display, std::function<void(const QImage &, const QString &)> done);
+    // The small preview used in the tool trace.
+    QString thumbnail(const QImage &image) const { return thumbnailFor(image); }
 
 signals:
     void stateChanged();
