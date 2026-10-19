@@ -33,9 +33,10 @@ Item {
     visible: opacity > 0.01 && width > 1
     Behavior on opacity { NumberAnimation { duration: 180 } }
 
-    // Smooth the ring between the timer's 200ms ticks.
-    property real shownRatio: timer ? timer.ratio : 0
-    Behavior on shownRatio { NumberAnimation { duration: 220; easing.type: Easing.Linear } }
+    // The ring moves a fraction of a pixel per second, so it follows the
+    // timer directly: smoothing it would keep an animation (and a full-window
+    // repaint) running for the whole session.
+    readonly property real shownRatio: timer ? timer.ratio : 0
 
     // Finished: the whole pill breathes until it is dismissed.
     property real pulse: 0

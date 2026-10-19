@@ -7,6 +7,8 @@ Rectangle {
     implicitHeight: innerCol.implicitHeight + 2 * Theme.sp4
     radius: Theme.radiusLg
     color: Theme.raised
+    border.width: 1
+    border.color: Theme.glassBorder
 
     Column {
         id: innerCol

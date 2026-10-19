@@ -23,6 +23,14 @@ Item {
     property real lastTrackMs: 0
     property int farSide: 0
     property bool solidRing: true
+    // ---- look & glow (Settings, Buddy, Look & glow) --------------------------
+    property string ringStyle: "neon"      // neon | aurora | comet | orbit | dashes | pulse | prism | halo
+    property real ringThickness: 1.0       // 0.5 .. 2
+    property real ringSpeed: 1.0           // 0.3 .. 2.5
+    property real glowStrength: 0.6        // 0 .. 1
+    property string glowMode: "bloom"      // bloom | floor | off
+    property bool glowAlways: false
+    property string voiceFx: "full"        // off | rings | wave | full
 
     // ---- state & mood -------------------------------------------------------
     property string session: "idle"      // idle | input | thinking | result
@@ -68,9 +76,43 @@ Item {
     // from the orb).
     property bool autoPopPending: true
 
+    // ---- listening and speaking, as seen on the orb -----------------------------
+    // The microphone is open for a request (held key, or the wake word was heard).
+    // Settings can show either animation for a few seconds (previewFx).
+    property string fxPreview: ""          // "" | listen | speak
+    property real fxDemoLevel: 0
+    function previewFx(kind) {
+        if (kind !== "listen" && kind !== "speak")
+            return
+        fxPreview = kind
+        fxPreviewTimer.restart()
+        setMood(kind === "listen" ? "listening" : "speaking", 4200)
+        hop(40)
+    }
+    Timer { id: fxPreviewTimer; interval: 4200; onTriggered: buddy.fxPreview = "" }
+    Timer {
+        interval: 60
+        repeat: true
+        running: buddy.fxPreview === "listen"
+        onTriggered: {
+            const t = Date.now()
+            buddy.fxDemoLevel = 0.18 + 0.5 * Math.abs(Math.sin(t / 260)) * (0.55 + 0.45 * Math.sin(t / 95))
+        }
+    }
+    readonly property bool micLive: Voice.listening || Wake.state === "awaiting" || fxPreview === "listen"
+    // Being typed to: a quieter version of the same attentiveness.
+    readonly property bool typingTo: session === "input" && !micLive
+    readonly property bool listenFxOn: voiceFx !== "off" && (micLive || typingTo)
+    readonly property bool speakFxOn: voiceFx !== "off" && (Speech.speaking || mood === "speaking" || fxPreview === "speak")
+    readonly property bool fxActive: listenFxOn || speakFxOn
+    // How much is going on, for the light the orb throws.
+    readonly property real glowActivity: Math.max(neon, micLive ? 0.9 : (typingTo ? 0.35 : 0),
+                                                  speakFxOn ? 0.85 : 0, busy ? 0.6 : 0)
     // Everything the click-through mask depends on, as one comparable string.
-    readonly property bool glowing: neon > 0.02 || busy || sparkAnim.running || burstAnim.running
-    readonly property string maskSig: [glowing, emoteChip.visible, Math.round(emoteChip.width),
+    readonly property bool glowing: neon > 0.02 || busy || sparkAnim.running || burstAnim.running || fxActive
+    // How far from the orb's rim the mask has to leave room for light.
+    readonly property real fxPad: glowMode !== "off" && (glowActivity > 0.05 || glowAlways) ? 36 * s : (fxActive ? 24 * s : 0)
+    readonly property string maskSig: [glowing, Math.round(fxPad), emoteChip.visible, Math.round(emoteChip.width),
                                        thought.maskSig].join("|")
 
     signal buddyMoved(real x, real y)
@@ -486,7 +528,7 @@ Item {
         const origin = mapToItem(item, 0, 0)
         // Room for the neon glow and sparkles only while they are showing,
         // so the orb doesn't swallow clicks around it the rest of the time.
-        const pad = glowing ? Math.round(24 * s) : 6
+        const pad = glowing ? Math.round(Math.max(24 * s, fxPad)) : (fxPad > 0 ? Math.round(fxPad) : 6)
         out.push({ x: Math.round(origin.x - pad), y: Math.round(origin.y - pad),
                    width: Math.round(width + 2 * pad), height: Math.round(height + 2 * pad),
                    radius: Math.round(Math.min(width, height) / 2 + pad) })
@@ -693,12 +735,15 @@ Item {
         }
     }
 
-    // VSync-locked FrameAnimation runs while eyes or expressions are active.
+    // VSync-locked FrameAnimation runs while eyes or expressions are moving.
+    // `springing` is raised by everything that changes the face (setMood, hop,
+    // cursor movement, hover) and dropped once the spring settles. A resting
+    // mood such as "sleepy" must NOT keep the loop alive: the notch window is
+    // as large as the screen, so every frame repaints all of it.
     FrameAnimation {
         id: gazeSpring
         running: buddy.visible && !buddy.motionPaused
-                 && (buddy.springing || buddy.session !== "idle" || buddy.busy
-                     || buddy.mood !== "neutral" || buddyHit.containsMouse)
+                 && (buddy.springing || buddy.session !== "idle" || buddy.busy)
         onTriggered: {
             const dt = Math.min(0.033, Math.max(0.004, frameTime))
             buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
@@ -786,6 +831,23 @@ Item {
     onBlinkShutChanged: computeEyePoses()
     onSChanged: computeEyePoses()
 
+    // ---- the light the orb throws (a bloom, or a pool on the floor) ---------------
+    BuddyGlow {
+        id: orbGlow
+        x: orb.x + orb.width / 2 - width / 2
+        y: orb.y + orb.height / 2 - height / 2
+        width: reach * 2
+        height: width
+        orbRadius: buddy.orbRadius
+        s: buddy.s
+        stops: buddy.ringColors
+        mode: buddy.glowMode
+        strength: buddy.glowStrength
+        activity: buddy.glowActivity
+        always: buddy.glowAlways
+        running: buddy.visible && !buddy.motionPaused
+    }
+
     // ---- ambient aura / thinking & speaking halo ----------------------------
     Rectangle {
         id: auraRing
@@ -830,17 +892,6 @@ Item {
             origin.y: orb.height / 2
             xScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashX
             yScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashY
-        }
-
-        // Subtle inner top-rim highlight so the sphere feels tactile and 3D
-        Rectangle {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: Math.round(3 * buddy.s)
-            width: Math.round(parent.width * 0.54)
-            height: Math.round(parent.height * 0.22)
-            radius: height / 2
-            color: "#ffffff"
-            opacity: 0.055
         }
 
         // left eye
@@ -958,37 +1009,48 @@ Item {
             yScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashY
         }
 
-        Item {
+        BuddyRing {
             anchors.fill: parent
-            // Turning the finished rings is only a transform; their geometry
-            // is never rebuilt while they spin.
-            NumberAnimation on rotation {
-                from: 0
-                to: 360
-                duration: buddy.mo < 1 ? 9000 : 3600
-                loops: Animation.Infinite
-                running: neonHalo.visible && !buddy.motionPaused
-            }
-
-            // Glow: progressively wider, fainter strokes on the same centre line.
-            Repeater {
-                model: [{ w: 15, o: 0.06 }, { w: 9.5, o: 0.12 }, { w: 5.5, o: 0.26 }]
-                BuddyNeonRing {
-                    required property var modelData
-                    anchors.fill: parent
-                    midR: buddy.orbRadius + 0.6 * buddy.s
-                    thickness: modelData.w * buddy.s
-                    stops: buddy.ringColors
-                    opacity: modelData.o
-                }
-            }
-            BuddyNeonRing {
-                anchors.fill: parent
-                midR: buddy.orbRadius + 0.6 * buddy.s
-                thickness: Math.max(1.6, 2.4 * buddy.s)
-                stops: buddy.ringColors
-            }
+            style: buddy.ringStyle
+            midR: buddy.orbRadius + 0.6 * buddy.s
+            thickness: Math.max(1.6, 2.4 * buddy.s * buddy.ringThickness)
+            s: buddy.s
+            stops: buddy.ringColors
+            speed: buddy.ringSpeed * (buddy.mo < 1 ? 0.4 : (buddy.busy ? 1.15 : 1))
+            glow: 0.6 + buddy.glowStrength
+            running: neonHalo.visible && !buddy.motionPaused
         }
+    }
+
+    // ---- listening and speaking ------------------------------------------------------
+    BuddyListenFx {
+        x: orb.x + orb.width / 2
+        y: orb.y + orb.height / 2
+        width: 0
+        height: 0
+        orbRadius: buddy.orbRadius
+        s: buddy.s
+        stops: buddy.ringColors
+        active: buddy.listenFxOn
+        mic: buddy.micLive
+        level: buddy.fxPreview === "listen" ? buddy.fxDemoLevel : Voice.level
+        showRings: buddy.voiceFx === "rings" || buddy.voiceFx === "full"
+        showWave: buddy.voiceFx === "wave" || buddy.voiceFx === "full"
+        calm: buddy.mo
+    }
+    BuddySpeakFx {
+        x: orb.x + orb.width / 2
+        y: orb.y + orb.height / 2
+        width: 0
+        height: 0
+        orbRadius: buddy.orbRadius
+        s: buddy.s
+        stops: buddy.ringColors
+        active: buddy.speakFxOn
+        energy: -1
+        showBars: buddy.voiceFx === "wave" || buddy.voiceFx === "full"
+        showRings: buddy.voiceFx === "rings" || buddy.voiceFx === "full"
+        calm: buddy.mo
     }
 
     // One ripple of the ring travelling outward (answer arrived, petted, set down).
@@ -1533,7 +1595,8 @@ Item {
                 return
             }
         }
-        spokenRun = voiceStarted
+        // Spoken back when asked for by voice, or always when "read every answer" is on.
+        spokenRun = voiceStarted || Speech.speakAll
         lastRequest = trimmed
         forgetAnswer()
         autoPopPending = true
@@ -1942,7 +2005,12 @@ Item {
             buddy.springing = true
             buddy.wake()
             dozeTimer.restart()
+            // Open the sound device now, so the click that follows does not
+            // stall the bubble's opening animation while it is created.
+            if (BuddySound)
+                BuddySound.prewarm()
         }
+        onExited: buddy.springing = true
         onPressed: (mouse) => {
             buddy.wake()
             dozeTimer.restart()

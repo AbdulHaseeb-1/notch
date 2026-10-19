@@ -80,6 +80,7 @@ private:
     QVariantList m_appsCache;
     QStringList m_running;
     QTimer m_pollTimer;
+    bool m_pollBusy = false;   // GUI thread only: a snapshot is still being taken
 
     mutable QMutex m_iconMutex;
     QHash<QString, QString> m_iconIndex; // iconId -> icon file

@@ -123,7 +123,7 @@ MediaHub::MediaHub(MusicPlayer *player, SmtcMedia *smtc, AudioDevices *audio,
             if (now - m_lastLocalPositionEmit < 200)
                 return;
             m_lastLocalPositionEmit = now;
-            emit changed();
+            emit positionChanged();
         });
         connect(m_player, &MusicPlayer::durationChanged, this, &MediaHub::refresh);
         connect(m_player, &MusicPlayer::coverChanged, this, &MediaHub::refresh);
@@ -150,7 +150,7 @@ MediaHub::MediaHub(MusicPlayer *player, SmtcMedia *smtc, AudioDevices *audio,
             if (now - m_lastSystemPositionEmit < 200)
                 return;
             m_lastSystemPositionEmit = now;
-            emit changed();
+            emit positionChanged();
         });
     }
     if (m_audio) {
@@ -428,10 +428,16 @@ void MediaHub::updateVisuals()
     emit visualsChanged();
 }
 
+void MediaHub::emitChanged()
+{
+    emit changed();
+    emit positionChanged();
+}
+
 void MediaHub::refresh()
 {
     updateVisuals();
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::toggle()
@@ -446,7 +452,7 @@ void MediaHub::toggle()
     } else if (m_smtc) {
         m_smtc->toggle();
     }
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::next()
@@ -459,7 +465,7 @@ void MediaHub::next()
         m_lastActive = QStringLiteral("local");
         m_player->next();
     }
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::previous()
@@ -472,7 +478,7 @@ void MediaHub::previous()
         m_lastActive = QStringLiteral("local");
         m_player->previous();
     }
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::seek(qint64 ms)
@@ -485,7 +491,7 @@ void MediaHub::seek(qint64 ms)
     } else if (m_player) {
         m_player->seek(ms);
     }
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::toggleShuffle()
@@ -495,7 +501,7 @@ void MediaHub::toggleShuffle()
     } else if (m_player) {
         m_player->setShuffle(!m_player->shuffle());
     }
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::cycleRepeat()
@@ -505,7 +511,7 @@ void MediaHub::cycleRepeat()
     } else if (m_player) {
         m_player->cycleRepeat();
     }
-    emit changed();
+    emitChanged();
 }
 
 void MediaHub::setVolume(qreal vol)

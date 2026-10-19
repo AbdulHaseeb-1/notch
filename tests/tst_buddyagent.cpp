@@ -1571,6 +1571,108 @@ private slots:
                                      QJsonObject{ { "label", "Word" } } } } } } } };
     }
 
+    // ---- screenshots in the chat (share_screenshot) -----------------------------
+
+    QJsonObject toolNamed(const char *name) {
+        for (const QJsonValue &t : fake->requests.first().value("tools").toArray())
+            if (t.toObject().value("name").toString() == QLatin1String(name))
+                return t.toObject();
+        return {};
+    }
+
+    void aScreenshotIsShownToTheUserAndNotSentToTheModel() {
+        useSimulatedComputer();
+        fake->queue = { { 200, toolUseNamed("s1", "share_screenshot", QJsonObject{ { "caption", "your desktop" } }) },
+                        { 200, text("Here it is.") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy shown(bp, &BuddyProvider::attachmentsChanged);
+        bp->sendMessage("show me my screen");
+        QVERIFY(ready.wait(8000));
+        QVERIFY(bp->pendingApproval().isEmpty());          // seeing your own screen needs no approval
+        QCOMPARE(shown.count(), 1);
+        const QVariantList shots = bp->attachments();
+        QCOMPARE(shots.size(), 1);
+        const QVariantMap shot = shots.first().toMap();
+        QCOMPARE(shot.value("caption").toString(), QStringLiteral("your desktop"));
+        QVERIFY(shot.value("url").toString().startsWith("file:"));
+        QVERIFY(shot.value("width").toInt() > 0 && shot.value("height").toInt() > 0);
+        QVERIFY(QFileInfo::exists(shot.value("path").toString()));
+        QVERIFY(shot.value("path").toString().contains("screenshots"));
+        QCOMPARE(bp->toolSteps().first().toMap().value("status").toString(), QStringLiteral("done"));
+        QCOMPARE(bp->toolSteps().first().toMap().value("policy").toString(), QStringLiteral("read-only"));
+        QVERIFY(bp->toolSteps().first().toMap().value("thumbnail").toString().startsWith("data:image/jpeg"));
+        // The model got a confirmation, never the picture.
+        const QByteArray req2 = QJsonDocument(fake->requests.at(1)).toJson(QJsonDocument::Compact);
+        QVERIFY(!req2.contains("\"type\":\"image\""));
+        const QString result = lastToolResults(fake->requests).first().toObject().value("content").toString();
+        QVERIFY2(result.contains("shown to the user"), qPrintable(result));
+    }
+
+    void aNewRequestStartsWithNoScreenshots() {
+        useSimulatedComputer();
+        fake->queue = { { 200, toolUseNamed("s1", "share_screenshot", QJsonObject{}) }, { 200, text("one") }, { 200, text("two") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("screenshot please");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(bp->attachments().size(), 1);
+        bp->sendMessage("thanks");
+        QCOMPARE(bp->attachments().size(), 0);
+        QVERIFY(ready.wait(8000));
+    }
+
+    void onlyTheNewestScreenshotsAreKept() {
+        useSimulatedComputer();
+        QDir shots(QDir(userData.path()).filePath("screenshots"));
+        QDir().mkpath(shots.path());
+        for (int i = 0; i < 45; ++i) {
+            QFile f(shots.filePath(QStringLiteral("shot-2000%1.png").arg(i, 4, 10, QLatin1Char('0'))));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("x");
+            f.close();
+            f.setFileTime(QDateTime::currentDateTime().addSecs(-1000 + i), QFileDevice::FileModificationTime);
+        }
+        fake->queue = { { 200, toolUseNamed("s1", "share_screenshot", QJsonObject{}) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("screenshot");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(shots.entryList({ "shot-*.png" }, QDir::Files).size(), 40);
+        QVERIFY(QFileInfo::exists(bp->attachments().first().toMap().value("path").toString()));   // the new one survived
+    }
+
+    void screenshotsCanBeSwitchedOff() {
+        useSimulatedComputer();
+        bp->setAllowScreenshots(false);
+        fake->queue = { { 200, toolUseNamed("s1", "share_screenshot", QJsonObject{}) }, { 200, text("no") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("screenshot");
+        QVERIFY(ready.wait(8000));
+        QVERIFY(toolNamed("share_screenshot").isEmpty());          // not even offered
+        QCOMPARE(bp->attachments().size(), 0);
+        QVERIFY(lastToolResults(fake->requests).first().toObject().value("is_error").toBool());
+    }
+
+    void theScreenshotToolIsOfferedByDefault() {
+        useSimulatedComputer();
+        fake->queue = { { 200, text("hi") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        const QJsonObject t = toolNamed("share_screenshot");
+        QVERIFY(!t.isEmpty());
+        QVERIFY(t.value("input_schema").toObject().value("properties").toObject().contains("caption"));
+        QVERIFY(t.value("description").toString().contains("only get a confirmation"));
+    }
+
+    void showThinkingIsASetting() {
+        QVERIFY(bp->showThinking());                  // on by default
+        QSignalSpy changed(bp, &BuddyProvider::agentConfigChanged);
+        bp->setShowThinking(false);
+        QVERIFY(!bp->showThinking());
+        QCOMPARE(changed.count(), 1);
+        bp->setShowThinking(false);
+        QCOMPARE(changed.count(), 1);                  // no change, no signal
+    }
+
     void questionPausesTheRunAndTheAnswerGoesBackToTheModel() {
         fake->queue = { { 200, toolUseNamed("q1", "ask_user_question", twoOptionQuestion()) }, { 200, text("Making a Word file.") } };
         QSignalSpy ready(bp, &BuddyProvider::responseReady);

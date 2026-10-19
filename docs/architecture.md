@@ -161,3 +161,25 @@ ctest --test-dir build-tests --output-on-failure
 7. Build and run the tests before committing; QML is compiled into the
    executable, so a successful build catches syntax errors but a quick app
    launch is still the right smoke test for runtime type resolution.
+
+## Keeping it smooth
+
+The notch window is as large as the screen, so Qt Quick repaints all of it
+whenever anything inside it changes. The rule that follows: nothing may keep
+animating, or keep writing a property that something paints, while it is idle.
+
+- A long-lived state (a resting mood, music playing, a running timer) must not
+  hold a per-frame animation open. Drive it with a slow `Timer` and let the
+  result step, or let the value follow its source directly. The Buddy frame loop
+  runs only while `springing` is set, the focus timer publishes once a second,
+  and the music pill's level bars step about nine times a second.
+- Never bind a gradient stop colour to a value that animates: Qt builds and
+  caches a new gradient texture for every distinct colour. Keep the stops fixed
+  and animate `opacity` instead (see `qml/agent/AgentGlow.qml`).
+- Pure transforms and fades (`rotation`, `scale`, `opacity`) belong in
+  `RotationAnimator`, `ScaleAnimator` and `OpacityAnimator`, which run on the
+  render thread.
+- A C++ property that changes several times a second needs its own `NOTIFY`
+  signal. Sharing a catch-all signal re-evaluates every binding on that object
+  (`MediaHub::position` has `positionChanged`, separate from `changed`).
+- Run no more than one background snapshot at a time behind a timer.

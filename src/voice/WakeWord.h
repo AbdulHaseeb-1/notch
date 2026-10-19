@@ -3,34 +3,38 @@
 #include <QByteArray>
 #include <QHash>
 #include <QList>
-#include <QNetworkReply>
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QThread>
 #include <QTimer>
+
+#include <atomic>
 
 #include <memory>
 
 #include "VoiceInput.h"
+
+class WakeWorker;
 
 // Wake word for Buddy: say the phrase (default "hey buddy"), optionally followed
 // by what you want ("hey buddy, open notepad"), and Buddy listens and does it.
 //
 // How it works, and what that means for privacy (this is an open microphone):
 //  * off until the user turns it on, and it needs Voice input set up first;
-//  * while on, the microphone is open and a small local detector cuts the sound
-//    into utterances; silence and noise never leave the computer;
-//  * every utterance is sent to the speech-to-text service to check for the wake
-//    phrase, because there is no local keyword model. So with a service on the
-//    internet it sends EVERYTHING said near the microphone there; it therefore
-//    refuses to run against a non-local service until the user has explicitly
-//    allowed that (allowCloud). A speech service on this computer needs no consent;
+//  * the phrase is found on this computer: an openWakeWord model (WakeDetector,
+//    "Hey Buddy" ships with Noch) listens to the microphone through ONNX
+//    Runtime. Nothing is sent anywhere, ever: once the phrase is heard, the request
+//    that follows is transcribed on this computer too (Moonshine Tiny);
+//  * without ONNX Runtime or the wake model it falls back to the older method:
+//    the sound is cut into utterances locally and each one is transcribed (also
+//    on this computer) and compared with the phrase;
 //  * what is heard is only compared with the phrase and then dropped: it is not
 //    stored, logged or shown unless the phrase was said at the start of it;
 //  * an utterance is only a wake-up when the phrase is at its very start
 //    (optionally after "hey"/"ok"), so the word in passing conversation does nothing;
-//  * the number of utterances checked per minute is capped, and a failing service
-//    closes the microphone and backs off instead of hammering it;
+//  * a transcriber that fails closes the microphone until the settings change,
+//    instead of retrying forever;
 //  * it pauses while push-to-talk is in use and while Buddy speaks;
 //  * what it hears becomes an ordinary request: every tool still goes through the
 //    permission gate and its approvals.
@@ -109,23 +113,27 @@ class WakeWord : public QObject
     Q_OBJECT
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY configChanged)
     Q_PROPERTY(QString phrase READ phrase WRITE setPhrase NOTIFY configChanged)
-    // Sending everything heard to a speech service on the internet needs a yes.
-    Q_PROPERTY(bool allowCloud READ allowCloud WRITE setAllowCloud NOTIFY configChanged)
     // "" when it can run (or is off), else why it cannot.
     Q_PROPERTY(QString blocked READ blockedReason NOTIFY configChanged)
-    // "off" | "blocked" | "paused" | "listening" | "awaiting" (the phrase was heard; what next?)
+    // "off" | "blocked" | "loading" | "paused" | "listening" | "awaiting" (the phrase was heard; what next?)
     Q_PROPERTY(QString state READ state NOTIFY stateChanged)
+    // How the phrase is found: "local" (openWakeWord model), "loading" (still starting
+    // it) or "speech" (each sentence is transcribed and compared with the phrase).
+    Q_PROPERTY(QString detector READ detector NOTIFY detectorChanged)
+    // Why the local detector is not in use ("" when it is, or while it starts).
+    Q_PROPERTY(QString localProblem READ localProblem NOTIFY detectorChanged)
+    // Where models can be dropped in to replace the bundled "Hey Buddy".
+    Q_PROPERTY(QString modelFolder READ modelFolder CONSTANT)
+    // How sure the model has to be, 0.2 (easily woken) .. 0.9 (strict). 0.5 is the model's own default.
+    Q_PROPERTY(double threshold READ threshold WRITE setThreshold NOTIFY configChanged)
     // True whenever the microphone is open for this: show it, always.
     Q_PROPERTY(bool active READ active NOTIFY stateChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
 
 public:
-    static constexpr int kMaxChecksPerMinute = 12;
     static constexpr int kCooldownMs = 1500;
     static constexpr int kAwaitStartMs = 7000;     // how long to wait for the command after the phrase alone
     static constexpr int kMaxCommandChars = 2000;
-    static constexpr int kBackoffBaseSec = 10;     // doubles per failure, up to kBackoffMaxSec
-    static constexpr int kBackoffMaxSec = 300;
 
     explicit WakeWord(VoiceInput *voice, QObject *parent = nullptr);
     ~WakeWord() override;
@@ -134,11 +142,17 @@ public:
     void setEnabled(bool on);
     QString phrase() const { return m_phrase; }
     void setPhrase(const QString &phrase);
-    bool allowCloud() const { return m_allowCloud; }
-    void setAllowCloud(bool on);
     Q_INVOKABLE QString blockedReason() const;
 
     QString state() const;
+    QString detector() const;
+    QString localProblem() const { return m_localError; }
+    QString modelFolder() const { return m_modelFolder; }
+    double threshold() const { return m_threshold; }
+    void setThreshold(double t);
+    // Tests point this at a folder of models (the shipped ones are read from the resources).
+    void setModelFolder(const QString &folder);
+    Q_INVOKABLE void openModelFolder() const;
     bool active() const { return m_micOpen; }
     QString error() const { return m_error; }
 
@@ -153,7 +167,6 @@ public:
     void setSegmenterConfig(const wake::SegmenterConfig &config) { m_listenConfig = config; m_segmenter.setConfig(config); }
     void setAwaitStartMs(int ms) { m_awaitStartMs = qMax(10, ms); }
     void setCooldownMs(int ms) { m_cooldownMs = qMax(0, ms); }
-    void setBackoffBaseSeconds(int s) { m_backoffBaseSec = qMax(1, s); }
     int droppedUtterances() const { return m_dropped; }
     int checkedUtterances() const { return m_checked; }
 
@@ -169,9 +182,23 @@ signals:
     void stateChanged();
     void configChanged();
     void errorChanged();
+    void detectorChanged();
 
 private:
     enum class Mode { Listening, Awaiting };
+    enum class Local { Untried, Loading, Ready, Failed };
+
+    // The local detector (WakeDetector on a worker thread).
+    bool localWanted() const;          // models are there to try
+    bool usingLocal() const;           // local, and not known to be broken
+    void startLocal();
+    void stopLocal();
+    void onWorkerReady(bool ok, const QString &error);
+    void onWorkerScore(float best, quint64 generation);
+    void feedLocal(const QByteArray &pcm);
+    void resetLocalDetector();
+    void setLocalState(Local state, const QString &error = QString());
+
     void refresh();
     bool shouldListen() const;
     bool openMic();
@@ -185,18 +212,14 @@ private:
     void enterAwaiting();
     void leaveAwaiting();
     void fail(const QString &message);
-    bool underRateLimit();
 
     VoiceInput *m_voice;
     std::unique_ptr<AudioCapture> m_capture;
     wake::Segmenter m_segmenter;
     wake::SegmenterConfig m_listenConfig;
     QTimer m_awaitTimer;
-    QTimer m_backoffTimer;
-    QPointer<QNetworkReply> m_reply;
-    QList<qint64> m_checkTimes;
+    quint64 m_ticket = 0;           // the transcription in flight (0: none)
     bool m_enabled = false;
-    bool m_allowCloud = false;
     bool m_paused = false;
     bool m_micOpen = false;
     Mode m_mode = Mode::Listening;
@@ -206,11 +229,20 @@ private:
     qint64 m_lastCommandMs = 0;
     int m_awaitStartMs = kAwaitStartMs;
     int m_cooldownMs = kCooldownMs;
-    int m_backoffBaseSec = kBackoffBaseSec;
-    int m_failures = 0;
-    bool m_backingOff = false;
-    bool m_halted = false;          // stopped until the settings change (refused key, no microphone)
+    bool m_halted = false;          // stopped until the settings change (the model will not load, no microphone)
     QString m_lastState;
+
+    QString m_modelFolder;
+    double m_threshold = 0.5;
+    Local m_local = Local::Untried;
+    QString m_localError;
+    QThread m_workerThread;
+    WakeWorker *m_worker = nullptr;
+    QByteArray m_localBuf;          // microphone audio waiting for a whole 80 ms step
+    quint64 m_detGeneration = 0;    // scores from before the last reset are stale
+    std::atomic<int> m_inflight{0}; // audio batches handed to the worker and not scored yet
+    qint64 m_lastWakeMs = 0;
+    mutable int m_localWantedCache = -1;   // -1: not looked yet
     int m_dropped = 0;
     int m_checked = 0;
 };

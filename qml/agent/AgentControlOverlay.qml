@@ -39,6 +39,7 @@ Item {
             targetScreen: modelData
             engaged: overlay.engaged && AgentControl.showGlow && !overlay.hiddenForShot
             intensity: AgentControl.glowIntensity
+            style: AgentControl.glowStyle
         }
     }
 

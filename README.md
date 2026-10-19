@@ -53,6 +53,15 @@ your apps, tucks itself away and drops back down when you need it.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
   focused). Esc or clicking elsewhere closes it. **Blur behind (beta)** blurs the desktop behind the
   glass (see below); it is off by default.
+  Settings has a sidebar of categories (General, Apps, Buddy, Look & glow,
+  Voice, AI model, Agent & tools, Safety) with a search box that narrows them
+  by what they contain (Ctrl + F), and Ctrl + Tab or Ctrl + 1..8 to move between them.
+- **Look & glow** - Buddy's ring comes in eight styles (Neon, Aurora, Comet, Orbit,
+  Beads, Pulse, Prism, Halo) with thickness, speed and colour, plus a coloured
+  glow or a pool of light under it. It shows when it is listening (a ribbon of
+  waves that follows your voice, rings of sound drawing in) and when it speaks (a
+  crown of bars and rings going out). The edge glow shown while Buddy controls the
+  computer has five styles. Everything is in Settings, Look & glow.
 - **Launch at startup** - the Settings page can add Noch to the Windows start-up
   list; it starts tucked, showing the sliver until you hover it.
 
@@ -157,7 +166,8 @@ imports and type names stay unchanged. `CMakeLists.txt` sets this up with
 | Area | Key entry points |
 | --- | --- |
 | Notch shell | `qml/Main.qml`, `qml/components/{Glass,Flyout,DockItem,StatusBlock}.qml` |
-| Settings | `qml/panels/SettingsPanel.qml`, `qml/panels/settings/*`, `qml/flyouts/SettingsFlyout.qml` |
+| Settings | `qml/panels/SettingsPanel.qml` (sidebar shell), `qml/panels/settings/*` (controls), `qml/panels/settings/pages/*` (one file per page), `qml/flyouts/SettingsFlyout.qml` |
+| Buddy ring, glow, listening and speaking | `qml/buddy/fx/*` |
 | Hub | `qml/panels/{HubPanel,FocusTimer,TimerView,TimerPill,ClipboardView}.qml` |
 | Music | `qml/panels/{MusicPanel,NowPlaying}.qml`, `qml/flyouts/MusicFlyout.qml` |
 | Palette | `qml/panels/PaletteCard.qml`, `qml/flyouts/PaletteFlyout.qml` |
@@ -201,11 +211,17 @@ compaction, loop guard, cancel during an approval, streamed text and tool
 calls, cancel mid-stream, stream error and truncation retries, specialist
 handoffs and their toolsets, session memory, and the per-run memory index.
 `tst_computeruse` covers the computer-use actions, screenshot scaling, held keys
-and the simulated backend. `tst_wakeword` (82 tests: phrase matching, utterance detection, consent, rate limit, pausing, back-off) and `tst_speechout`
-cover the wake word and spoken reports. `tst_userquestions`, `tst_runjournal`,
+and the simulated backend. `tst_wakeword` (phrase matching, utterance detection,
+pausing, failure handling, and the local detector's whole flow with a fake
+microphone and a fake speech engine), `tst_wakedetector` (the openWakeWord
+pipeline against the reference implementation's scores; needs ONNX Runtime, set
+`NOCH_ORT_LIBRARY` to its path, skipped otherwise) and `tst_moonshine` (the real Moonshine Tiny model on recorded speech; needs ONNX Runtime
+and the model files, set `NOCH_ORT_LIBRARY` and `NOCH_MOONSHINE_DIR`, skipped otherwise)
+and `tst_speechout` (system, Google Cloud and Kokoro voices against a fake server) cover the
+wake word, transcription and spoken reports. `tst_userquestions`, `tst_runjournal`,
 `tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
 the question, undo, saved-rule, instruction/slash-command, chat-session and voice
-modules (the last one with a fake microphone and a fake speech server).
+modules (the last one with a fake microphone and a fake speech engine).
 `tst_buddyagent` also drives the official computer toolset and its fallbacks,
 batch trimming and cache markers, questions, undo, saved rules and session
 summaries. `tst_qml` (needs `qmltestrunner`; skipped otherwise) runs the QML

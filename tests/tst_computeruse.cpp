@@ -643,6 +643,19 @@ private slots:
         QVERIFY(img.loadFromData(QByteArray::fromBase64(shot.imageBase64.toLatin1()), "PNG"));
         QCOMPARE(img.size(), QSize(1280, 800));
     }
+
+    void glowStyleIsOneOfTheKnownOnes() {
+        ComputerUse c;
+        QCOMPARE(c.glowStyle(), QStringLiteral("soft"));
+        QSignalSpy changed(&c, &ComputerUse::settingsChanged);
+        c.setGlowStyle(QStringLiteral("aurora"));
+        QCOMPARE(c.glowStyle(), QStringLiteral("aurora"));
+        QCOMPARE(changed.count(), 1);
+        c.setGlowStyle(QStringLiteral("aurora"));          // unchanged: no signal
+        QCOMPARE(changed.count(), 1);
+        c.setGlowStyle(QStringLiteral("not a style"));     // falls back rather than storing junk
+        QCOMPARE(c.glowStyle(), QStringLiteral("soft"));
+    }
 };
 
 QTEST_MAIN(TstComputerUse)

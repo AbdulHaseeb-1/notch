@@ -671,6 +671,12 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
             return;
         }
         executeTodoTaskTool(call);
+    } else if (call.name == QLatin1String("share_screenshot")) {
+        if (!m_allowScreenshots) {
+            finishCurrentToolCall(call, QStringLiteral("Error: sending screenshots is disabled in Settings > Buddy."), QString(), true);
+            return;
+        }
+        executeScreenshotTool(call);
     } else if (call.name == QLatin1String("ask_user_question")) {
         if (!m_allowAskUser) {
             finishCurrentToolCall(call, QStringLiteral("Error: asking questions is disabled in Settings > Buddy. Make a reasonable assumption and say so."), QString(), true);

@@ -11,7 +11,7 @@ Item {
     property int minutes: 25                    // chosen length
     property bool running: false
     property bool finished: false
-    // Plain state, not a binding: ticks write it every 200 ms, so any initial
+    // Plain state, not a binding: ticks write it every second, so any initial
     // binding would be destroyed on first write anyway.
     property real remainingMs: minutes * 60000
     property bool started: false                // a session exists (running or paused part-way)
@@ -80,16 +80,22 @@ Item {
         }
     }
 
+    // The label and the progress rings only change when the shown second
+    // does, so publish the remaining time at that rate. Writing it every tick
+    // re-rendered the notch window (as large as the screen) five times a second.
     Timer {
-        interval: 200
+        interval: 250
         running: ft.running
         repeat: true
         onTriggered: {
-            ft.remainingMs = Math.max(0, ft.endAt - Date.now())
-            if (ft.remainingMs <= 0) {
+            const left = Math.max(0, ft.endAt - Date.now())
+            if (left <= 0) {
+                ft.remainingMs = 0
                 ft.running = false
                 ft.finished = true
                 ft.done()
+            } else if (Math.ceil(left / 1000) !== ft.secondsLeft) {
+                ft.remainingMs = left
             }
         }
     }

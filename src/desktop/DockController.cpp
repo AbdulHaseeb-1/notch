@@ -608,13 +608,17 @@ void DockController::setLaunchAtStartup(bool enabled)
 void DockController::pollRunning()
 {
     // The snapshot of every process on the machine lives on a background
-    // thread; the GUI thread only receives the finished list.
+    // thread; the GUI thread only receives the finished list. One at a time:
+    // a slow snapshot must not pile up threads behind the timer.
+    if (m_pollBusy)
+        return;
     QStringList wanted;
     for (const App &app : std::as_const(m_apps)) {
         if (!app.exe.isEmpty())
             wanted.append(app.exe);
     }
 
+    m_pollBusy = true;
     auto *thread = QThread::create([this, wanted] {
         QStringList found;
 #ifdef Q_OS_WIN
@@ -637,6 +641,7 @@ void DockController::pollRunning()
 #endif
         found.sort();
         QMetaObject::invokeMethod(this, [this, found] {
+            m_pollBusy = false;
             if (found != m_running) {
                 m_running = found;
                 emit runningChanged();

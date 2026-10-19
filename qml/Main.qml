@@ -38,6 +38,14 @@ Window {
         property bool suppressInFullscreen: true
         property bool buddyEnabled: true
         property bool buddySolidRing: true
+        // ---- Look & glow --------------------------------------------------------
+        property string buddyRingStyle: "neon"
+        property real buddyRingThickness: 1.0
+        property real buddyRingSpeed: 1.0
+        property real buddyGlowStrength: 0.6
+        property string buddyGlowMode: "bloom"
+        property bool buddyGlowAlways: false
+        property string buddyVoiceFx: "full"
         property real buddyX: -1
         property real buddyY: -1
         property string buddyPlan: ""
@@ -61,6 +69,7 @@ Window {
         property bool buddyCuShowCursor: true
         property bool buddyCuShowGlow: true
         property real buddyCuGlowIntensity: 0.6
+        property string buddyCuGlowStyle: "soft"
         property bool buddyAllowEditor: true
         property bool buddyAllowCodeSearch: true
         property bool buddyAllowMemory: true
@@ -75,21 +84,27 @@ Window {
         property string buddyComputerDetail: "sharp"
         property int buddyMaxSteps: 40
         property bool buddyAllowAskUser: true
+        property bool buddyAllowScreenshots: true
         // ---- Push-to-talk voice (off until the user adds a speech service) --
         property bool buddyVoiceEnabled: false
         property bool buddyVoiceHotkey: true
-        property string buddyVoiceBase: "https://api.openai.com/v1"
-        property string buddyVoiceKey: ""
-        property string buddyVoiceModel: "whisper-1"
-        property string buddyVoiceLanguage: ""
         property bool buddyVoiceAutoSend: false
         // ---- Wake word ("hey buddy"): off until switched on ------------------
         property bool buddyWakeEnabled: false
         property string buddyWakePhrase: "hey buddy"
         // Everything the microphone hears is sent to the speech service to check
         // for the phrase: a service on the internet needs this explicit yes.
-        property bool buddyWakeCloudOk: false
+        // How sure the local model has to be (0.2 easy .. 0.9 strict); 0.5 is its own default.
+        property real buddyWakeThreshold: 0.5
         property bool buddySpeakReports: false
+        // ---- Spoken answers: "system" | "google" | "kokoro" -------------------
+        property string buddyTtsEngine: "system"
+        property string buddyTtsGoogleKey: ""
+        property string buddyTtsGoogleVoice: "en-US-Neural2-F"
+        property string buddyTtsKokoroBase: "http://127.0.0.1:8880"
+        property string buddyTtsKokoroVoice: "af_heart"
+        property real buddyTtsSpeed: 1.0
+        property bool buddyTtsSpeakAll: false
         // ---- Agent safety (see docs/agent-safety.md) -------------------------
         // "default" asks before side effects, "acceptEdits" auto-approves file
         // edits inside the workspace, "plan" is read-only, "bypass" trusts all
@@ -99,6 +114,8 @@ Window {
         property bool buddyRedactSecrets: true
         property bool buddyKeepTraces: true
         property bool buddyStreamReplies: true
+        // Show what Buddy is doing while it works (steps, draft, reasoning).
+        property bool buddyShowThinking: true
         property bool buddyHandoffs: true
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
@@ -112,13 +129,14 @@ Window {
         cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
         cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
         cfg.buddyApiBase, cfg.buddyModel, cfg.buddyTemperature,
-        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyAllowEditor,
+        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyCuGlowStyle, cfg.buddyRingStyle, cfg.buddyRingThickness, cfg.buddyRingSpeed, cfg.buddyGlowStrength, cfg.buddyGlowMode, cfg.buddyGlowAlways, cfg.buddyVoiceFx, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
-        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser,
-        cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceBase, cfg.buddyVoiceModel, cfg.buddyVoiceLanguage, cfg.buddyVoiceAutoSend,
-        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeCloudOk, cfg.buddySpeakReports,
-        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyHandoffs,
+        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots,
+        cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceAutoSend,
+        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddySpeakReports,
+        cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsKokoroBase, cfg.buddyTtsKokoroVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
+        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking, cfg.buddyHandoffs,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
@@ -1071,10 +1089,22 @@ Window {
         buddy.neonBurst(true)
     }
 
+    function previewBuddyFx(kind) {
+        if (cfg.buddyEnabled)
+            buddy.previewFx(kind)
+    }
+
     Buddy {
         id: buddy
         visible: cfg.buddyEnabled
         solidRing: cfg.buddySolidRing
+        ringStyle: cfg.buddyRingStyle
+        ringThickness: cfg.buddyRingThickness
+        ringSpeed: cfg.buddyRingSpeed
+        glowStrength: cfg.buddyGlowStrength
+        glowMode: cfg.buddyGlowMode
+        glowAlways: cfg.buddyGlowAlways
+        voiceFx: cfg.buddyVoiceFx
         motionPaused: root.fullscreenGuard || !visible
         s: root.s
         desktop: root.contentItem
@@ -1112,6 +1142,7 @@ Window {
     Binding { target: AgentControl; property: "showCursor"; value: cfg.buddyCuShowCursor }
     Binding { target: AgentControl; property: "showGlow"; value: cfg.buddyCuShowGlow }
     Binding { target: AgentControl; property: "glowIntensity"; value: cfg.buddyCuGlowIntensity }
+    Binding { target: AgentControl; property: "glowStyle"; value: cfg.buddyCuGlowStyle }
 
     // Buddy's cursor, the screen-edge glow and the control HUD while the
     // agent uses the computer. The HUD sits just under the notch.
@@ -1133,24 +1164,29 @@ Window {
     Binding { target: BuddyAgent; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
     Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
     Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
+    Binding { target: BuddyAgent; property: "showThinking"; value: cfg.buddyShowThinking }
     Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
     Binding { target: BuddyAgent; property: "officialComputerTools"; value: cfg.buddyOfficialComputer }
     Binding { target: BuddyAgent; property: "computerDetail"; value: cfg.buddyComputerDetail }
     Binding { target: BuddyAgent; property: "maxSteps"; value: cfg.buddyMaxSteps }
     Binding { target: BuddyAgent; property: "allowAskUser"; value: cfg.buddyAllowAskUser }
+    Binding { target: BuddyAgent; property: "allowScreenshots"; value: cfg.buddyAllowScreenshots }
     Binding { target: Voice; property: "enabled"; value: cfg.buddyVoiceEnabled }
-    Binding { target: Voice; property: "apiBase"; value: cfg.buddyVoiceBase }
-    // A speech service of its own needs its own key; one left empty only works
-    // for a service on this computer. The chat key is never sent to it.
-    Binding { target: Voice; property: "apiKey"; value: cfg.buddyVoiceKey }
-    Binding { target: Voice; property: "model"; value: cfg.buddyVoiceModel }
-    Binding { target: Voice; property: "language"; value: cfg.buddyVoiceLanguage }
     Binding { target: TalkKey; property: "enabled"; value: cfg.buddyVoiceEnabled && cfg.buddyVoiceHotkey }
     Binding { target: Wake; property: "enabled"; value: cfg.buddyWakeEnabled }
     Binding { target: Wake; property: "phrase"; value: cfg.buddyWakePhrase }
-    Binding { target: Wake; property: "allowCloud"; value: cfg.buddyWakeCloudOk }
+    Binding { target: Wake; property: "threshold"; value: cfg.buddyWakeThreshold }
     Binding { target: Speech; property: "enabled"; value: cfg.buddySpeakReports }
+    Binding { target: Speech; property: "engine"; value: cfg.buddyTtsEngine }
+    Binding { target: Speech; property: "googleKey"; value: cfg.buddyTtsGoogleKey }
+    Binding { target: Speech; property: "googleVoice"; value: cfg.buddyTtsGoogleVoice }
+    Binding { target: Speech; property: "kokoroBase"; value: cfg.buddyTtsKokoroBase }
+    Binding { target: Speech; property: "kokoroVoice"; value: cfg.buddyTtsKokoroVoice }
+    Binding { target: Speech; property: "speed"; value: cfg.buddyTtsSpeed }
+    Binding { target: Speech; property: "speakAll"; value: cfg.buddyTtsSpeakAll }
     Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
+    // The wake word chimes the instant it hears its phrase: keep the device open for it.
+    Binding { target: BuddySound; property: "keepOpen"; value: Wake.active }
     Binding { target: BuddySound; property: "volume"; value: cfg.buddySfxVolume }
     Binding { target: BuddySound; property: "style"; value: cfg.buddySfxStyle }
 

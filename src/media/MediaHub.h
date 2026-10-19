@@ -28,7 +28,9 @@ class MediaHub final : public QObject
     Q_PROPERTY(QString album READ album NOTIFY changed)
     Q_PROPERTY(int state READ state NOTIFY changed) // 1 playing, 2 paused, 0 idle
     Q_PROPERTY(bool playing READ playing NOTIFY changed)
-    Q_PROPERTY(qint64 position READ position NOTIFY changed)
+    // Own signal: it ticks several times a second while music plays, and sharing
+    // `changed` would re-evaluate every other Media binding (title, sources, ...) each time.
+    Q_PROPERTY(qint64 position READ position NOTIFY positionChanged)
     Q_PROPERTY(qint64 duration READ duration NOTIFY changed)
     Q_PROPERTY(bool hasCover READ hasCover NOTIFY changed)
     Q_PROPERTY(QString coverUrl READ coverUrl NOTIFY changed)
@@ -93,11 +95,13 @@ public:
 
 signals:
     void changed();
+    void positionChanged();
     void visualsChanged();
     void volumeChanged();
 
 private:
     void refresh();
+    void emitChanged();
     void updateVisuals();
 
     MusicPlayer *m_player = nullptr;

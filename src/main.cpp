@@ -60,6 +60,12 @@ void initializeSafeStorage()
     const QString dataDir = QFileInfo(ini.fileName()).absolutePath();
     QDir().mkpath(dataDir);
 
+    // Speech to text is Moonshine, on this computer. Forget what the old cloud
+    // transcription settings left behind, including the API key kept for them.
+    for (const char *key : { "ui/buddyVoiceBase", "ui/buddyVoiceKey", "ui/buddyVoiceModel", "ui/buddyVoiceLanguage",
+                             "ui/buddyWakeCloudOk" })
+        ini.remove(QString::fromLatin1(key));
+
     // 1. One-time migration of any existing settings from the Windows Registry.
     if (!ini.value(QStringLiteral("meta/migratedFromRegistry"), false).toBool()) {
         QSettings reg(QSettings::NativeFormat, QSettings::UserScope,

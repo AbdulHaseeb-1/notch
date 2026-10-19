@@ -1,13 +1,21 @@
 #include "WakeWord.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QSet>
+#include <QSettings>
 #include <QStringList>
+#include <QUrl>
 
 #include <algorithm>
 
 #include "VoiceAudio.h"
+#include "WakeDetector.h"
 
 namespace wake {
 
@@ -292,6 +300,101 @@ void Segmenter::finish(QList<QByteArray> *out)
 
 } // namespace wake
 
+// ---- the local detector's thread -----------------------------------------------------------
+
+namespace {
+
+const QString kBundledDir = QStringLiteral(":/qt/qml/noch/resources/wakeword");
+const QString kMelName = QStringLiteral("melspectrogram.onnx");
+const QString kEmbedName = QStringLiteral("embedding_model.onnx");
+const QString kDefaultModel = QStringLiteral("hey_buddy.onnx");
+
+// A model file dropped into the user's folder wins over the bundled one. For the
+// phrase itself any .onnx there that is not one of the two shared feature
+// models counts (the newest, if several).
+QString userWakeModel(const QString &folder)
+{
+    const QFileInfoList files = QDir(folder).entryInfoList({ QStringLiteral("*.onnx") }, QDir::Files, QDir::Time);
+    for (const QFileInfo &f : files)
+        if (f.fileName() != kMelName && f.fileName() != kEmbedName)
+            return f.absoluteFilePath();
+    return QString();
+}
+
+QString featureModel(const QString &folder, const QString &name)
+{
+    const QString user = QDir(folder).filePath(name);
+    if (QFileInfo::exists(user))
+        return user;
+    const QString bundled = kBundledDir + QLatin1Char('/') + name;
+    return QFile::exists(bundled) ? bundled : QString();
+}
+
+QString wakeModelPath(const QString &folder)
+{
+    const QString user = userWakeModel(folder);
+    if (!user.isEmpty())
+        return user;
+    const QString bundled = kBundledDir + QLatin1Char('/') + kDefaultModel;
+    return QFile::exists(bundled) ? bundled : QString();
+}
+
+QByteArray slurp(const QString &path)
+{
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+}
+
+} // namespace
+
+class WakeWorker : public QObject
+{
+    Q_OBJECT
+public slots:
+    // Loads ONNX Runtime and the three models. Slow (tens of milliseconds to a
+    // second), so it runs here and not on the GUI thread.
+    void init(const QString &folder)
+    {
+        QString why;
+        const QString appDir = QCoreApplication::applicationDirPath();
+        if (!ortrt::load({ folder, appDir, appDir + QStringLiteral("/wakeword") }, &why)) {
+            emit ready(false, why);
+            return;
+        }
+        WakeDetector::Models models;
+        models.melspectrogram = slurp(featureModel(folder, kMelName));
+        models.embedding = slurp(featureModel(folder, kEmbedName));
+        models.wakeword = slurp(wakeModelPath(folder));
+        if (models.melspectrogram.isEmpty() || models.embedding.isEmpty() || models.wakeword.isEmpty()) {
+            emit ready(false, tr("The wake word models could not be read."));
+            return;
+        }
+        if (!m_detector.load(models, &why)) {
+            emit ready(false, why);
+            return;
+        }
+        emit ready(true, QString());
+    }
+
+    void feed(const QByteArray &pcm, quint64 generation)
+    {
+        emit scored(m_detector.loaded() ? m_detector.feed(pcm) : 0.0f, generation);
+    }
+
+    void reset()
+    {
+        if (m_detector.loaded())
+            m_detector.reset();
+    }
+
+signals:
+    void ready(bool ok, const QString &error);
+    void scored(float best, quint64 generation);
+
+private:
+    WakeDetector m_detector;
+};
+
 // ---- WakeWord ---------------------------------------------------------------------------
 
 WakeWord::WakeWord(VoiceInput *voice, QObject *parent)
@@ -305,11 +408,7 @@ WakeWord::WakeWord(VoiceInput *voice, QObject *parent)
         leaveAwaiting();
         emit timedOut();
     });
-    m_backoffTimer.setSingleShot(true);
-    connect(&m_backoffTimer, &QTimer::timeout, this, [this] {
-        m_backingOff = false;
-        refresh();
-    });
+    m_modelFolder = QDir(QFileInfo(QSettings().fileName()).absolutePath()).filePath(QStringLiteral("wakeword"));
     if (m_voice) {
         connect(m_voice, &VoiceInput::stateChanged, this, &WakeWord::refresh);
         connect(m_voice, &VoiceInput::configChanged, this, [this] {
@@ -323,6 +422,10 @@ WakeWord::WakeWord(VoiceInput *voice, QObject *parent)
 WakeWord::~WakeWord()
 {
     closeMic();
+    if (m_worker) {
+        m_workerThread.quit();
+        m_workerThread.wait();
+    }
 }
 
 void WakeWord::setEnabled(bool on)
@@ -332,7 +435,6 @@ void WakeWord::setEnabled(bool on)
     m_enabled = on;
     if (on) {
         m_halted = false;
-        m_failures = 0;
         clearError();
     }
     refresh();
@@ -349,31 +451,18 @@ void WakeWord::setPhrase(const QString &phrase)
     emit configChanged();
 }
 
-void WakeWord::setAllowCloud(bool on)
-{
-    if (on == m_allowCloud)
-        return;
-    m_allowCloud = on;
-    refresh();
-    emit configChanged();
-}
-
 QString WakeWord::blockedReason() const
 {
     if (!m_enabled)
         return QString();
     if (!m_voice || !m_voice->enabled())
         return tr("Turn on voice input first.");
-    if (!m_voice->configured()) {
-        const QString problem = m_voice->addressProblem();
-        return problem.isEmpty() ? tr("Add a speech-to-text key first.") : problem;
-    }
-    const QString bad = wake::phraseProblem(m_phrase);
-    if (!bad.isEmpty())
-        return bad;
-    if (!m_voice->localService() && !m_allowCloud)
-        return tr("The wake word sends everything it hears to your speech service. Allow that, or use a service on this computer.");
-    return QString();
+    if (!m_voice->configured())
+        return m_voice->problem();
+    // The local detector needs nothing more: the phrase is the model's.
+    if (usingLocal())
+        return QString();
+    return wake::phraseProblem(m_phrase);
 }
 
 QString WakeWord::state() const
@@ -382,6 +471,8 @@ QString WakeWord::state() const
         return QStringLiteral("off");
     if (!blockedReason().isEmpty() || m_halted)
         return QStringLiteral("blocked");
+    if (usingLocal() && m_local != Local::Ready)
+        return QStringLiteral("loading");
     if (!m_micOpen)
         return QStringLiteral("paused");
     return m_mode == Mode::Awaiting ? QStringLiteral("awaiting") : QStringLiteral("listening");
@@ -418,12 +509,16 @@ void WakeWord::clearError()
 
 bool WakeWord::shouldListen() const
 {
-    return m_enabled && blockedReason().isEmpty() && !m_halted && !m_paused && !m_backingOff
-        && !(m_voice && m_voice->busy());
+    return m_enabled && blockedReason().isEmpty() && !m_halted && !m_paused
+        && !(m_voice && m_voice->busy())
+        && (!usingLocal() || m_local == Local::Ready);
 }
 
 void WakeWord::refresh()
 {
+    if (m_enabled && m_local == Local::Untried && localWanted() && m_voice && m_voice->enabled()
+        && m_voice->configured())
+        startLocal();
     if (shouldListen()) {
         if (!m_micOpen)
             openMic();
@@ -451,6 +546,7 @@ bool WakeWord::openMic()
     m_segmenter.setConfig(m_listenConfig);
     m_segmenter.reset();
     m_mode = Mode::Listening;
+    resetLocalDetector();
     QString why;
     if (!m_capture->start(&why)) {
         m_halted = true;   // until the settings change, instead of retrying a missing microphone forever
@@ -464,14 +560,14 @@ bool WakeWord::openMic()
 void WakeWord::closeMic()
 {
     ++m_generation;
-    if (m_reply) {
-        QNetworkReply *r = m_reply;
-        m_reply = nullptr;
-        r->abort();
+    if (m_ticket) {
+        m_voice->abort(m_ticket);
+        m_ticket = 0;
     }
     if (m_capture && m_micOpen)
         m_capture->stop();
     m_micOpen = false;
+    resetLocalDetector();
     m_segmenter.reset();
     m_awaitTimer.stop();
     m_mode = Mode::Listening;
@@ -482,6 +578,10 @@ void WakeWord::onAudio(const QByteArray &pcm)
 {
     if (!m_micOpen)
         return;
+    if (m_mode == Mode::Listening && usingLocal()) {
+        feedLocal(pcm);     // the phrase is found on this computer; nothing is sent anywhere
+        return;
+    }
     QList<QByteArray> found;
     const bool started = m_segmenter.feed(pcm, &found);
     if (started && m_mode == Mode::Awaiting)
@@ -490,26 +590,11 @@ void WakeWord::onAudio(const QByteArray &pcm)
         onUtterance(u);
 }
 
-bool WakeWord::underRateLimit()
-{
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    while (!m_checkTimes.isEmpty() && now - m_checkTimes.first() > 60000)
-        m_checkTimes.removeFirst();
-    if (m_checkTimes.size() >= kMaxChecksPerMinute)
-        return false;
-    m_checkTimes.append(now);
-    return true;
-}
-
 void WakeWord::onUtterance(const QByteArray &pcm)
 {
     if (voice::isSilent(pcm))
         return;
-    if (m_reply) {                 // one check at a time; the rest is dropped, not queued up
-        ++m_dropped;
-        return;
-    }
-    if (m_mode == Mode::Listening && !underRateLimit()) {
+    if (m_ticket) {                // one check at a time; the rest is dropped, not queued up
         ++m_dropped;
         return;
     }
@@ -520,11 +605,11 @@ void WakeWord::check(const QByteArray &pcm, Mode mode)
 {
     ++m_checked;
     const quint64 gen = m_generation;
-    m_reply = m_voice->transcribe(voice::encodeWav(voice::trimSilence(pcm)), this,
-                                  [this, mode, gen](const VoiceInput::Transcription &t) {
+    m_ticket = m_voice->transcribe(voice::trimSilence(pcm), this,
+                                   [this, mode, gen](const VoiceInput::Transcription &t) {
         if (gen != m_generation)
             return;
-        m_reply = nullptr;
+        m_ticket = 0;
         onTranscript(t, mode);
     });
 }
@@ -541,10 +626,17 @@ void WakeWord::onTranscript(const VoiceInput::Transcription &t, Mode mode)
         failure(t, mode);
         return;
     }
-    m_failures = 0;
     if (mode == Mode::Awaiting) {
         leaveAwaiting();
-        deliver(t.text);
+        QString text = t.text;
+        // "Hey buddy, ..." said again as part of the request: the request is what follows.
+        if (const wake::Match again = wake::match(text, m_phrase); again.found)
+            text = again.rest;
+        if (text.trimmed().isEmpty()) {
+            emit timedOut();
+            return;
+        }
+        deliver(text);
         return;
     }
     const wake::Match m = wake::match(t.text, m_phrase);
@@ -561,7 +653,7 @@ void WakeWord::onTranscript(const VoiceInput::Transcription &t, Mode mode)
 
 void WakeWord::failure(const VoiceInput::Transcription &t, Mode mode)
 {
-    if (t.empty) {         // the service heard no words in it
+    if (t.empty) {         // the engine ran and heard no words in it
         if (mode == Mode::Awaiting) {
             leaveAwaiting();
             emit timedOut();
@@ -570,21 +662,15 @@ void WakeWord::failure(const VoiceInput::Transcription &t, Mode mode)
     }
     if (mode == Mode::Awaiting)
         leaveAwaiting();
-    ++m_failures;
     fail(t.error);
-    if (t.status == 401 || t.status == 403) {
-        m_halted = true;   // a refused key will not get better by asking again
-    } else {
-        const int secs = qMin(kBackoffMaxSec, m_backoffBaseSec << qMin(m_failures - 1, 10));
-        m_backingOff = true;
-        m_backoffTimer.start(secs * 1000);
-    }
+    m_halted = true;       // the model failed; asking again will not help until the settings change
     refresh();
 }
 
 void WakeWord::enterAwaiting()
 {
     m_mode = Mode::Awaiting;
+    m_segmenter.reset();
     wake::SegmenterConfig c = m_listenConfig;
     c.endSilenceMs = qMax(c.endSilenceMs, 1200);   // people pause mid-request
     c.maxMs = 20000;
@@ -601,9 +687,141 @@ void WakeWord::leaveAwaiting()
     emit stateChanged();
 }
 
+// ---- the local detector -------------------------------------------------------------------
+
+QString WakeWord::detector() const
+{
+    if (!usingLocal())
+        return QStringLiteral("speech");
+    return m_local == Local::Ready ? QStringLiteral("local") : QStringLiteral("loading");
+}
+
+bool WakeWord::localWanted() const
+{
+    if (m_localWantedCache < 0)
+        m_localWantedCache = !wakeModelPath(m_modelFolder).isEmpty()
+                             && !featureModel(m_modelFolder, kMelName).isEmpty()
+                             && !featureModel(m_modelFolder, kEmbedName).isEmpty();
+    return m_localWantedCache == 1;
+}
+
+bool WakeWord::usingLocal() const
+{
+    return localWanted() && m_local != Local::Failed;
+}
+
+void WakeWord::setModelFolder(const QString &folder)
+{
+    if (folder == m_modelFolder)
+        return;
+    m_modelFolder = folder;
+    m_localWantedCache = -1;
+    m_local = Local::Untried;
+    m_localError.clear();
+    resetLocalDetector();
+    refresh();
+    emit detectorChanged();
+}
+
+void WakeWord::openModelFolder() const
+{
+    QDir().mkpath(m_modelFolder);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(m_modelFolder));
+}
+
+void WakeWord::setThreshold(double t)
+{
+    const double v = std::clamp(t, 0.2, 0.9);
+    if (qFuzzyCompare(v, m_threshold))
+        return;
+    m_threshold = v;
+    emit configChanged();
+}
+
+void WakeWord::setLocalState(Local state, const QString &error)
+{
+    m_local = state;
+    m_localError = error;
+    emit detectorChanged();
+}
+
+void WakeWord::startLocal()
+{
+    if (!m_worker) {
+        m_worker = new WakeWorker;
+        m_worker->moveToThread(&m_workerThread);
+        connect(&m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
+        connect(m_worker, &WakeWorker::ready, this, &WakeWord::onWorkerReady);
+        connect(m_worker, &WakeWorker::scored, this, &WakeWord::onWorkerScore);
+        m_workerThread.start();
+    }
+    setLocalState(Local::Loading);
+    const QString folder = m_modelFolder;
+    QMetaObject::invokeMethod(m_worker, [w = m_worker, folder] { w->init(folder); }, Qt::QueuedConnection);
+}
+
+void WakeWord::onWorkerReady(bool ok, const QString &error)
+{
+    if (ok) {
+        setLocalState(Local::Ready);
+    } else {
+        // Falls back to transcribing each sentence on this computer and comparing it
+        // with the phrase.
+        qWarning().noquote() << "WakeWord: local detector unavailable:" << error;
+        setLocalState(Local::Failed, error);
+        emit configChanged();
+    }
+    refresh();
+}
+
+void WakeWord::feedLocal(const QByteArray &pcm)
+{
+    m_localBuf += pcm;
+    constexpr int kBatchBytes = WakeDetector::kChunkSamples * 2;   // one 80 ms step
+    if (m_localBuf.size() < kBatchBytes || !m_worker)
+        return;
+    // A worker that fell behind drops audio instead of building a queue that
+    // would make the phrase arrive late.
+    if (m_inflight.load() > 25) {
+        m_localBuf.clear();
+        ++m_dropped;
+        return;
+    }
+    ++m_inflight;
+    const QByteArray batch = std::exchange(m_localBuf, QByteArray());
+    const quint64 gen = m_detGeneration;
+    QMetaObject::invokeMethod(m_worker, [w = m_worker, batch, gen] { w->feed(batch, gen); }, Qt::QueuedConnection);
+}
+
+void WakeWord::resetLocalDetector()
+{
+    ++m_detGeneration;
+    m_localBuf.clear();
+    if (m_worker && m_local == Local::Ready)
+        QMetaObject::invokeMethod(m_worker, [w = m_worker] { w->reset(); }, Qt::QueuedConnection);
+}
+
+void WakeWord::onWorkerScore(float best, quint64 generation)
+{
+    --m_inflight;
+    if (generation != m_detGeneration || m_mode != Mode::Listening || !m_micOpen)
+        return;
+    if (best < float(m_threshold))
+        return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - m_lastCommandMs < m_cooldownMs || now - m_lastWakeMs < m_cooldownMs)
+        return;
+    m_lastWakeMs = now;
+    resetLocalDetector();       // what it just heard must not wake it a second time
+    emit woke();
+    enterAwaiting();            // the request that follows is what is transcribed by Moonshine
+}
+
 void WakeWord::fail(const QString &message)
 {
     m_error = message;
     emit errorChanged();
     emit failed(message);
 }
+
+#include "WakeWord.moc"
