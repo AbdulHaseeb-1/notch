@@ -1038,16 +1038,19 @@ QVariantMap BuddyProvider::undoLastRun(bool force)
 QVariantMap BuddyProvider::undoRun(const QString &runId, bool force)
 {
     const RunJournal::UndoResult r = m_journal.undo(runId, force);
+    const auto files = [](int n) { return n == 1 ? tr("%1 file").arg(n) : tr("%1 files").arg(n); };
     QStringList parts;
     if (r.restored > 0)
-        parts << tr("Restored %n file(s)", "", r.restored);
+        parts << tr("Restored %1").arg(files(r.restored));
     if (r.removed > 0)
-        parts << tr("removed %n new file(s)", "", r.removed);
+        parts << tr("removed %1 the run created").arg(files(r.removed));
     if (!r.conflicts.isEmpty())
-        parts << tr("%n file(s) changed since and were left alone", "", int(r.conflicts.size()));
+        parts << tr("%1 changed since and left alone").arg(files(int(r.conflicts.size())));
     if (!r.failed.isEmpty())
-        parts << tr("%n file(s) could not be changed", "", int(r.failed.size()));
+        parts << tr("%1 could not be changed").arg(files(int(r.failed.size())));
     QString message = parts.isEmpty() ? tr("There is nothing to undo.") : parts.join(QStringLiteral(", "));
+    if (!message.isEmpty())
+        message[0] = message.at(0).toUpper();
     if (!message.endsWith(QLatin1Char('.')))
         message += QLatin1Char('.');
     if (m_lastRunChanges.value(QStringLiteral("runId")).toString() == runId) {

@@ -1401,7 +1401,7 @@ Item {
         const lines = [qsTr("**Chats** — type `/resume 2` to pick one up, or `/branch 2` to continue from it in a new chat.")]
         for (let i = 0; i < all.length && i < 12; ++i) {
             const c = all[i]
-            lines.push((i + 1) + ". " + c.title + " — " + qsTr("%n turn(s)", "", c.turns) + ", " + whenText(c.updated)
+            lines.push((i + 1) + ". " + c.title + " — " + (c.turns === 1 ? qsTr("1 turn") : qsTr("%1 turns").arg(c.turns)) + ", " + whenText(c.updated)
                        + (c.current ? qsTr("  ← current") : "") + (c.parentTitle ? qsTr("  (branch of %1)").arg(c.parentTitle) : ""))
         }
         return lines.join("\n")
