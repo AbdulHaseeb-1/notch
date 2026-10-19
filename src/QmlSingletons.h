@@ -20,6 +20,7 @@
 #include "AudioDevices.h"
 #include "BuddyProvider.h"
 #include "BuddySfx.h"
+#include "ChatSessions.h"
 #include "ClipboardHistory.h"
 #include "ComputerUse.h"
 #include "DockController.h"
@@ -122,6 +123,18 @@ struct BuddyAgentSingleton
 public:
     inline static BuddyProvider *s_singletonInstance = nullptr;
     static BuddyProvider *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+// Buddy's saved chats: resume, branch, summaries.
+struct SessionsSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(ChatSessions)
+    QML_NAMED_ELEMENT(Sessions)
+    QML_SINGLETON
+public:
+    inline static ChatSessions *s_singletonInstance = nullptr;
+    static ChatSessions *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
 struct BuddySoundSingleton

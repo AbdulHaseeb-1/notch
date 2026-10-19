@@ -21,6 +21,7 @@
 #include "AudioDevices.h"
 #include "BuddyProvider.h"
 #include "BuddySfx.h"
+#include "ChatSessions.h"
 #include "ClipboardHistory.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
@@ -35,6 +36,7 @@
 #include "PowerActions.h"
 #include "Radios.h"
 #include "RunningApps.h"
+#include "SessionLink.h"
 #include "SmtcMedia.h"
 
 namespace {
@@ -126,6 +128,9 @@ int main(int argc, char *argv[])
     auto *appearance = new Appearance(&app);
     auto *buddyProvider = new BuddyProvider(&app);
     auto *buddySfx = new BuddySfx(&app);
+    auto *chatSessions = new ChatSessions(&app);
+    chatSessions->setRoot(chatSessions->sessionsPath());   // loads the saved chats
+    new SessionLink(chatSessions, buddyProvider, &app);     // long chats get a rolling summary
     auto *glass = new GlassBackdrop(&app);
     auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
@@ -153,6 +158,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("iconSet"), iconSet);
     engine.rootContext()->setContextProperty(QStringLiteral("buddyProvider"), buddyProvider);
     engine.rootContext()->setContextProperty(QStringLiteral("buddySfx"), buddySfx);
+    engine.rootContext()->setContextProperty(QStringLiteral("chatSessions"), chatSessions);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
     engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
@@ -174,6 +180,7 @@ int main(int argc, char *argv[])
     BuddyAgentSingleton::s_singletonInstance = buddyProvider;
     AgentControlSingleton::s_singletonInstance = buddyProvider->computer();
     BuddySoundSingleton::s_singletonInstance = buddySfx;
+    SessionsSingleton::s_singletonInstance = chatSessions;
     BackdropSingleton::s_singletonInstance = glass;
     OpenAppsSingleton::s_singletonInstance = openApps;
     ClipboardSingleton::s_singletonInstance = clipboard;

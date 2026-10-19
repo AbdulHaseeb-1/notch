@@ -20,6 +20,7 @@
 #include "ComputerUse.h"
 #include "ProjectContext.h"
 #include "RunJournal.h"
+#include "SessionFormat.h"
 #include "SavedRules.h"
 #include "StreamAccumulator.h"
 #include "UserQuestions.h"
@@ -276,6 +277,13 @@ public:
     // Noch's own data folder (user-level NOCH.md and commands/). Tests point it elsewhere.
     Q_INVOKABLE QString userDataDir() const;
     void setUserDataDir(const QString &dir) { m_userDataDir = dir; }
+    // Write a rolling summary of chat turns (see ChatSessions): one plain
+    // model call with no tools, queued behind any other. `prior` is the summary so far,
+    // `turns` the [{ q, a }] to fold in, `upTo` how many turns the result will cover.
+    // Answers with sessionSummaryReady() or sessionSummaryFailed(); never touches
+    // the run in progress.
+    Q_INVOKABLE void summarizeSession(const QString &sessionId, const QString &prior,
+                                      const QVariantList &turns, int upTo);
     Q_INVOKABLE QString tracesPath() const;
     Q_INVOKABLE QString effectiveWorkspace() const;
     void syncPrivatePaths();
@@ -300,6 +308,8 @@ signals:
     void pendingApprovalChanged();
     void pendingQuestionChanged();
     void lastRunChangesChanged();
+    void sessionSummaryReady(const QString &sessionId, const QString &summary, int upTo);
+    void sessionSummaryFailed(const QString &sessionId, const QString &error);
     void savedRulesChanged();
     void streamTextChanged();
     void activeAgentChanged();
@@ -455,6 +465,18 @@ private:
     QPointer<QNetworkReply> m_probeReply;
     QPointer<QNetworkReply> m_webSearchReply;
     QPointer<QNetworkReply> m_advisorReply;
+    // Summaries of chat turns, one request at a time.
+    struct SummaryJob {
+        QString id;
+        QString prior;
+        QVariantList turns;
+        int upTo = 0;
+    };
+    QList<SummaryJob> m_summaryQueue;
+    SummaryJob m_summaryActive;
+    QPointer<QNetworkReply> m_summaryReply;
+    void startNextSummary();
+    void onSummaryReply(bool transportOk, int status, const QByteArray &body, const QString &errString);
     QPointer<QProcess> m_activeProcess;
     QNetworkAccessManager m_nam;
 

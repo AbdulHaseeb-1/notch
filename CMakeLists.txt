@@ -52,6 +52,11 @@ qt_add_executable(noch
     src/SavedRules.h
     src/ProjectContext.cpp
     src/ProjectContext.h
+    src/ChatSessions.cpp
+    src/ChatSessions.h
+    src/SessionLink.cpp
+    src/SessionLink.h
+    src/SessionFormat.h
     src/ComputerUse.cpp
     src/ComputerUse.h
     src/ComputerUseWin.cpp
@@ -195,6 +200,10 @@ if(NOCH_BUILD_TESTS)
         src/UserQuestions.cpp src/UserQuestions.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_userquestions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
     add_test(NAME tst_userquestions COMMAND tst_userquestions)
+    qt_add_executable(tst_chatsessions tests/tst_chatsessions.cpp
+        src/ChatSessions.cpp src/ChatSessions.h src/SessionFormat.h src/AgentPolicy.cpp src/AgentPolicy.h)
+    target_link_libraries(tst_chatsessions PRIVATE Qt6::Core Qt6::Network Qt6::Test)
+    add_test(NAME tst_chatsessions COMMAND tst_chatsessions)
     qt_add_executable(tst_projectcontext tests/tst_projectcontext.cpp
         src/ProjectContext.cpp src/ProjectContext.h src/AgentPolicy.cpp src/AgentPolicy.h)
     target_link_libraries(tst_projectcontext PRIVATE Qt6::Core Qt6::Network Qt6::Test)
@@ -211,6 +220,7 @@ if(NOCH_BUILD_TESTS)
         src/BuddyProvider.cpp src/BuddyProvider.h src/AgentPolicy.cpp src/AgentPolicy.h
         src/UserQuestions.cpp src/UserQuestions.h src/RunJournal.cpp src/RunJournal.h
         src/SavedRules.cpp src/SavedRules.h src/ProjectContext.cpp src/ProjectContext.h
+        src/ChatSessions.cpp src/ChatSessions.h src/SessionLink.cpp src/SessionLink.h src/SessionFormat.h
         src/StreamAccumulator.cpp src/StreamAccumulator.h
         src/ComputerUse.cpp src/ComputerUse.h src/ComputerUseWin.cpp)
     target_link_libraries(tst_buddyagent PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
