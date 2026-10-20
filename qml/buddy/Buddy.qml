@@ -47,6 +47,7 @@ Item {
     // halo lit meanwhile, so the user can see that work continues even after
     // the bubble has been tucked away by a click somewhere else.
     readonly property bool busy: awaitingReply || thinkTimer.running
+                                || appLaunch.waiting
                                 || (thought.visible && thought.revealing)
                                 || (!!resultPanel && resultPanel.open
                                     && (resultPanel.phase === "loading" || resultPanel.isStreaming))
@@ -1247,6 +1248,7 @@ Item {
     // this — losing window focus must never cut a reply off.
     function cancelPending() {
         thinkTimer.stop()
+        appLaunch.cancel()
         if (awaitingReply) {
             awaitingReply = false
             if (BuddyAgent)
@@ -1606,6 +1608,29 @@ Item {
         }
     }
 
+    // Hand a request to the real agent. Returns false when the agent is off, so
+    // a caller that still has a local fallback can keep control. Used both for
+    // requests that need tools from the start and for "open <app>" requests
+    // whose app is not installed.
+    function sendToAgent(text) {
+        if (!BuddyAgent || !BuddyAgent.enabled)
+            return false
+        const prompt = String(text || "").trim()
+        if (prompt.length === 0)
+            return false
+        if (replyToPanel) {
+            resultPanel.kind = "chat"
+            resultPanel.title = prompt
+            resultPanel.userPrompt = prompt
+            resultPanel.payload = { response: "" }
+            resultPanel.simulated = false
+            resultPanel.phase = "loading"
+        }
+        awaitingReply = true
+        BuddyAgent.sendMessage(prompt, conversation)
+        return true
+    }
+
     function submit(text, plain) {
         const trimmed = String(text || "").trim()
         if (trimmed.length === 0 || session === "thinking")
@@ -1706,19 +1731,8 @@ Item {
                       && !(BuddyAgent && BuddyAgent.enabled && BuddyAgent.agentMode
                            && (localTask.kind === "apps" || localTask.kind === "tasks")
                            && compoundAgentIntent)
-        if (!local && BuddyAgent && BuddyAgent.enabled) {
-            if (replyToPanel) {
-                resultPanel.kind = "chat"
-                resultPanel.title = trimmed
-                resultPanel.userPrompt = trimmed
-                resultPanel.payload = { response: "" }
-                resultPanel.simulated = false
-                resultPanel.phase = "loading"
-            }
-            awaitingReply = true
-            BuddyAgent.sendMessage(trimmed, conversation)
+        if (!local && sendToAgent(trimmed))
             return
-        }
         if (BuddyAgent)
             BuddyAgent.clearToolSteps()
         thinkTimer.restart()
@@ -1802,20 +1816,33 @@ Item {
             note(qsTr("Focus timer set · %1 min").arg(task.payload.minutes), "timer")
             break
         }
-        case "apps": {
-            const rows = AppIndex.search(task.payload.query)
-                            .filter(function (r) { return r.kind === "app" })
-            if (rows.length > 0) {
-                AppIndex.activate(rows[0])
-                note(qsTr("Opening %1").arg(String(rows[0].name || task.payload.query)), "open")
-            } else {
-                showError(qsTr("No app matched “%1”.").arg(task.payload.query))
-            }
+        case "apps":
+            appLaunch.resolve(task.payload.query, text)
             break
-        }
         default:
             present("help", task.title, {}, false)
             break
+        }
+    }
+
+    // "Open <app>" first tries the Start Menu index. If the app is not there,
+    // the original request goes to the agent, which can open a website or find
+    // another route. A scan still in progress is not a definitive miss, so
+    // BuddyAppLaunch waits for it before handing off.
+    BuddyAppLaunch {
+        id: appLaunch
+        appIndex: AppIndex
+        agentEnabled: !!BuddyAgent && BuddyAgent.enabled
+        onLaunchRequested: function (row, query) {
+            AppIndex.activate(row)
+            note(qsTr("Opening %1").arg(String(row.title || row.name || query)), "open")
+        }
+        onAgentRequested: function (request, query) {
+            if (!sendToAgent(request))
+                showError(qsTr("No app matched “%1”.").arg(query))
+        }
+        onNoMatch: function (query) {
+            showError(qsTr("No app matched “%1”.").arg(query))
         }
     }
 

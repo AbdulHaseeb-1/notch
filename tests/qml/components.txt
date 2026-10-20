@@ -1,4 +1,5 @@
 buddy/BuddyQuestionCard
+buddy/BuddyAppLaunch
 agent/ToolTraceBar
 agent/ToolStepCard
 agent/ToolStatusIcon

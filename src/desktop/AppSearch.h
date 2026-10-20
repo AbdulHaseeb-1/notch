@@ -19,6 +19,10 @@ class RunningApps;
 class AppSearch final : public QObject
 {
     Q_OBJECT
+    // True while the background Start Menu scan is still filling the index.
+    // Callers that need a definitive "not installed" answer can wait for
+    // indexReady instead of treating a cold index as no match.
+    Q_PROPERTY(bool indexing READ indexing NOTIFY indexReady)
 
 public:
     explicit AppSearch(RunningApps *running, QObject *parent = nullptr);
@@ -26,6 +30,9 @@ public:
 
     // Ranked results for the query: calc, apps, commands, windows, web.
     Q_INVOKABLE QVariantList search(const QString &query);
+
+    bool indexing() const { return m_scanThread != nullptr; }
+
     // Installed and running applications for the "Add apps" list in Settings.
     Q_INVOKABLE QVariantList availableApps(const QString &query = QString());
     Q_INVOKABLE void activate(const QVariantMap &item);

@@ -228,6 +228,7 @@ set(NOCH_QML_FILES
     qml/flyouts/SettingsFlyout.qml
 
     qml/buddy/Buddy.qml
+    qml/buddy/BuddyAppLaunch.qml
     qml/buddy/BuddyBubble.qml
     qml/buddy/BuddyChartCard.qml
     qml/buddy/BuddyHelpCard.qml
