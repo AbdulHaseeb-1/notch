@@ -1708,6 +1708,13 @@ Item {
             submit(lastRequest)
         }
     }
+    // Resume desktop control if the run is still paused, then ask the agent to
+    // carry on from the request that was interrupted.
+    function continueComputer() {
+        AgentControl.resume()
+        if (session !== "thinking")
+            submit(qsTr("Continue"))
+    }
     function showError(message) {
         awaitingReply = false
         if (spokenRun) {
@@ -1968,6 +1975,7 @@ Item {
         onSubmitted: (text) => buddy.submit(text)
         onDismissed: buddy.bubbleClosed()
         onRetryRequested: buddy.retryTask()
+        onContinueRequested: buddy.continueComputer()
         onTyped: (frac) => buddy.watchTyping(frac)
         onLoved: buddy.celebrate()
         onSpeakingTick: (p) => buddy.readAlong(p)

@@ -1,5 +1,7 @@
 buddy/BuddyQuestionCard
 agent/ToolTraceBar
+agent/ToolStepCard
+agent/ToolStatusIcon
 panels/FocusTimer
 buddy/components/BuddyShot
 buddy/BuddyNeonRing

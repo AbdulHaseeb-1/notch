@@ -24,6 +24,7 @@ Item {
     signal retryRequested()
     signal newRequestRequested()
     signal followUpSubmitted(string text)
+    signal continueRequested()            // "Continue" after a desktop-control pause
     signal loved()
     signal speakingTick()
     signal planEdited(var items)
@@ -851,6 +852,7 @@ Item {
                                     required property var modelData
                                     width: panelToolCol.width
                                     step: modelData
+                                    onContinueRequested: panel.continueRequested()
                                 }
                             }
                         }

@@ -57,7 +57,7 @@ void ComputerUse::setBackend(std::unique_ptr<ComputerBackend> backend)
             // Hooks fire inside the OS input path: handle it on the next turn.
             QMetaObject::invokeMethod(this, [this, abort] { userInput(abort); }, Qt::QueuedConnection);
         };
-        if (m_active)
+        if (m_watching)
             m_backend->setWatching(true);
     }
 }
@@ -118,10 +118,11 @@ void ComputerUse::begin()
     m_active = true;
     m_paused = false;
     m_pauseReason.clear();
-    if (m_backend) {
+    // Do not arm the take-over watchdog here. A screenshot-only run must not
+    // pause just because the user moved the mouse while the model was looking;
+    // perform() arms it when the first input action starts.
+    if (m_backend)
         m_cursor = m_backend->cursorPos();
-        m_backend->setWatching(true);
-    }
     m_moveMs = 0;
     emit cursorChanged();
     emit stateChanged();
@@ -140,6 +141,7 @@ void ComputerUse::end()
     m_typing = false;
     m_actionKind.clear();
     m_actionLabel.clear();
+    m_watching = false;
     if (m_backend)
         m_backend->setWatching(false);
     if (was) {
@@ -456,7 +458,7 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
     if (m_autoScreens)
         refreshScreens();
     if (m_paused) {
-        fail(QStringLiteral("Paused: %1 Computer control is paused until they press Resume. "
+        fail(QStringLiteral("Paused: %1 Desktop control is paused. "
                             "Do not retry; tell the user what you were doing and ask whether to continue.")
                  .arg(m_pauseReason));
         return;
@@ -481,6 +483,14 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
     }
     begin();
     setAction(a.name, describe(a));
+
+    // Arm the take-over watchdog only once the agent actually injects input.
+    // Screenshots, zooms, cursor_position and waits never take control, so a
+    // real mouse move during them should not pause the run.
+    if (a.isInput() && !m_watching) {
+        m_watching = true;
+        m_backend->setWatching(true);
+    }
 
     const auto pausedGuard = [this, fail]() {
         if (!m_paused)

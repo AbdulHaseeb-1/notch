@@ -1168,6 +1168,26 @@ private slots:
         QVERIFY(!bp->computer()->active());
     }
 
+    void computerPauseMarksStepForContinue() {
+        SimulatedBackend *sim = useSimulatedComputer();
+        bp->setPermissionMode("bypass");
+        bp->computer()->setAnimationScale(1);   // pause during the pointer animation
+        fake->queue = { { 200, toolUseNamed("m1", "computer", QJsonObject{ { "action", "left_click" },
+                                                                           { "coordinate", QJsonArray{ 1200, 700 } } }) },
+                        { 200, text("paused") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("click");
+        QTRY_VERIFY_WITH_TIMEOUT(bp->computer()->active(), 5000);
+        sim->onUserInput(false);
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(bp->toolSteps().size(), 1);
+        const QVariantMap step = bp->toolSteps().first().toMap();
+        QCOMPARE(step.value("status").toString(), QStringLiteral("error"));
+        QVERIFY(step.value("computerPaused").toBool());
+        QVERIFY(step.value("output").toString().contains("Paused"));
+        QVERIFY(!bp->computer()->active());
+    }
+
 
     // ---- Anthropic's official computer tools ---------------------------------
 

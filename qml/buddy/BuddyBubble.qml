@@ -134,6 +134,7 @@ Item {
     signal submitted(string text)
     signal dismissed()                    // the user closed it (x, Esc, note timed out)
     signal retryRequested()
+    signal continueRequested()            // "Continue" after a desktop-control pause
     signal typed(real caretFrac)
     signal loved()
     signal speakingTick(real progress)
@@ -1561,6 +1562,7 @@ Item {
                                         required property var modelData
                                         width: toolDrawerCol.width
                                         step: modelData
+                                        onContinueRequested: tb.continueRequested()
                                     }
                                 }
                             }

@@ -314,7 +314,7 @@ private slots:
         done = false;
         c.perform(cu::parseAction(act("type", { { "text", "x" } }), QSize(1280, 800)),
                   [&](const ComputerUse::Result &r) { res = r; done = true; });
-        QVERIFY(done && res.isError && res.text.contains("Resume"));
+        QVERIFY(done && res.isError && res.text.contains("whether to continue"));
         c.resume();
         QVERIFY(!c.paused());
         // Esc held / Ctrl+Alt+Esc / HUD Stop: the run is stopped.
@@ -322,6 +322,35 @@ private slots:
         sim->onUserInput(true);
         QTRY_COMPARE(stop.size(), 1);
         QVERIFY(!c.active());
+    }
+
+    void observationalActionsDoNotArmInputWatchdog() {
+        ComputerUse c;
+        c.setAutoScreens(false);
+        c.mapper().setScreens({ screen(QRect(0, 0, 1280, 800), 1.0, QPoint(), "s", true) });
+        auto *sim = new SimulatedBackend;
+        sim->useRealScreens = false;
+        c.setBackend(std::unique_ptr<ComputerBackend>(sim));
+        c.setAnimationScale(0);
+        bool done = false;
+        // A screenshot only looks at the screen; moving the mouse while the
+        // model is thinking must not pause the run.
+        c.perform(cu::parseAction(act("screenshot"), c.mapper().agentSize()),
+                  [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(done);
+        QVERIFY(c.active());
+        QVERIFY(!sim->watching);
+        c.end();
+        QVERIFY(!sim->watching);
+        // The first action that injects input arms the take-over watchdog.
+        done = false;
+        c.perform(cu::parseAction(act("left_click", { { "coordinate", QJsonArray{ 100, 100 } } }),
+                                  c.mapper().agentSize()),
+                  [&](const ComputerUse::Result &) { done = true; });
+        QTRY_VERIFY(done);
+        QVERIFY(sim->watching);
+        c.end();
+        QVERIFY(!sim->watching);
     }
 
     void refusesToTypeIntoPasswordFields() {

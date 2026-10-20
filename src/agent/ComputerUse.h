@@ -196,10 +196,12 @@ public:
     bool keyState(const cu::KeyCombo &combo, bool down) override;
     QImage grab(const ScreenInfo &screen) override;
     bool focusedIsPassword() const override { return passwordFocused; }
+    void setWatching(bool on) override { watching = on; }
 
     QStringList log;
     bool passwordFocused = false;
     bool useRealScreens = true;
+    bool watching = false;
 
 private:
     QPoint m_cursor;
@@ -352,6 +354,7 @@ private:
     QList<cu::KeyCombo> m_heldKeys; // modifiers / hold_key currently pressed
     bool m_active = false;
     bool m_paused = false;
+    bool m_watching = false;       // low-level hooks are armed (input has been injected)
     QString m_pauseReason;
     bool m_capturing = false;
     QString m_actionKind;

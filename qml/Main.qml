@@ -1206,6 +1206,7 @@ Window {
         }
         onNewRequestRequested: buddy.openInput(true)
         onFollowUpSubmitted: (text) => buddy.submit(text)
+        onContinueRequested: buddy.continueComputer()
         onLoved: () => buddy.celebrate()
         onSpeakingTick: () => buddy.pulseSpeaking()
         onRetryRequested: {

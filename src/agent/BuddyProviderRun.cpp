@@ -1213,8 +1213,24 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
                                           const QString &imageBase64, bool isError,
                                           const QString &imageMediaType)
 {
+    const bool computerPaused = isError && call.name == QLatin1String("computer")
+        && output.startsWith(QStringLiteral("Paused"));
     if (isError && call.name == QLatin1String("computer"))
         m_computerBatchFailed = true;
+    // Control is working again: remove the Continue affordance from steps that
+    // were paused earlier in this run (for example after the HUD Resume button).
+    if (call.name == QLatin1String("computer") && !isError) {
+        bool cleared = false;
+        for (int i = 0; i < m_toolSteps.size(); ++i) {
+            QVariantMap earlier = m_toolSteps.at(i).toMap();
+            if (earlier.remove(QStringLiteral("computerPaused")) > 0) {
+                m_toolSteps[i] = earlier;
+                cleared = true;
+            }
+        }
+        if (cleared)
+            emit toolStepsChanged();
+    }
     // P5: track plan progress. A successful tool call that matches the current
     // plan step advances the plan; failures count toward the replan trigger.
     if (m_planActive && m_planIndex < m_plan.size()) {
@@ -1318,6 +1334,8 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
         step[QStringLiteral("durationMs")] = elapsedMs;
         step[QStringLiteral("chars")] = output.size();
         step[QStringLiteral("truncated")] = output.size() > kMaxToolOutputChars;
+        if (computerPaused)
+            step[QStringLiteral("computerPaused")] = true;
         if (flagged) {
             step[QStringLiteral("flag")] = QStringLiteral("injection");
             step[QStringLiteral("policyNote")] = tr("Possible prompt injection in this content — treated as data");

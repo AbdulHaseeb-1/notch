@@ -13,6 +13,7 @@ Rectangle {
     property var step: ({})
     property int collapsedLines: 3
     property bool expanded: false
+    signal continueRequested()
 
     readonly property string status: String(step.status || "done")
     readonly property bool isError: status === "error"
@@ -22,6 +23,7 @@ Rectangle {
     readonly property string output: String(step.output || "")
     readonly property string policyNote: String(step.policyNote || "")
     readonly property bool isPending: status === "pending"
+    readonly property bool canContinue: step.computerPaused === true
     readonly property bool isFlagged: String(step.flag || "") === "injection"
     // Computer-use steps carry a small JPEG data URL of the screen around
     // the action (a ring marks the target), so the trace shows what happened.
@@ -207,6 +209,70 @@ Rectangle {
                 cursorShape: outText.truncated || card.expanded ? Qt.PointingHandCursor : Qt.ArrowCursor
                 enabled: outText.truncated || card.expanded
                 onClicked: card.expanded = !card.expanded
+            }
+        }
+
+        // Desktop control paused: the run ended with a failed action, but the
+        // user can pick it back up without retyping the request. This lives in
+        // the trace card because the floating HUD disappears when the run ends.
+        Row {
+            visible: card.canContinue
+            width: parent.width
+            leftPadding: 28
+            spacing: 9
+
+            Rectangle {
+                id: continueChip
+                objectName: "continueChip"
+                anchors.verticalCenter: parent.verticalCenter
+                width: continueRow.implicitWidth + 24
+                height: 28
+                radius: 14
+                color: continueHit.pressed ? Theme.press
+                     : continueHit.containsMouse ? Theme.hover : Theme.tile
+                border.width: 1
+                border.color: Theme.tileEdge
+
+                Row {
+                    id: continueRow
+                    anchors.centerIn: parent
+                    spacing: 6
+                    Glyph {
+                        anchors.verticalCenter: parent.verticalCenter
+                        name: "play"
+                        size: 11
+                        color: Theme.ink
+                    }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: qsTr("Continue")
+                        color: Theme.ink
+                        font.family: Theme.font
+                        font.pixelSize: Theme.fontSm
+                        font.weight: Font.DemiBold
+                    }
+                }
+
+                MouseArea {
+                    id: continueHit
+                    objectName: "continueHit"
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Continue after the desktop pause")
+                    onClicked: card.continueRequested()
+                }
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Desktop control was paused")
+                color: Theme.textFaint
+                font.family: Theme.font
+                font.pixelSize: Theme.fontXs
+                elide: Text.ElideRight
+                width: Math.max(0, parent.width - parent.leftPadding - continueChip.width - parent.spacing)
             }
         }
     }

@@ -7,6 +7,11 @@
 #include <QMutex>
 #include <QMutexLocker>
 
+// MinGW defines _WIN32, so ONNX Runtime's C API expects the Windows SDK's
+// <specstrings.h> to provide this SAL annotation. MinGW's version does not.
+#if defined(__MINGW32__) && !defined(_Frees_ptr_opt_)
+#define _Frees_ptr_opt_
+#endif
 #include "onnxruntime_c_api.h"
 
 namespace ortrt {

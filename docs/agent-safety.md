@@ -323,9 +323,13 @@ Guardrails:
   success. A drag that is cancelled mid-way always releases the mouse button.
 - While Buddy is in control, a glow runs around every screen and a HUD under
   the notch shows the current action and a Stop button. Ctrl+Alt+Esc, or
-  holding Esc, stops the run. Any real mouse movement or key press pauses it
-  until you press Resume. The overlays never take focus, the glow and cursor
-  are click-through, and all of them are excluded from screen capture
+  holding Esc, stops the run. Once Buddy starts injecting input, any real
+  mouse movement or key press pauses it. Resume from the HUD while the run is
+  live; if the run has already ended, use *Continue* in the paused tool step
+  (or just ask Buddy to continue). Screenshot-only and other observational
+  steps do not arm the take-over watchdog, so moving the mouse while the model
+  is looking does not pause it. The overlays never take focus, the glow and
+  cursor are click-through, and all of them are excluded from screen capture
   (`WDA_EXCLUDEFROMCAPTURE`), so the model never sees them.
 - Each action shows in the trace with a small thumbnail of the screen around
   the target.
