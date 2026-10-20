@@ -77,6 +77,10 @@ Window {
         property bool buddyAllowToolSearch: true
         property bool buddyAllowAdvisor: true
         property bool buddyAllowTodoTask: true
+        // P6 tool diet: only core tools upfront, rest via tool_search.
+        // Default ON: ~25% fewer tokens per request, and the diet:not-loaded
+        // guardrail teaches the model how to load deferred tools.
+        property bool buddyToolDiet: true
         // Claude's own computer-use tools (no extra fee; they add about 4,500
         // input tokens per request, only while computer use is on).
         property bool buddyOfficialComputer: true
@@ -1159,6 +1163,7 @@ Window {
     Binding { target: BuddyAgent; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
     Binding { target: BuddyAgent; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
     Binding { target: BuddyAgent; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
+    Binding { target: BuddyAgent; property: "toolDiet"; value: cfg.buddyToolDiet }
     Binding { target: BuddyAgent; property: "permissionMode"; value: cfg.buddyPermissionMode }
     Binding { target: BuddyAgent; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
     Binding { target: BuddyAgent; property: "redactSecrets"; value: cfg.buddyRedactSecrets }

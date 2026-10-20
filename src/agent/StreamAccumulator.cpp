@@ -11,13 +11,29 @@ bool StreamAccumulator::feed(const QByteArray &bytes)
 {
     const int before = m_text.size();
     m_buffer += bytes;
-    // SSE: lines separated by \n (optionally \r\n); a blank line ends an event.
+    // A pathological stream (a proxy that never emits a newline, or one
+    // giant data: line) must not grow the buffers without bound: fail the
+    // stream instead of the process.
+    static constexpr int kMaxStreamBytes = 8 * 1024 * 1024;
+    if (m_buffer.size() > kMaxStreamBytes || m_pendingData.size() > kMaxStreamBytes) {
+        if (m_error.isEmpty())
+            m_error = QStringLiteral("stream exceeded size limit");
+        m_buffer.clear();
+        m_pendingData.clear();
+        m_pendingEvent.clear();
+        return m_text.size() != before;
+    }
+    // SSE: lines separated by \n (optionally \r\n); a blank line ends an
+    // event. P2/perf: scan with a parse offset and compact ONCE per feed —
+    // the old remove(0, nl+1) per line memmoved the whole remaining buffer
+    // per line (quadratic inside a chunk).
+    int pos = 0;
     for (;;) {
-        const int nl = m_buffer.indexOf('\n');
+        const int nl = m_buffer.indexOf('\n', pos);
         if (nl < 0)
             break;
-        QByteArray line = m_buffer.left(nl);
-        m_buffer.remove(0, nl + 1);
+        QByteArray line = m_buffer.mid(pos, nl - pos);
+        pos = nl + 1;
         if (line.endsWith('\r'))
             line.chop(1);
         if (line.isEmpty()) {
@@ -40,6 +56,8 @@ bool StreamAccumulator::feed(const QByteArray &bytes)
             m_pendingData += d;
         }
     }
+    if (pos > 0)
+        m_buffer.remove(0, pos);
     return m_text.size() != before;
 }
 
@@ -72,7 +90,11 @@ void StreamAccumulator::handleEvent(const QString &event, const QByteArray &data
     if (pe.error != QJsonParseError::NoError || !doc.isObject())
         return;
     const QJsonObject o = doc.object();
-    if (event == QLatin1String("error") || o.value(QStringLiteral("type")).toString() == QLatin1String("error")) {
+    // Anthropic errors carry type:"error"; OpenAI-style errors are a bare
+    // {"error": {...}} object with neither. Both must surface instead of
+    // looking like a truncated stream.
+    if (event == QLatin1String("error") || o.value(QStringLiteral("type")).toString() == QLatin1String("error")
+            || o.value(QStringLiteral("error")).isObject()) {
         const QJsonObject e = o.value(QStringLiteral("error")).toObject();
         m_error = e.value(QStringLiteral("message")).toString(QStringLiteral("stream error"));
         m_finished = true;

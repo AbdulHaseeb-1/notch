@@ -284,7 +284,8 @@ QString expand(const Command &c, const QString &args)
     QString body = c.body;
     const QStringList words = splitArgs(args);
     bool used = body.contains(QLatin1String("$ARGUMENTS"));
-    body.replace(QLatin1String("$ARGUMENTS"), args);
+    // Expand $1..$9 first: $ARGUMENTS goes last so a literal "$2" inside the
+    // user's arguments isn't mistaken for a template placeholder.
     for (int i = 9; i >= 1; --i) {
         const QString ph = QStringLiteral("$%1").arg(i);
         if (body.contains(ph)) {
@@ -292,6 +293,7 @@ QString expand(const Command &c, const QString &args)
             body.replace(ph, i <= words.size() ? words.at(i - 1) : QString());
         }
     }
+    body.replace(QLatin1String("$ARGUMENTS"), args);
     body = body.trimmed();
     if (!used && !args.isEmpty())
         body += QStringLiteral("\n\n") + args;

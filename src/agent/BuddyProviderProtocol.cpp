@@ -155,6 +155,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     beginJournalRun();
     m_agentIteration = 0;
     m_toolsDisabledForTurn = false;
+    m_emptyToolIdInTurn = false;
     m_accumulatedText.clear();
     m_continuedText.clear();
     m_continuations = 0;
@@ -163,8 +164,9 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_computerBatchFailed = false;
     m_lastCacheMark = -1;
     // One memory listing per run: a stable system prompt keeps the prompt
-    // cache warm even when the model writes memories mid-run.
-    m_memoryIndexSnapshot = memoryIndex();
+    // cache warm even when the model writes memories mid-run. P8: ranked by
+    // relevance to this run's request.
+    m_memoryIndexSnapshot = memoryIndex(text);
     {
         // Instruction files are read once per run for the same reason: an edit
         // mid-run must not change the system prompt and spoil the cache.

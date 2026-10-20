@@ -56,6 +56,51 @@ void BuddyProvider::setAgentMode(bool on)
     emit agentConfigChanged();
 }
 
+void BuddyProvider::setToolDiet(bool on)
+{
+    if (m_toolDiet == on)
+        return;
+    m_toolDiet = on;
+    emit agentConfigChanged();
+}
+
+bool BuddyProvider::toolSchemaVisible(const QString &toolName) const
+{
+    // Diet off: every enabled tool's schema is sent (previous behavior).
+    if (!m_toolDiet)
+        return true;
+    // tool_search is the loader: always visible.
+    if (toolName == QLatin1String("tool_search"))
+        return true;
+    // Core tools are always visible.
+    static const QStringList coreTools{
+        QStringLiteral("bash"), QStringLiteral("str_replace_editor"),
+        QStringLiteral("glob_grep"), QStringLiteral("computer"),
+        // Interaction tools are core too, not deferrable utilities:
+        // asking the user a question and showing/sharing screenshots are
+        // the loop's basic channels, and handoffs pick the active
+        // specialist. Hiding them by default changes behavior, not just
+        // token count — the tests encode "offered by default" for all
+        // three. Utility schemas (web, memory, advisor, todo) stay deferred.
+        QStringLiteral("ask_user_question"),
+        QStringLiteral("share_screenshot"),
+    };
+    if (coreTools.contains(toolName))
+        return true;
+    if (toolName.startsWith(QLatin1String("transfer_to_")))
+        return true;
+    // A restricted specialist's toolset is its core: the diet must not
+    // hide what the active profile is allowed to use (e.g. web_search
+    // for the research specialist).
+    if (m_activeAgent != QLatin1String("buddy")) {
+        const AgentProfile *p = profileFor(m_activeAgent);
+        if (p && !p->tools.isEmpty() && p->tools.contains(toolName))
+            return true;
+    }
+    // Deferred tools only once loaded via tool_search this run.
+    return m_unlockedDeferredTools.contains(toolName);
+}
+
 void BuddyProvider::setAllowBash(bool on)
 {
     if (m_allowBash == on)
@@ -179,6 +224,24 @@ void BuddyProvider::clearToolSteps()
     m_compactedResults = 0;
     m_cachedTokens = 0;
     m_deniedCalls = 0;
+    m_repairedCalls = 0;
+    m_malformedCalls = 0;
+    m_totalToolCalls = 0;
+    m_repairFailCounts.clear();
+    m_repairRateAlerted = false;
+    // P5: a plan belongs to one run.
+    m_plan.clear();
+    m_planActive = false;
+    m_planIndex = 0;
+    m_consecutivePlanFailures = 0;
+    m_replanCount = 0;
+    m_planNote.clear();
+    m_replanNeeded = false;
+    m_pendingProcedure.clear();
+    // In-run undo_edit backups hold full original file contents; the durable
+    // cross-run undo lives in the RunJournal, so drop them here rather than
+    // growing without bound.
+    m_fileUndoBackups.clear();
     clearPendingApproval();
     clearPendingQuestion();
     if (hadAttachments)
@@ -244,6 +307,23 @@ void BuddyProvider::updateResponseMeta()
     meta[QStringLiteral("cachedTokens")] = m_cachedTokens;
     meta[QStringLiteral("compacted")] = m_compactedResults;
     meta[QStringLiteral("denied")] = m_deniedCalls;
+    meta[QStringLiteral("repairedCalls")] = m_repairedCalls;
+    meta[QStringLiteral("malformedCalls")] = m_malformedCalls;
+    // P1: repair-rate alerting. If more than ~30% of tool calls needed repair
+    // or a correction nudge, the prompt or schemas are likely regressed —
+    // flag it once per run in the trace and the response meta.
+    if (!m_repairRateAlerted && m_totalToolCalls >= 5) {
+        const double rate = double(m_repairedCalls + m_malformedCalls) / double(m_totalToolCalls);
+        if (rate > 0.30) {
+            m_repairRateAlerted = true;
+            meta[QStringLiteral("repairRateAlert")] = true;
+            meta[QStringLiteral("repairRate")] = rate;
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("repair") },
+                                 { QStringLiteral("event"), QStringLiteral("rate-alert") },
+                                 { QStringLiteral("rate"), rate },
+                                 { QStringLiteral("total"), m_totalToolCalls } });
+        }
+    }
     meta[QStringLiteral("retries")] = m_retryCount;
     meta[QStringLiteral("traceId")] = m_traceId;
     meta[QStringLiteral("agent")] = m_activeAgent;

@@ -162,6 +162,16 @@ SettingsPage {
 
         SettingsToggleRow {
             visible: panel.prefs.buddyAgentMode
+            label: qsTr("Tool diet (P6)")
+            sub: qsTr("Send only core tools (bash, editor, search, computer) upfront; load the rest on demand via tool_search. Saves context on every request.")
+            checked: panel.prefs.buddyToolDiet
+            onToggled: (c) => panel.prefs.buddyToolDiet = c
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
+
+        SettingsToggleRow {
+            visible: panel.prefs.buddyAgentMode
             label: qsTr("Task checklist & desktop context (todo_write)")
             sub: qsTr("Anthropic TodoWrite live task tracker, Windows clipboard read/write, and live CPU/RAM/display telemetry.")
             checked: panel.prefs.buddyAllowTodoTask

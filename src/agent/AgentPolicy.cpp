@@ -28,7 +28,7 @@ QString expandVars(QString p)
         auto add = [&l](const char *re, const char *to) {
             l.append({ RX(QString::fromUtf8(re), CI), QString::fromUtf8(to) });
         };
-        add(R"(^(\$\{?home\}?|\$env:(userprofile|home)|%userprofile%|%home%)(?=$|[\\/]))", "@HOME@");
+        add(R"(^(\$\{?home\}?|\$env:(userprofile|home|homepath)|%userprofile%|%home%|%homepath%)(?=$|[\\/]))", "@HOME@");
         add(R"(^~(?=$|[\\/]))", "@HOME@");
         add(R"(^(%systemroot%|%windir%|\$env:(systemroot|windir)))", "c:/windows");
         add(R"(^(%programfiles%|\$env:programfiles))", "c:/program files");
@@ -381,16 +381,43 @@ bool AgentPolicy::isPrivateUrl(const QString &rawUrl)
             || host.endsWith(QLatin1String(".lan")) || host == QLatin1String("metadata")
             || host.endsWith(QLatin1String(".metadata.google.internal")))
         return true;
-    // Decimal / hex / octal IPv4 and IPv4-mapped IPv6: QUrl already canonicalises
-    // most of them; QHostAddress catches the rest.
-    QHostAddress addr(host);
-    if (addr.isNull()) {
-        // Bare integers (http://2130706433/) and dotted hex sometimes survive.
-        bool ok = false;
-        const quint32 n = host.toUInt(&ok, 0);
-        if (ok)
-            addr = QHostAddress(n);
+    // Decimal / hex / octal IPv4: normalise dotted hex/octal FIRST, because
+    // QHostAddress parses "0177" as decimal 177 (public!) while browsers
+    // read it as octal 127 (loopback). Base-0 per part, inet_aton packing:
+    // a.b.c.d, a.b.c (c 16-bit), a.b (b 24-bit), bare integer.
+    QHostAddress addr;
+    {
+        const QStringList parts = host.split(QLatin1Char('.'));
+        const int s = parts.size();
+        bool numeric = s >= 1 && s <= 4;
+        for (const QString &part : parts) {
+            if (part.isEmpty()) { numeric = false; break; }
+            for (QChar c : part) {
+                if (!(c.isDigit() || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+                        || c == 'x' || c == 'X')) { numeric = false; break; }
+            }
+            if (!numeric) break;
+        }
+        if (numeric) {
+            bool allOk = true;
+            quint32 n = 0;
+            for (int i = 0; i < s; ++i) {
+                bool partOk = false;
+                const quint32 p = parts.at(i).toUInt(&partOk, 0);
+                const bool last = (i == s - 1);
+                const int shift = (s == 1) ? 0 : (last ? 0 : 8 * (3 - i));
+                const quint32 maxPart = (s == 1) ? 0xffffffffu
+                    : last ? (s == 4 ? 0xffu : s == 3 ? 0xffffu : 0xffffffu)
+                           : 0xffu;
+                if (!partOk || p > maxPart) { allOk = false; break; }
+                n |= p << shift;
+            }
+            if (allOk)
+                addr = QHostAddress(n);
+        }
     }
+    if (addr.isNull())
+        addr = QHostAddress(host);
     if (addr.isNull())
         return false;
     if (addr.isLoopback() || addr.isLinkLocal() || addr.isUniqueLocalUnicast()

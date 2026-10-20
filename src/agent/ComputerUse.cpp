@@ -265,6 +265,18 @@ void ComputerUse::encodeForModel(const QImage &img, int jpegQuality, Result *r) 
 
 // Never leave a mouse button or a key held down when the agent stops, is
 // paused or the run ends.
+bool ComputerUse::injectedOrFail(bool ok, const Done &done, const char *what)
+{
+    if (ok)
+        return true;
+    Result r;
+    r.isError = true;
+    r.text = QStringLiteral("Error: the system blocked simulated %1 (the target window is elevated or otherwise "
+                            "protected from input injection). The action did not happen.").arg(QString::fromLatin1(what));
+    done(r);
+    return false;
+}
+
 void ComputerUse::releaseHeldInput()
 {
     if (m_backend) {
@@ -457,7 +469,11 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
                      .arg(m_limiter.burst()).arg(m_limiter.windowMs() / 1000).arg(wait));
             return;
         }
-        if (a.action == Action::Type && m_backend->focusedIsPassword()) {
+        // Never type into password fields: `type`, and `key`/`hold_key` with a
+        // text-producing combo (which types just the same, one press at a time).
+        const bool typesIntoField = a.action == Action::Type
+            || ((a.action == Action::Key || a.action == Action::HoldKey) && cu::comboTypesText(a.combo));
+        if (typesIntoField && m_backend->focusedIsPassword()) {
             fail(QStringLiteral("Refused: the focused field is a password field. Buddy never types into password "
                                 "fields; ask the user to enter it themselves."));
             return;
@@ -550,9 +566,13 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
         animateTo(start, [this, a, start, target, done, pausedGuard] {
             if (pausedGuard())
                 return;
-            m_backend->moveTo(start);
-            runModified(a, true);
-            m_backend->button(Qt::LeftButton, true);
+            if (!injectedOrFail(m_backend->moveTo(start), done, "mouse move"))
+                return;
+            if (!injectedOrFail(runModified(a, true), done, "modifier keys"))
+                return;
+            if (!injectedOrFail(m_backend->button(Qt::LeftButton, true), done, "mouse press"))
+                return;
+            m_leftHeld = true;   // releaseHeldInput() lets go if the run is cancelled mid-drag
             m_dragging = true;
             m_dragFrom = start;
             emit actionChanged();
@@ -561,6 +581,7 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
                 // never leave the button held down.
                 m_backend->moveTo(target);
                 m_backend->button(Qt::LeftButton, false);
+                m_leftHeld = false;
                 runModified(a, false);
                 finishInput(a, target, done);
             });
@@ -574,14 +595,15 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
         animateTo(target, [this, a, target, done, pausedGuard, fail] {
             if (pausedGuard())
                 return;
-            if (a.hasCoord)
-                m_backend->moveTo(target);
+            if (a.hasCoord && !injectedOrFail(m_backend->moveTo(target), done, "mouse move"))
+                return;
             if (a.action == Action::LeftMouseDown) {
                 if (m_leftHeld) {
                     fail(QStringLiteral("Error: the left mouse button is already held down. Use left_mouse_up first."));
                     return;
                 }
-                m_backend->button(Qt::LeftButton, true);
+                if (!injectedOrFail(m_backend->button(Qt::LeftButton, true), done, "mouse press"))
+                    return;
                 m_leftHeld = true;
                 m_dragging = true;
                 m_dragFrom = target;
@@ -603,10 +625,26 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
             return;
         m_typing = true;
         emit actionChanged();
-        m_backend->keyState(a.combo, true);
+        if (!injectedOrFail(m_backend->keyState(a.combo, true), done, "key press"))
+            return;
         m_heldKeys.append(a.combo);
         later(qRound(a.duration * 1000 * qMin(1.0, m_animScale + 0.02)), [this, a, target, done] {
-            m_backend->keyState(a.combo, false);
+            // The release matters as much as the press: a stuck modifier key
+            // corrupts every later action, so a failed release is an error,
+            // not a success.
+            if (!m_backend->keyState(a.combo, false)) {
+                for (int j = m_heldKeys.size() - 1; j >= 0; --j) {
+                    if (m_heldKeys.at(j).toString() == a.combo.toString()) {
+                        m_heldKeys.removeAt(j);
+                        break;
+                    }
+                }
+                Result r;
+                r.isError = true;
+                r.text = QStringLiteral("Held %1 but releasing it failed: the key may still be down.").arg(a.combo.toString());
+                done(r);
+                return;
+            }
             for (int j = m_heldKeys.size() - 1; j >= 0; --j) {
                 if (m_heldKeys.at(j).toString() == a.combo.toString()) {
                     m_heldKeys.removeAt(j);
@@ -622,7 +660,8 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
         const auto run = [this, a, target, done, pausedGuard] {
             if (pausedGuard())
                 return;
-            if (a.action == Action::Type) {
+            if (a.action == Action::Type
+                    || (a.action == Action::Key && cu::comboTypesText(a.combo))) {
                 // Re-check right before typing: focus may have moved.
                 if (m_backend->focusedIsPassword()) {
                     Result r;
@@ -634,7 +673,10 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
                 }
                 m_typing = true;
                 emit actionChanged();
-                m_backend->typeText(a.text);
+                if (!injectedOrFail(m_backend->typeText(a.text), done, "typing")) {
+                    m_typing = false;
+                    return;
+                }
                 later(int(qMin(1400, 22 * int(a.text.size()) + 200) * m_animScale), [this, a, target, done] {
                     finishInput(a, target, done);
                 });
@@ -642,8 +684,12 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
             }
             m_typing = true;
             emit actionChanged();
-            for (int i = 0; i < a.repeat; ++i)
-                m_backend->keyCombo(a.combo);
+            for (int i = 0; i < a.repeat; ++i) {
+                if (!injectedOrFail(m_backend->keyCombo(a.combo), done, "key press")) {
+                    m_typing = false;
+                    return;
+                }
+            }
             later(int(260 * m_animScale), [this, a, target, done] { finishInput(a, target, done); });
         };
         if (a.hasCoord) {   // click into the field first, like Claude's type-at
@@ -664,32 +710,38 @@ void ComputerUse::perform(const cu::ParsedAction &a, Done done)
     animateTo(target, [this, a, target, done, pausedGuard] {
         if (pausedGuard())
             return;
-        m_backend->moveTo(target);
-        runModified(a, true);
+        if (!injectedOrFail(m_backend->moveTo(target), done, "mouse move"))
+            return;
+        if (!injectedOrFail(runModified(a, true), done, "modifier keys"))
+            return;
         auto press = [this](Qt::MouseButton b, int times) {
             for (int i = 0; i < times; ++i) {
-                m_backend->button(b, true);
-                m_backend->button(b, false);
+                if (!m_backend->button(b, true) || !m_backend->button(b, false))
+                    return false;
             }
             ++m_clickSerial;
             emit clicked();
+            return true;
         };
+        bool ok = true;
         switch (a.action) {
-        case cu::Action::LeftClick: press(Qt::LeftButton, 1); break;
-        case cu::Action::RightClick: press(Qt::RightButton, 1); break;
-        case cu::Action::MiddleClick: press(Qt::MiddleButton, 1); break;
-        case cu::Action::DoubleClick: press(Qt::LeftButton, 2); break;
-        case cu::Action::TripleClick: press(Qt::LeftButton, 3); break;
+        case cu::Action::LeftClick: ok = press(Qt::LeftButton, 1); break;
+        case cu::Action::RightClick: ok = press(Qt::RightButton, 1); break;
+        case cu::Action::MiddleClick: ok = press(Qt::MiddleButton, 1); break;
+        case cu::Action::DoubleClick: ok = press(Qt::LeftButton, 2); break;
+        case cu::Action::TripleClick: ok = press(Qt::LeftButton, 3); break;
         case cu::Action::Scroll: {
             const int n = a.scrollAmount;
             const QString d = a.scrollDirection;
-            m_backend->scroll(d == QLatin1String("right") ? n : d == QLatin1String("left") ? -n : 0,
+            ok = m_backend->scroll(d == QLatin1String("right") ? n : d == QLatin1String("left") ? -n : 0,
                               d == QLatin1String("up") ? n : d == QLatin1String("down") ? -n : 0);
             break;
         }
         default:
             break;
         }
+        if (!injectedOrFail(ok, done, "mouse input"))
+            return;
         runModified(a, false);
         finishInput(a, target, done);
     });

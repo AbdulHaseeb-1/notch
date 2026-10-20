@@ -20,10 +20,15 @@ Modelled on the Claude Agent SDK permission flow
 2. **Input guardrail.** Arguments that contain the user's API key are blocked.
 3. **Hard deny rules.** These apply in every mode, including *Trusted*:
    destructive shell patterns (`rm -rf /`, `rm --recursive --force /`,
-   `find / -delete`, `format`, `diskpart`, `mkfs`, fork bombs, `curl … | sh`,
+   `find / -delete`, `format`, `diskpart`, `mkfs`, fork bombs, `curl … | sh`
+   (including `| python`/`perl`/`node`/… and two-step download-then-run),
    registry or boot edits, disabling Defender, …), writes to OS folders,
    credential stores (`~/.ssh`, `~/.aws`, …), Noch's own settings/data, and
-   `.git/hooks`. Symlinks are followed before the path check.
+   `.git/hooks`. Symlinks are followed before the path check. The patterns
+   run on the raw command and on a de-obfuscated copy, so PowerShell
+   backtick-escapes (``r`e`m`o`v`e``), `C:\*` wildcards and `\\?\`-prefixed
+   paths don't slip past, and a mid-command `cd` never lets relative writes
+   dodge the path checks.
 4. **Read-only fast path.** Read-only shell commands (`ls`, `dir`, `cat`,
    `git status/log/diff`, `Get-ChildItem`, … with no redirects, substitution
    or `tee`), editor `view`, observing computer actions (screenshot, zoom,
@@ -83,10 +88,13 @@ Agent SDK deny reason.
   and any attempt to close the fence early is neutralised. The system prompt
   tells the model that everything inside is data, never instructions.
 - **Prompt-injection flag:** text that targets agents ("ignore previous
+  instructions", "disregard all previous instructions", "forget your
   instructions", "you are now", "exfiltrate", …), including smuggled
   zero-width forms, gets a guardrail banner, taints the run, and the step
   shows *Possible prompt injection* in the trace. The approval card shows
   bidi/zero-width characters as visible markers so nothing is hidden.
+  Error outputs go through the same guardrail: a failed fetch or command can
+  still carry attacker-influenced text.
 
 ## Context and cost
 
@@ -306,8 +314,13 @@ Guardrails:
   at least 80 ms apart.
 - Buddy never types into a password field. On Windows it checks the focused
   control for `ES_PASSWORD` / `EM_GETPASSWORDCHAR` and checks for the Windows
-  Security credential prompt. A UI Automation `IsPassword` check for browser
+  Security credential prompt. The refusal covers `type` as well as `key` /
+  `hold_key` with a text-producing combo (which types just the same, one
+  press at a time). A UI Automation `IsPassword` check for browser
   and WinUI fields is a planned follow-up.
+- If the OS refuses injected input (UIPI: the target window is elevated or
+  protected), the action fails with an error instead of reporting phantom
+  success. A drag that is cancelled mid-way always releases the mouse button.
 - While Buddy is in control, a glow runs around every screen and a HUD under
   the notch shows the current action and a Stop button. Ctrl+Alt+Esc, or
   holding Esc, stops the run. Any real mouse movement or key press pauses it

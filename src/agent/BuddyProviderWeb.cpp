@@ -151,12 +151,28 @@ void BuddyProvider::executeWebFetchTool(const PendingToolCall &call)
         }
         const bool ok = (reply->error() == QNetworkReply::NoError);
         const QString errStr = reply->errorString();
+        // SSRF guard: redirects are followed automatically, but the gate only
+        // vetted the original URL. Re-validate the final URL before the body
+        // can reach the model.
+        const QString finalUrl = reply->url().toString();
+        if (finalUrl != directUrl
+                && (!AgentPolicy::isFetchableUrl(finalUrl) || AgentPolicy::isPrivateUrl(finalUrl))) {
+            reply->deleteLater();
+            finishCurrentToolCall(call,
+                QStringLiteral("Failed to fetch '%1': it redirected to a URL that is not allowed.").arg(directUrl),
+                QString(), true);
+            return;
+        }
         QByteArray raw = reply->readAll();
         reply->deleteLater();
         if (!ok && raw.isEmpty()) {
             finishCurrentToolCall(call, QStringLiteral("Failed to fetch '%1': %2").arg(directUrl, errStr), QString(), true);
             return;
         }
+        // A failed transfer can still carry a partial body: hand it over, but
+        // label it as incomplete so the model doesn't treat it as the page.
+        const QString partialNote = ok ? QString()
+            : QStringLiteral("\n\n[The fetch failed partway (%1): content below is incomplete.]").arg(errStr);
         constexpr int kMaxFetchBytes = 1 * 1024 * 1024;
         const bool truncated = raw.size() > kMaxFetchBytes;
         if (truncated)
@@ -187,8 +203,8 @@ void BuddyProvider::executeWebFetchTool(const PendingToolCall &call)
                 links << (label.isEmpty() ? u : QStringLiteral("- %1 → %2").arg(label.left(60), u));
             }
             finishCurrentToolCall(call,
-                QStringLiteral("Title: %1\nURL: %2\nExtracted %3 link(s):\n%4")
-                    .arg(title, directUrl).arg(links.size()).arg(links.join('\n')),
+                QStringLiteral("Title: %1\nURL: %2\nExtracted %3 link(s):\n%4%5")
+                    .arg(title, directUrl).arg(links.size()).arg(links.join('\n'), partialNote),
                 QString(), false);
             return;
         }
@@ -210,8 +226,8 @@ void BuddyProvider::executeWebFetchTool(const PendingToolCall &call)
                     headings << QStringLiteral("[%1] %2").arg(hm.captured(1).toUpper(), hText);
             }
             finishCurrentToolCall(call,
-                QStringLiteral("Title: %1\nURL: %2\nDescription: %3\nHeadings:\n%4")
-                    .arg(title, directUrl, desc.isEmpty() ? QStringLiteral("(none)") : desc, headings.join('\n')),
+                QStringLiteral("Title: %1\nURL: %2\nDescription: %3\nHeadings:\n%4%5")
+                    .arg(title, directUrl, desc.isEmpty() ? QStringLiteral("(none)") : desc, headings.join('\n'), partialNote),
                 QString(), false);
             return;
         }
@@ -220,7 +236,7 @@ void BuddyProvider::executeWebFetchTool(const PendingToolCall &call)
         const QString header = title.isEmpty()
             ? QStringLiteral("URL: %1\n\n").arg(directUrl)
             : QStringLiteral("Title: %1\nURL: %2\n\n").arg(title, directUrl);
-        finishCurrentToolCall(call, header + body, QString(), false);
+        finishCurrentToolCall(call, header + body + partialNote, QString(), false);
     });
 }
 
@@ -255,6 +271,9 @@ void BuddyProvider::executeToolSearchTool(const PendingToolCall &call)
         { QStringLiteral("memory"), QStringLiteral("memory_20250818"), QStringLiteral("Memory & Context"),
           QStringLiteral("Anthropic Memory Tool: persistent sandboxed cross-session file system at /memories supporting view, create, str_replace, insert, delete, and rename."),
           QStringLiteral("{ command: 'view'|'create'|'str_replace'|'insert'|'delete'|'rename', path?: string, file_text?: string, old_str?: string, new_str?: string }"), m_allowMemory },
+        { QStringLiteral("memory_search"), QStringLiteral("memory_search_20261020"), QStringLiteral("Memory & Context"),
+          QStringLiteral("P8 retrieval over /memories: BM25 search across saved facts and procedures; returns gists with paths."),
+          QStringLiteral("{ query: string, top_k?: int }"), m_allowMemory },
         { QStringLiteral("web_search"), QStringLiteral("web_search_20250305"), QStringLiteral("Web & Research"),
           QStringLiteral("Anthropic Web Search tool: search the live web via DuckDuckGo & Wikipedia with automatic source citation extraction."),
           QStringLiteral("{ query: string, max_results?: int }"), m_allowWebSearch },

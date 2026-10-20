@@ -1,4 +1,8 @@
 #include "BuddyProviderInternal.h"
+#include "AgentPolicyInternal.h"
+#include "MemoryStore.h"
+
+#include <memory>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -73,6 +77,8 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
     }
     if (name == QLatin1String("memory"))
         return QStringLiteral("MEMORY");
+    if (name == QLatin1String("memory_search"))
+        return QStringLiteral("MEMORY SEARCH");
     if (name == QLatin1String("web_search"))
         return QStringLiteral("WEB SEARCH");
     if (name == QLatin1String("web_fetch"))
@@ -182,6 +188,13 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
             ? QStringLiteral("/memories")
             : baseName;
         return QStringLiteral("%1 %2").arg(cmd, target);
+    }
+    // L8: memory_search gets its own summary.
+    if (name == QLatin1String("memory_search")) {
+        const QString q = input.value(QStringLiteral("query")).toString().simplified();
+        const QString shown = q.size() > 40 ? q.left(37) + QStringLiteral("…") : q;
+        return shown.isEmpty() ? QStringLiteral("Search memories")
+                               : QStringLiteral("Search memories: %1").arg(shown);
     }
     if (name == QLatin1String("web_search")) {
         QString q = input.value(QStringLiteral("query")).toString().simplified();
@@ -321,15 +334,44 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
     QProcess *proc = new QProcess(this);
     m_activeProcess = proc;
     const quint64 bashGen = m_runGeneration;
-    if (!workDir.isEmpty() && QDir(workDir).exists()) {
-        if (!AgentPolicy::protectedPathReason(workDir, m_policy.baseDir()).isEmpty()
-                || !AgentPolicy::credentialPathReason(workDir, m_policy.baseDir()).isEmpty()) {
+    // Bound memory on chatty commands: drain incrementally and keep only the
+    // tail, instead of letting QProcess buffer everything until the timeout.
+    const int kMaxBashKeepBytes = 256 * 1024;
+    auto outTail = std::make_shared<QByteArray>();
+    auto outTruncated = std::make_shared<bool>(false);
+    connect(proc, &QProcess::readyRead, this, [proc, outTail, outTruncated]() {
+        outTail->append(proc->readAll());
+        if (outTail->size() > kMaxBashKeepBytes) {
+            *outTruncated = true;
+            *outTail = outTail->mid(outTail->size() - kMaxBashKeepBytes);
+        }
+    });
+    auto takeOutput = [proc, outTail, outTruncated]() {
+        outTail->append(proc->readAll());
+        QString s = QString::fromUtf8(*outTail);
+        if (*outTruncated)
+            s = QStringLiteral("[output truncated to the last 256 KB]\n") + s;
+        return s;
+    };
+    if (!workDir.isEmpty()) {
+        // Resolve exactly like the gate did: relative to the workspace base,
+        // not the process cwd (which may differ). Re-check protected,
+        // credential and private locations against the resolved directory.
+        const QString resolvedWd = QDir::cleanPath(noch::agentpolicy::lexical(workDir, m_policy.baseDir()));
+        if (!AgentPolicy::protectedPathReason(resolvedWd, m_policy.baseDir()).isEmpty()
+                || !AgentPolicy::credentialPathReason(resolvedWd, m_policy.baseDir()).isEmpty()
+                || m_policy.isPrivatePath(resolvedWd)) {
             proc->deleteLater();
             m_activeProcess = nullptr;
             finishCurrentToolCall(call, QStringLiteral("Error: working directory is not allowed."), QString(), true);
             return;
         }
-        proc->setWorkingDirectory(QDir::cleanPath(workDir));
+        if (QDir(resolvedWd).exists()) {
+            proc->setWorkingDirectory(resolvedWd);
+        } else {
+            const QString ws = effectiveWorkspace();
+            proc->setWorkingDirectory(QDir().mkpath(ws) ? ws : QDir::homePath());
+        }
     } else {
         // Safe default: start in the agent workspace folder (created on
         // demand) rather than the user's home, so relative paths land there.
@@ -343,12 +385,12 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
     timeoutTimer->setSingleShot(true);
     timeoutTimer->setInterval(25000);
 
-    connect(timeoutTimer, &QTimer::timeout, this, [this, proc, call, bashGen]() {
+    connect(timeoutTimer, &QTimer::timeout, this, [this, proc, call, bashGen, takeOutput]() {
         if (bashGen != m_runGeneration || m_activeProcess != proc)
             return;
         m_activeProcess = nullptr;
         proc->disconnect(this);
-        const QString partial = QString::fromUtf8(proc->readAll());
+        const QString partial = takeOutput();
         proc->kill();
         proc->deleteLater();
         finishCurrentToolCall(call,
@@ -357,7 +399,7 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
     });
 
     connect(proc, &QProcess::finished, this,
-            [this, proc, timeoutTimer, call, bashGen](int exitCode, QProcess::ExitStatus exitStatus) {
+            [this, proc, timeoutTimer, call, bashGen, takeOutput](int exitCode, QProcess::ExitStatus exitStatus) {
         timeoutTimer->stop();
         if (m_activeProcess == proc)
             m_activeProcess = nullptr;
@@ -365,7 +407,7 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
             proc->deleteLater();
             return;
         }
-        const QString out = QString::fromUtf8(proc->readAll());
+        const QString out = takeOutput();
         proc->deleteLater();
         const bool failed = (exitStatus != QProcess::NormalExit || exitCode != 0);
         const QString formatted = failed
@@ -705,13 +747,26 @@ void BuddyProvider::executeCodeSearchTool(const PendingToolCall &call)
     int filesScanned = 0;
 
     const QFileInfo rootFi(rootPath);
+    // Bound the regex engine's worst case: huge files are skipped and very
+    // long (minified) lines are not matched, so a pathological pattern like
+    // (a+)+$ cannot spin PCRE2 on the UI thread.
+    constexpr int kMaxGrepLineChars = 65536;
     if (rootFi.isFile()) {
+        if (rootFi.size() > 1024 * 512) {
+            finishCurrentToolCall(call,
+                QStringLiteral("Error: '%1' is larger than 512 KB; search a directory or narrow the path.").arg(rootPath),
+                QString(), true);
+            return;
+        }
         QFile f(rootPath);
         if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
             const QStringList lines = QString::fromUtf8(f.readAll()).split('\n');
             for (int i = 0; i < lines.size() && hits.size() < maxResults; ++i) {
-                if (rx.match(lines.at(i)).hasMatch())
-                    hits << QStringLiteral("%1:%2: %3").arg(rootFi.fileName()).arg(i + 1).arg(lines.at(i).trimmed().left(140));
+                const QString line = lines.at(i);
+                if (line.size() > kMaxGrepLineChars)
+                    continue;
+                if (rx.match(line).hasMatch())
+                    hits << QStringLiteral("%1:%2: %3").arg(rootFi.fileName()).arg(i + 1).arg(line.trimmed().left(140));
             }
         }
     } else {
@@ -733,8 +788,11 @@ void BuddyProvider::executeCodeSearchTool(const PendingToolCall &call)
             const QStringList lines = QString::fromUtf8(raw).split('\n');
             const QString rel = QDir(rootPath).relativeFilePath(fp);
             for (int i = 0; i < lines.size() && hits.size() < maxResults; ++i) {
-                if (rx.match(lines.at(i)).hasMatch())
-                    hits << QStringLiteral("%1:%2: %3").arg(rel).arg(i + 1).arg(lines.at(i).trimmed().left(140));
+                const QString line = lines.at(i);
+                if (line.size() > kMaxGrepLineChars)
+                    continue;
+                if (rx.match(line).hasMatch())
+                    hits << QStringLiteral("%1:%2: %3").arg(rel).arg(i + 1).arg(line.trimmed().left(140));
             }
         }
     }
@@ -749,6 +807,36 @@ void BuddyProvider::executeCodeSearchTool(const PendingToolCall &call)
         QStringLiteral("Grep \"%1\" (%2 match(es)):\n%3")
             .arg(pattern).arg(hits.size()).arg(hits.join('\n')),
         QString(), false);
+}
+
+void BuddyProvider::executeMemorySearchTool(const PendingToolCall &call)
+{
+    const QString query = call.input.value(QStringLiteral("query")).toString().trimmed();
+    if (query.isEmpty()) {
+        finishCurrentToolCall(call, QStringLiteral("Error: 'query' is required."), QString(), true);
+        return;
+    }
+    int topK = call.input.value(QStringLiteral("top_k")).toInt(5);
+    topK = qBound(1, topK, 10);
+
+    MemoryStore store(memoriesPath());
+    const QList<MemoryStore::SearchHit> hits = store.search(query, topK);
+    if (hits.isEmpty()) {
+        finishCurrentToolCall(call, QStringLiteral("No saved memories match \"%1\".").arg(query),
+                              QString(), false);
+        return;
+    }
+    QStringList lines;
+    lines << QStringLiteral("%1 memor%2 matched \"%3\":")
+                 .arg(hits.size()).arg(hits.size() == 1 ? QStringLiteral("y") : QStringLiteral("ies"), query);
+    for (const MemoryStore::SearchHit &h : hits) {
+        lines << QStringLiteral("\n• /memories/%1%2\n  %3")
+                     .arg(h.fact.id,
+                          h.fact.procedure ? QStringLiteral(" [procedure]") : QString(),
+                          h.fact.gist);
+    }
+    lines << QStringLiteral("\nUse the memory tool with command 'view' and the path to read a full memory.");
+    finishCurrentToolCall(call, lines.join(QLatin1Char('\n')), QString(), false);
 }
 
 void BuddyProvider::executeMemoryTool(const PendingToolCall &call)

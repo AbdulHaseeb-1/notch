@@ -23,16 +23,17 @@ struct DenyRule {
 const DenyRule kShellDeny[] = {
     { R"RX((^|[;&|\s(`{])(sudo\s+)?rm\s+(-[a-z]*\s+)*-[a-z]*(r[a-z]*f|f[a-z]*r)[a-z]*\s+(-[a-z-]+\s+)*("?(/|~|\$home|/\*|\*|\.\.?|[a-z]:[\\/]?)"?)(\s|$|\)))RX",
       "recursive force-delete of a root, home or working directory" },
-    { R"RX((^|[;&|\s])(rd|rmdir)\s+(/[sq]\s+)+"?[a-z]:\\?"?(\s|$))RX", "recursive delete of a whole drive" },
+    { R"RX((^|[;&|\s])(rd|rmdir)\s+(/[sq]\s+)+"?[a-z]:\\?\*?"?(\s|$))RX", "recursive delete of a whole drive" },
     { R"RX((^|[;&|\s])(rd|rmdir|del|erase)\s+.*([a-z]:\\windows|[a-z]:\\program files|%systemroot%|%windir%))RX", "deleting Windows system folders" },
-    { R"RX(remove-item\b.*-recurse.*(\s|'|")([a-z]:\\?|~|\$home|\$env:(systemroot|windir|userprofile)|[a-z]:\\windows[^\s]*)('|"|\s|$))RX", "recursive delete of a drive, home or system folder" },
-    { R"RX(remove-item\b.*(\s|'|")([a-z]:\\?|~|\$home|\$env:userprofile)('|")?\s+.*-recurse)RX", "recursive delete of a drive or home folder" },
+    { R"RX(remove-item\b.*-recurse.*(\s|'|")((\\\\\?\\|\\\\\.\\|\\\?\?\\)?[a-z]:\\?\*?|~|\$home|\$env:(systemroot|windir|userprofile|homepath)|[a-z]:\\windows[^\s]*)('|"|\s|$))RX", "recursive delete of a drive, home or system folder" },
+    { R"RX(remove-item\b.*(\s|'|")((\\\\\?\\|\\\\\.\\|\\\?\?\\)?[a-z]:\\?\*?|~|\$home|\$env:userprofile)('|")?\s+.*-recurse)RX", "recursive delete of a drive or home folder" },
     { R"RX((^|[;&|\s])format(\.com)?\s+[a-z]:)RX", "formatting a drive" },
     { R"RX(\b(diskpart|clear-disk|format-volume|initialize-disk|remove-partition|mkfs(\.\w+)?|wipefs|sgdisk|fdisk|parted)\b)RX", "disk partitioning or formatting" },
     { R"RX(\bdd\s+.*\bof=/dev/)RX", "raw write to a block device" },
     { R"RX(:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:)RX", "fork bomb" },
-    { R"RX(\b(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod)\b[^;&]*\|\s*(sh|bash|zsh|iex|invoke-expression|powershell|pwsh|cmd)\b)RX", "download-and-execute pipeline" },
+    { R"RX(\b(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod)\b[^;&]*\|\s*(sh|bash|zsh|iex|invoke-expression|powershell|pwsh|cmd|python[\d.]*|pythonw|perl|ruby|node|deno|bun|php|lua)\b)RX", "download-and-execute pipeline" },
     { R"RX(\b(iex|invoke-expression)\b.*\b(downloadstring|downloadfile|iwr|irm|invoke-webrequest|invoke-restmethod|net\.webclient)\b)RX", "download-and-execute pipeline" },
+    { R"RX(\b(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod)\b[^;&|]*(-\bo\b|--output\b|-outfile\b|\s-O\b)[^;&|]*[;&]+\s*(sudo\s+)?(powershell|pwsh|python[\d.]*|pythonw|perl|ruby|node|deno|bun|php|lua)\b)RX", "download-and-execute pipeline" },
     { R"RX(\|\s*(sudo\s+)?(sh|bash|zsh|dash|ksh|fish|pwsh|powershell|cmd)(\.exe)?(\s+-[a-z]+)*\s*(-\s*)?($|[;&|)]))RX", "piping generated text into a shell" },
     { R"RX(\|\s*(iex|invoke-expression)\b)RX", "piping generated text into a shell" },
     { R"RX(\b(frombase64string|base64\s+(-d|--decode|-D))\b.*\b(iex|invoke-expression|sh|bash|scriptblock\]::create)\b)RX", "decoding and running a hidden command" },
@@ -250,12 +251,18 @@ void parseShell(const QString &raw, Parsed &out, int depth)
             i = endAt + 2;
             continue;
         }
-        if (c == QLatin1Char('`')) {   // backtick command substitution
+        if (c == QLatin1Char('`')) {
             ++i;
             const int endB = s.indexOf(QLatin1Char('`'), i);
             if (endB < 0) { word += s.mid(i); break; }
-            addNested(s.mid(i, endB - i), out, depth);
-            word += QLatin1String("$()");
+            if (endB == i + 1) {
+                // PowerShell escape (`e -> e): a lone one-letter sh `x`
+                // substitution is vanishingly rare, the obfuscation use is not.
+                word += s.at(i);
+            } else {
+                addNested(s.mid(i, endB - i), out, depth);   // backtick command substitution
+                word += QLatin1String("$()");
+            }
             i = endB + 1;
             continue;
         }
@@ -361,6 +368,16 @@ bool looksRecursive(const QStringList &argv)
 bool isCatastrophicTarget(const QString &raw)
 {
     QString t = expandVars(unquote(raw)).trimmed();
+    // Fold Win32 device prefixes (\\?\, \\.\, \??\) before anything else;
+    // lexical() does this too, but this check deliberately avoids the full
+    // normalization and must not miss them.
+    for (const QLatin1String p : { QLatin1String("\\\\?\\"), QLatin1String("\\\\.\\"),
+                                   QLatin1String("\\??\\") }) {
+        if (t.startsWith(p, Qt::CaseInsensitive)) {
+            t = t.mid(p.size());
+            break;
+        }
+    }
     t.replace(QLatin1Char('\\'), QLatin1Char('/'));
     while (t.endsWith(QLatin1Char('/')) && t.size() > 1)
         t.chop(1);
@@ -374,9 +391,14 @@ bool isCatastrophicTarget(const QString &raw)
     static const RX driveRoot(QStringLiteral(R"(^[a-z]:[/\\]?$)"), CI);
     if (driveRoot.match(l).hasMatch())
         return true;
+    // Wildcard wipes of a whole drive or home (C:\*, ~/*) are catastrophic too.
+    static const RX driveStar(QStringLiteral(R"(^[a-z]:/\*$)"), CI);
+    static const RX homeStar(QStringLiteral(R"(^~/?\*$)"), CI);
+    if (driveStar.match(l).hasMatch() || homeStar.match(l).hasMatch())
+        return true;
     // Home itself (after expansion).
     const QString home = QDir::fromNativeSeparators(QDir::homePath()).toLower();
-    if (l == home || l == home + QLatin1Char('/'))
+    if (l == home || l == home + QLatin1Char('/') || l == home + QLatin1String("/*"))
         return true;
     return false;
 }
@@ -454,7 +476,7 @@ QString opaqueReason(const Parsed &parsed, const QString &raw)
 {
     static const RX evalish(QStringLiteral(
         R"RX(\b(eval|invoke-expression|iex|scriptblock\]::create|frombase64string|\[convert\]::frombase64string)\b)RX"
-        R"RX(|\b(bash|sh|zsh|dash|ksh|fish|pwsh|powershell|cmd)(\.exe)?\s+(-[a-z]*c|--command|/c)\b)RX"
+        R"RX(|\b(bash|sh|zsh|dash|ksh|fish|pwsh|powershell|cmd)(\.exe)?\s+(-c(o(m(m(a(nd?)?)?)?)?)?|--command|/c|/k)\b)RX"
         R"RX(|\b(python|python3|perl|ruby|node|php|lua|osascript)\b[^\n]*\s(-c|--eval|-e)\b)RX"
         R"RX(|\b(mshta|rundll32|regsvr32|certutil)\b)RX"), CI);
     if (evalish.match(raw).hasMatch())
@@ -466,9 +488,13 @@ QString opaqueReason(const Parsed &parsed, const QString &raw)
         if (inList(p, kShells) && seg.argv.size() >= 2) {
             for (const QString &a : seg.argv.mid(1)) {
                 const QString l = a.toLower();
-                if (l == QLatin1String("-c") || l == QLatin1String("/c") || l == QLatin1String("--command")
-                        || l == QLatin1String("-command") || l == QLatin1String("-enc")
-                        || l == QLatin1String("-encodedcommand") || l == QLatin1String("-e"))
+                // PowerShell/cmd accept unambiguous prefixes (-co, -en, ...) and cmd /k.
+                const bool dashC = l.size() > 1 && l.startsWith(QLatin1Char('-')) && !l.startsWith(QLatin1String("--"))
+                    && QStringLiteral("-command").startsWith(l);
+                const bool dashEnc = l.size() > 1 && l.startsWith(QLatin1Char('-')) && !l.startsWith(QLatin1String("--"))
+                    && QStringLiteral("-encodedcommand").startsWith(l);
+                if (l == QLatin1String("/c") || l == QLatin1String("/k")
+                        || l == QLatin1String("--command") || l == QLatin1String("-e") || dashC || dashEnc)
                     return QStringLiteral("runs a command the gate cannot see");
             }
         }
@@ -585,6 +611,27 @@ bool pathLike(const QString &w)
 
 } // namespace
 
+namespace noch::agentpolicy {
+
+bool isAbsoluteShellPath(const QString &w)
+{
+    const QString t = unquote(w).trimmed();
+    if (t.isEmpty())
+        return false;
+    if (t.startsWith(QLatin1Char('/')))
+        return true;
+    if (t.startsWith(QLatin1String("\\\\")))
+        return true;
+    if (t.size() >= 2 && t.at(1) == QLatin1Char(':'))
+        return true;
+    if (t.startsWith(QLatin1Char('~')) || t.startsWith(QLatin1Char('$'))
+            || t.startsWith(QLatin1Char('%')))
+        return true;
+    return false;
+}
+
+} // namespace noch::agentpolicy
+
 QString AgentPolicy::dangerousCommandReason(const QString &command)
 {
     static const QList<QPair<RX, QString>> rules = [] {
@@ -600,14 +647,16 @@ QString AgentPolicy::dangerousCommandReason(const QString &command)
     }();
     const QString stripped = stripInvisible(command);
     const QString c = stripped.simplified();
-    // De-obfuscated form: drop quotes, carets and backslash-escapes so
-    // rm"-rf" / and r^m -r^f / still match the deny patterns.
+    // De-obfuscated form: drop quotes, carets, backslash-escapes and
+    // PowerShell backtick-escapes so rm"-rf" /, r^m -r^f / and
+    // r`e`m`o`v`e`-`i`t`e`m still match the deny patterns.
     QString flat;
     for (int i = 0; i < stripped.size(); ++i) {
         const QChar ch = stripped.at(i);
         if (ch == QLatin1Char('"') || ch == QLatin1Char('\''))
             continue;
-        if ((ch == QLatin1Char('^') || ch == QLatin1Char('\\')) && i + 1 < stripped.size()) {
+        if ((ch == QLatin1Char('^') || ch == QLatin1Char('\\') || ch == QLatin1Char('`'))
+                && i + 1 < stripped.size()) {
             flat += stripped.at(++i);
             continue;
         }
@@ -679,6 +728,12 @@ AgentPolicy::ShellPaths AgentPolicy::shellPaths(const QString &command)
             continue;
         const QString prog = progName(seg.argv.at(i));
         const QStringList args = seg.argv.mid(i + 1);
+        // cd/chdir/pushd/popd/Set-Location move the process cwd, so relative
+        // paths later in the command no longer resolve against the vetted base.
+        if (prog == QLatin1String("cd") || prog == QLatin1String("chdir")
+                || prog == QLatin1String("pushd") || prog == QLatin1String("popd")
+                || prog == QLatin1String("set-location") || prog == QLatin1String("sl"))
+            out.changesDir = true;
         QStringList candidates;
         for (const QString &a : args) {
             if (a.startsWith(QLatin1Char('-')))

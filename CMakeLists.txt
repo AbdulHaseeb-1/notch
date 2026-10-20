@@ -45,6 +45,8 @@ set(NOCH_SOURCES
     src/agent/ComputerUse.h
     src/agent/ComputerUseActions.cpp
     src/agent/ComputerUseCoordinates.cpp
+    src/agent/ComputerUseKeys.cpp
+    src/agent/ComputerUseKeys.h
     src/agent/ComputerUseWin.cpp
     src/agent/ProjectContext.cpp
     src/agent/ProjectContext.h
@@ -55,6 +57,15 @@ set(NOCH_SOURCES
     src/agent/SessionLink.cpp
     src/agent/SessionLink.h
     src/agent/StreamAccumulator.cpp
+    src/agent/ToolSchemas.cpp
+    src/agent/ToolSchemas.h
+    src/agent/PlanValidator.cpp
+    src/agent/PlanValidator.h
+    src/agent/HookBus.cpp
+    src/agent/HookBus.h
+    src/agent/MemoryStore.cpp
+    src/agent/MemoryStore.h
+    src/agent/MemoryExtractor.h
     src/agent/StreamAccumulator.h
     src/agent/UserQuestions.cpp
     src/agent/UserQuestions.h

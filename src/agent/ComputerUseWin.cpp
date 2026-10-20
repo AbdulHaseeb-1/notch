@@ -22,7 +22,7 @@ namespace {
 class WinBackend;
 WinBackend *g_watcher = nullptr;
 
-WORD vkFor(const QString &k)
+WORD vkFor(const QString &k, bool *needsShift = nullptr)
 {
     if (k == QLatin1String("ctrl")) return VK_CONTROL;
     if (k == QLatin1String("alt")) return VK_MENU;
@@ -58,8 +58,17 @@ WORD vkFor(const QString &k)
         if (c >= QLatin1Char('0') && c <= QLatin1Char('9'))
             return WORD(c.unicode());
         const SHORT vk = VkKeyScanW(c.unicode());
-        if (vk != -1)
+        if (vk != -1) {
+            // High byte: shift/ctrl/alt state the layout needs for this char.
+            // Honor Shift by pressing it around the key; ctrl/alt combos
+            // (AltGr) are not representable here, so fail instead of mistyping.
+            const int state = (vk >> 8) & 0xFF;
+            if (state & 0x06)
+                return 0;
+            if (needsShift)
+                *needsShift = (state & 0x01) != 0;
             return WORD(vk & 0xFF);
+        }
     }
     return 0;
 }
@@ -90,7 +99,7 @@ public:
         return m_mapper ? m_mapper->physicalToLogical(phys) : phys;
     }
 
-    void moveTo(const QPoint &logical) override
+    bool moveTo(const QPoint &logical) override
     {
         const QPoint phys = m_mapper ? m_mapper->logicalToPhysical(logical) : logical;
         // Absolute move on the virtual desktop (0..65535), injected so the
@@ -101,14 +110,16 @@ public:
         const int vh = qMax(1, GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1);
         INPUT in{};
         in.type = INPUT_MOUSE;
-        in.mi.dx = LONG(qRound((phys.x() - vx) * 65535.0 / vw));
-        in.mi.dy = LONG(qRound((phys.y() - vy) * 65535.0 / vh));
+        // Clamp: out-of-range absolute coordinates wrap unpredictably.
+        in.mi.dx = LONG(qBound(0, qRound((phys.x() - vx) * 65535.0 / vw), 65535));
+        in.mi.dy = LONG(qBound(0, qRound((phys.y() - vy) * 65535.0 / vh), 65535));
         in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-        SendInput(1, &in, sizeof(INPUT));
+        const bool ok = SendInput(1, &in, sizeof(INPUT)) == 1;
         m_lastInjected = phys;
+        return ok;
     }
 
-    void button(Qt::MouseButton b, bool down) override
+    bool button(Qt::MouseButton b, bool down) override
     {
         INPUT in{};
         in.type = INPUT_MOUSE;
@@ -118,25 +129,27 @@ public:
             in.mi.dwFlags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP;
         else
             in.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
-        SendInput(1, &in, sizeof(INPUT));
+        return SendInput(1, &in, sizeof(INPUT)) == 1;
     }
 
-    void scroll(int dx, int dy) override
+    bool scroll(int dx, int dy) override
     {
+        bool ok = true;
         if (dy != 0) {
             INPUT in{};
             in.type = INPUT_MOUSE;
             in.mi.dwFlags = MOUSEEVENTF_WHEEL;
             in.mi.mouseData = DWORD(dy * WHEEL_DELTA);
-            SendInput(1, &in, sizeof(INPUT));
+            ok = SendInput(1, &in, sizeof(INPUT)) == 1 && ok;
         }
         if (dx != 0) {
             INPUT in{};
             in.type = INPUT_MOUSE;
             in.mi.dwFlags = MOUSEEVENTF_HWHEEL;
             in.mi.mouseData = DWORD(dx * WHEEL_DELTA);
-            SendInput(1, &in, sizeof(INPUT));
+            ok = SendInput(1, &in, sizeof(INPUT)) == 1 && ok;
         }
+        return ok;
     }
 
     bool typeText(const QString &text) override
@@ -166,9 +179,14 @@ public:
         QVector<WORD> vks;
         for (const QString &m : combo.modifiers)
             vks << vkFor(m);
-        vks << vkFor(combo.key);
+        bool needsShift = false;
+        vks << vkFor(combo.key, &needsShift);
         if (vks.contains(WORD(0)))
             return false;
+        // A shifted punctuation char (e.g. '+'): hold Shift around the key
+        // unless the combo already holds it.
+        if (needsShift && !combo.modifiers.contains(QLatin1String("shift")))
+            vks.insert(vks.size() - 1, WORD(VK_SHIFT));
         QVector<INPUT> ev;
         for (WORD vk : vks) {
             INPUT in{};
@@ -192,9 +210,12 @@ public:
         QVector<WORD> vks;
         for (const QString &m : combo.modifiers)
             vks << vkFor(m);
-        vks << vkFor(combo.key);
+        bool needsShift = false;
+        vks << vkFor(combo.key, &needsShift);
         if (vks.contains(WORD(0)))
             return false;
+        if (needsShift && !combo.modifiers.contains(QLatin1String("shift")))
+            vks.insert(vks.size() - 1, WORD(VK_SHIFT));
         QVector<INPUT> ev;
         // Down in order, up in reverse, like a person pressing and letting go.
         for (int n = 0; n < vks.size(); ++n) {

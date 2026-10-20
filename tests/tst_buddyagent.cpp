@@ -2617,6 +2617,43 @@ private slots:
         QCOMPARE(fake->requests.size(), 1);
         QVERIFY(!QFile::exists(QDir(ws.path()).filePath("cancelled.txt")));
     }
+
+    // P6: tool diet visibility
+    void toolDietHidesDeferredTools() {
+        QVERIFY(bp->toolDiet());  // ON by default (P1 token savings)
+        // Core tools + tool_search always visible
+        QVERIFY(bp->toolSchemaVisible(QStringLiteral("bash")));
+        QVERIFY(bp->toolSchemaVisible(QStringLiteral("str_replace_editor")));
+        QVERIFY(bp->toolSchemaVisible(QStringLiteral("glob_grep")));
+        QVERIFY(bp->toolSchemaVisible(QStringLiteral("computer")));
+        QVERIFY(bp->toolSchemaVisible(QStringLiteral("tool_search")));
+        // Deferred tools hidden until loaded
+        QVERIFY(!bp->toolSchemaVisible(QStringLiteral("memory")));
+        QVERIFY(!bp->toolSchemaVisible(QStringLiteral("advisor")));
+        QVERIFY(!bp->toolSchemaVisible(QStringLiteral("web_fetch")));
+        // ... and all visible when the user turns the diet off.
+        bp->setToolDiet(false);
+        QVERIFY(!bp->toolDiet());
+        QVERIFY(bp->toolSchemaVisible(QStringLiteral("memory")));
+        bp->setToolDiet(true);
+    }
+
+    void structuredLevelLadder() {
+        // P2 ladder: Ollama tool-capable models use function calling,
+        // non-tool-capable models drop to JSON mode (the rung whose
+        // 400-fallback path H1 now covers on every provider).
+        bp->setProvider(QStringLiteral("ollama"));
+        bp->setModel(QStringLiteral("llama3.2"));
+        QCOMPARE(int(bp->structuredLevel()), int(BuddyProvider::StructuredLevel::FunctionCalling));
+        bp->setModel(QStringLiteral("phi3:mini"));
+        QCOMPARE(int(bp->structuredLevel()), int(BuddyProvider::StructuredLevel::JsonMode));
+        bp->setModel(QStringLiteral("qwen2.5-coder:14b"));
+        QCOMPARE(int(bp->structuredLevel()), int(BuddyProvider::StructuredLevel::FunctionCalling));
+        bp->setProvider(QStringLiteral("openai"));
+        QCOMPARE(int(bp->structuredLevel()), int(BuddyProvider::StructuredLevel::FunctionCalling));
+        bp->setProvider(QStringLiteral("anthropic"));
+        QCOMPARE(int(bp->structuredLevel()), int(BuddyProvider::StructuredLevel::FunctionCalling));
+    }
 };
 
 QTEST_MAIN(TstBuddyAgent)

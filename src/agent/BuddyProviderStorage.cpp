@@ -1,4 +1,6 @@
 #include "BuddyProviderInternal.h"
+#include "MemoryExtractor.h"
+#include "MemoryStore.h"
 
 using namespace noch::buddyprovider;
 
@@ -345,8 +347,16 @@ void BuddyProvider::clearPendingApproval()
     m_approvalRule = AgentPolicy::SavedRule();
     m_approvalTimer.stop();
     m_approvalSecondsLeft = 0;
+    const PendingToolCall call = m_approvalCall;
+    m_approvalCall = PendingToolCall();
     if (m_pendingApproval.isEmpty())
         return;
+    // The wait is over without a decision (cancel, timeout, superseded run):
+    // don't leave the tool step stuck at "pending". Resolution paths
+    // (approve/decline/timeout) overwrite these fields right after.
+    setStepFields(call.stepIndex,
+                  { { QStringLiteral("status"), QStringLiteral("cancelled") },
+                    { QStringLiteral("policyNote"), tr("Stopped while waiting for approval") } });
     m_pendingApproval.clear();
     emit pendingApprovalChanged();
 }
@@ -432,8 +442,14 @@ void BuddyProvider::clearPendingQuestion()
     m_questionTimer.stop();
     m_questionSecondsLeft = 0;
     m_questions.clear();
+    const PendingToolCall call = m_questionCall;
+    m_questionCall = PendingToolCall();
     if (m_pendingQuestion.isEmpty())
         return;
+    // Same as approvals: a cancelled wait must not leave a "pending" step.
+    setStepFields(call.stepIndex,
+                  { { QStringLiteral("status"), QStringLiteral("cancelled") },
+                    { QStringLiteral("policyNote"), tr("Stopped while waiting for an answer") } });
     m_pendingQuestion.clear();
     emit pendingQuestionChanged();
 }
@@ -586,8 +602,89 @@ void BuddyProvider::finishTrace(const QString &outcome, const QString &detail)
         QFile::remove(files.at(i).absoluteFilePath());
 }
 
+// P8: end-of-run memory pipeline. Extract atomic fact candidates from the
+// run's user messages, dedupe them against the store with BM25, then
+// ADD (new) or UPDATE (same fact restated). Near-misses are added with a
+// review note instead of silently merging — a contradiction the user can
+// see beats a fact the model quietly overwrote. A completed plan is also
+// distilled into /memories/procedures/.
+void BuddyProvider::extractRunMemories()
+{
+    if (!m_allowMemory)
+        return;
+    MemoryStore store(memoriesPath());
+
+    QStringList userTexts;
+    for (const QJsonValue &v : m_agentMessages) {
+        const QJsonObject msg = v.toObject();
+        if (msg.value(QStringLiteral("role")).toString() == QLatin1String("user")
+            && msg.value(QStringLiteral("content")).isString())
+            userTexts << msg.value(QStringLiteral("content")).toString();
+    }
+    const QStringList candidates = extractFactCandidates(userTexts);
+    // M4: read the corpus once; every candidate searches this snapshot.
+    const QList<MemoryFact> corpus = store.list();
+    int added = 0, updated = 0, flagged = 0;
+    for (QString fact : candidates) {
+        // H2: the memory store bypasses every output guardrail in the
+        // harness and re-injects facts into future system prompts, so a
+        // pasted secret would leak to every future provider. Redact first.
+        fact = redact(fact);
+        if (fact.trimmed().size() < 8)
+            continue;
+        // M3: dedupe on token *coverage*, not raw BM25 — BM25 scores scale
+        // with corpus size, so fixed thresholds misbehave on small stores.
+        // coverage = share of the candidate's terms found in the top hit.
+        const QList<MemoryStore::SearchHit> hits = store.search(corpus, fact, 1);
+        const QStringList factTerms = MemoryStore::tokenize(fact);
+        const QSet<QString> qUniq(factTerms.begin(), factTerms.end());
+        double coverage = 0.0;
+        if (!hits.isEmpty() && !qUniq.isEmpty()) {
+            const QSet<QString> docUniq(MemoryStore::tokenize(hits.first().fact.text).begin(),
+                                       MemoryStore::tokenize(hits.first().fact.text).end());
+            int shared = 0;
+            for (const QString &t : qUniq)
+                if (docUniq.contains(t))
+                    ++shared;
+            coverage = double(shared) / qUniq.size();
+        }
+        if (!hits.isEmpty() && coverage >= 0.6) {
+            // The same fact restated: update with the newest wording.
+            // Note: updateFact may rename the file to its new content
+            // hash — the returned id keeps the content-addressing
+            // invariant coherent instead of silently breaking it.
+            if (!store.updateFact(hits.first().fact.id, fact + QLatin1Char('\n')).isEmpty())
+                ++updated;
+        } else if (!hits.isEmpty() && coverage > 0.0) {
+            // Topical overlap but a different statement: keep both, flag it.
+            const QString noted = fact + QStringLiteral("\n(auto-extracted; possible overlap with /memories/%1 — verify)")
+                                             .arg(hits.first().fact.id);
+            if (!store.addFact(noted).isEmpty()) {
+                ++added;
+                ++flagged;
+            }
+        } else if (!store.addFact(fact).isEmpty()) {
+            ++added;
+        }
+    }
+    if (!m_pendingProcedure.isEmpty()) {
+        if (!store.addFact(redact(m_pendingProcedure), true).isEmpty())
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
+                                 { QStringLiteral("event"), QStringLiteral("procedure-saved") } });
+        m_pendingProcedure.clear();
+    }
+    if (added || updated) {
+        addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
+                             { QStringLiteral("event"), QStringLiteral("extracted") },
+                             { QStringLiteral("added"), added },
+                             { QStringLiteral("updated"), updated },
+                             { QStringLiteral("flagged"), flagged } });
+    }
+}
+
 void BuddyProvider::emitFinal(const QString &text)
 {
+    extractRunMemories();
     const QString safe = redact(text);
     finishTrace(QStringLiteral("ok"));
     emit responseReady(safe);

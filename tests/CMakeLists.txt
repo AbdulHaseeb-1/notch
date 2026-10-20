@@ -12,6 +12,8 @@ set(NOCH_AGENT_POLICY_SOURCES
     src/agent/AgentPolicyRules.cpp
     src/agent/AgentPolicySafety.cpp
     src/agent/AgentPolicyShell.cpp
+    src/agent/ComputerUseKeys.cpp
+    src/agent/ComputerUseKeys.h
 )
 
 # Computer-use parsing, coordinate mapping and the controller are separate
@@ -21,6 +23,8 @@ set(NOCH_COMPUTER_USE_SOURCES
     src/agent/ComputerUse.h
     src/agent/ComputerUseActions.cpp
     src/agent/ComputerUseCoordinates.cpp
+    src/agent/ComputerUseKeys.cpp
+    src/agent/ComputerUseKeys.h
     src/agent/ComputerUseWin.cpp
 )
 
@@ -56,6 +60,14 @@ noch_add_unit_test(tst_stream
     SOURCES tests/tst_stream.cpp
             src/agent/StreamAccumulator.cpp src/agent/StreamAccumulator.h
     LIBS Qt6::Core)
+
+noch_add_unit_test(tst_toolrepair
+    SOURCES tests/tst_toolrepair.cpp
+            src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
+            src/agent/PlanValidator.cpp src/agent/PlanValidator.h
+            src/agent/HookBus.cpp src/agent/HookBus.h
+            src/agent/MemoryStore.cpp src/agent/MemoryStore.h src/agent/MemoryExtractor.h
+    LIBS Qt6::Core Qt6::Gui Qt6::Network)
 
 noch_add_unit_test(tst_buddysfx
     SOURCES tests/tst_buddysfx.cpp src/voice/BuddySfx.cpp src/voice/BuddySfx.h
@@ -144,6 +156,10 @@ noch_add_unit_test(tst_buddyagent
             src/agent/BuddyProviderPrompts.cpp src/agent/BuddyProviderProtocol.cpp
             src/agent/BuddyProviderRun.cpp src/agent/BuddyProviderStorage.cpp
             src/agent/BuddyProviderTools.cpp src/agent/BuddyProviderWeb.cpp
+            src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
+            src/agent/PlanValidator.cpp src/agent/PlanValidator.h
+            src/agent/HookBus.cpp src/agent/HookBus.h
+            src/agent/MemoryStore.cpp src/agent/MemoryStore.h src/agent/MemoryExtractor.h
             ${NOCH_AGENT_POLICY_SOURCES}
             src/agent/UserQuestions.cpp src/agent/UserQuestions.h
             src/agent/RunJournal.cpp src/agent/RunJournal.h

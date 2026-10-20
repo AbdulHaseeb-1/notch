@@ -18,5 +18,8 @@ QString expandVars(QString path);
 QString lexical(const QString &raw, const QString &base);
 QStringList pathKeys(const QString &raw, const QString &base);
 bool under(const QString &path, const QString &dir);
+// True when a shell word resolves without consulting the process cwd
+// (drive-absolute, root-absolute, UNC, or home/env-var rooted).
+bool isAbsoluteShellPath(const QString &w);
 
 } // namespace noch::agentpolicy

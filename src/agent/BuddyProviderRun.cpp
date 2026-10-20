@@ -115,9 +115,16 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 && (status == 400 || status == 422)
                 && (errMsg.contains(QLatin1String("tool"), Qt::CaseInsensitive)
                     || errMsg.contains(QLatin1String("function"), Qt::CaseInsensitive))) {
-            m_toolsDisabledForTurn = true;
-            dispatchAgentTurn();
-            return;
+            if (m_emptyToolIdInTurn) {
+                // Our own malformed tool_result (empty id), not the provider
+                // rejecting tools: surface the error instead of silently
+                // falling back to a tool-free turn.
+                m_emptyToolIdInTurn = false;
+            } else {
+                m_toolsDisabledForTurn = true;
+                dispatchAgentTurn();
+                return;
+            }
         }
         setActiveToolState(QString(), QString());
         addSpan(QJsonObject{ { "type", "model" }, { "iteration", m_agentIteration }, { "status", status },
@@ -164,8 +171,11 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                          { "inputTokens", usage.value(QStringLiteral("input_tokens")).toInt(usage.value(QStringLiteral("prompt_tokens")).toInt(0)) },
                          { "outputTokens", usage.value(QStringLiteral("output_tokens")).toInt(usage.value(QStringLiteral("completion_tokens")).toInt(0)) } });
     const QString turnText = extractText(doc).trimmed();
-    if (!turnText.isEmpty())
+    if (!turnText.isEmpty()) {
         m_accumulatedText = turnText;
+        // P5: the model may propose a structured plan for multi-step tasks.
+        m_planNote = checkForPlan(turnText);
+    }
 
     // Did the model stop because it ran out of output tokens? Then the text
     // is only the first part of the answer (and any tool call in it is half
@@ -267,21 +277,61 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
         m_lastStopReason = root.value(QStringLiteral("done_reason")).toString(QStringLiteral("stop"));
         const QJsonObject msg = root.value(QStringLiteral("message")).toObject();
         const QJsonArray tcs = msg.value(QStringLiteral("tool_calls")).toArray();
+        QJsonArray patchedTcs = tcs;
         for (int i = 0; i < tcs.size(); ++i) {
             const QJsonObject tcObj = tcs.at(i).toObject();
             const QJsonObject fn = tcObj.value(QStringLiteral("function")).toObject();
             PendingToolCall tc;
             tc.id = tcObj.value(QStringLiteral("id")).toString(QStringLiteral("call_%1_%2").arg(m_agentIteration).arg(i));
+            if (tcObj.value(QStringLiteral("id")).toString().isEmpty()) {
+                // Ollama doesn't always send ids: patch the synthesized one
+                // into the stored message so a strict gateway sees consistent
+                // tool_calls.
+                QJsonObject patched = patchedTcs.at(i).toObject();
+                patched[QStringLiteral("id")] = tc.id;
+                patchedTcs[i] = patched;
+            }
             tc.name = fn.value(QStringLiteral("name")).toString();
             const QJsonValue argsVal = fn.value(QStringLiteral("arguments"));
+            // Keep the raw text: the repair pipeline (normalizeToolCall) gets
+            // one more chance at arguments that do not parse as JSON.
+            tc.rawArguments = argsVal.isString() ? argsVal.toString() : QString();
             tc.input = argsVal.isObject()
                 ? argsVal.toObject()
                 : QJsonDocument::fromJson(argsVal.toString().toUtf8()).object();
             if (!tc.name.isEmpty())
                 toolCalls.append(tc);
         }
-        if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < m_maxSteps)
-            m_agentMessages.append(msg);
+        if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < m_maxSteps) {
+            QJsonObject stored = msg;
+            stored[QStringLiteral("tool_calls")] = patchedTcs;
+            m_agentMessages.append(stored);
+        }
+        // P2: Ollama JSON mode — no native tool_calls; the reply IS the
+        // envelope. Parse it, keep the history coherent, and show the
+        // envelope's text (not raw JSON) to the user.
+        if (toolCalls.isEmpty() && !cutByLimit && m_agentIteration < m_maxSteps
+            && structuredLevel() == StructuredLevel::JsonMode) {
+            const QString content = msg.value(QStringLiteral("content")).toString();
+            const QList<TextToolCall> parsed = extractTextToolCalls(content);
+            if (!parsed.isEmpty()) {
+                for (int i = 0; i < parsed.size(); ++i) {
+                    PendingToolCall tc;
+                    tc.id = QStringLiteral("text_%1_%2").arg(m_agentIteration).arg(i);
+                    tc.name = parsed.at(i).name;
+                    tc.input = parsed.at(i).input;
+                    toolCalls.append(tc);
+                }
+                m_agentMessages.append(msg);
+                const QJsonDocument env = QJsonDocument::fromJson(content.trimmed().toUtf8());
+                const QString envText = env.object().value(QStringLiteral("text")).toString().trimmed();
+                if (!envText.isEmpty())
+                    m_accumulatedText = envText;
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("text-protocol") },
+                                     { QStringLiteral("event"), QStringLiteral("calls-parsed") },
+                                     { QStringLiteral("count"), parsed.size() } });
+            }
+        }
     } else {
         // OpenAI / Custom
         const QJsonArray choices = root.value(QStringLiteral("choices")).toArray();
@@ -297,6 +347,9 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 tc.id = tcObj.value(QStringLiteral("id")).toString(QStringLiteral("call_%1_%2").arg(m_agentIteration).arg(i));
                 tc.name = fn.value(QStringLiteral("name")).toString();
                 const QJsonValue argsVal = fn.value(QStringLiteral("arguments"));
+                // Keep the raw text: the repair pipeline (normalizeToolCall) gets
+                // one more chance at arguments that do not parse as JSON.
+                tc.rawArguments = argsVal.isString() ? argsVal.toString() : QString();
                 tc.input = argsVal.isObject()
                     ? argsVal.toObject()
                     : QJsonDocument::fromJson(argsVal.toString().toUtf8()).object();
@@ -305,6 +358,82 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
             }
             if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < m_maxSteps)
                 m_agentMessages.append(msg);
+        }
+    }
+
+    // H1/P2 bottom rung: the provider rejected the tools parameter earlier
+    // (m_toolsDisabledForTurn) — a model that still wants to act emits the
+    // text protocol instead. Parse it so the loop survives on ANY provider,
+    // not just Ollama JSON mode.
+    if (toolCalls.isEmpty() && m_toolsDisabledForTurn && !cutByLimit
+        && m_agentIteration < m_maxSteps && !turnText.isEmpty()) {
+        const QList<TextToolCall> parsed = extractTextToolCalls(turnText);
+        if (!parsed.isEmpty()) {
+            for (int i = 0; i < parsed.size(); ++i) {
+                PendingToolCall tc;
+                tc.id = QStringLiteral("text_%1_%2").arg(m_agentIteration).arg(i);
+                tc.name = parsed.at(i).name;
+                tc.input = parsed.at(i).input;
+                toolCalls.append(tc);
+            }
+            m_agentMessages.append(QJsonObject{
+                { QStringLiteral("role"), QStringLiteral("assistant") },
+                { QStringLiteral("content"), turnText } });
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("text-protocol") },
+                                 { QStringLiteral("event"), QStringLiteral("calls-parsed-fallback") },
+                                 { QStringLiteral("count"), parsed.size() } });
+        }
+    }
+
+    // Model-agnostic harness: normalize near-miss tool calls (fenced JSON,
+    // trailing commas, wrong argument names, stringified numbers) and answer
+    // the hopeless ones with a correction nudge instead of a cryptic failure.
+    // A call without an id can never pair with its result: nudge the model to
+    // re-emit it, and remember the turn so a 400 isn't misread as the
+    // provider rejecting tools.
+    for (PendingToolCall &tc : toolCalls) {
+        if (tc.id.isEmpty()) {
+            ++m_malformedCalls;
+            m_emptyToolIdInTurn = true;
+            tc.repairError = QStringLiteral("Your '%1' tool call arrived without an id, so it cannot be answered. "
+                                            "Re-emit the complete tool call with all fields.").arg(tc.name);
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("repair") },
+                                 { QStringLiteral("tool"), tc.name },
+                                 { QStringLiteral("event"), QStringLiteral("missing-id") } });
+            continue;
+        }
+        QString note;
+        const ToolCallRepair rr = normalizeToolCall(tc.name, tc.input, tc.rawArguments, &note);
+        ++m_totalToolCalls;
+        if (rr == ToolCallRepair::Repaired) {
+            ++m_repairedCalls;
+            m_repairFailCounts.remove(tc.name);
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("repair") },
+                                 { QStringLiteral("tool"), tc.name },
+                                 { QStringLiteral("event"), QStringLiteral("repaired") } });
+        } else if (rr == ToolCallRepair::Unrepairable) {
+            ++m_malformedCalls;
+            // P1 bounded retry: 1 deterministic repair + 1 guided model retry.
+            // L1: failures are counted PER TOOL, so alternating two broken
+            // calls (A, B, A, B…) can't dodge the escalation. Two
+            // unrepairable calls of the same tool → skip it, not loop.
+            if (++m_repairFailCounts[tc.name] >= 2) {
+                m_repairFailCounts.remove(tc.name);
+                tc.repairError = QStringLiteral(
+                    "This '%1' tool call failed validation twice, so I'm skipping it to avoid looping. "
+                    "Problems:\n- %2\nIf you still need this done, rephrase your approach.")
+                    .arg(tc.name, note);
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("repair") },
+                                     { QStringLiteral("tool"), tc.name },
+                                     { QStringLiteral("event"), QStringLiteral("escalated") } });
+            } else {
+                tc.repairError = note;
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("repair") },
+                                     { QStringLiteral("tool"), tc.name },
+                                     { QStringLiteral("event"), QStringLiteral("unrepairable") } });
+            }
+        } else {
+            m_repairFailCounts.remove(tc.name);
         }
     }
 
@@ -387,6 +516,32 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
             + tr("\n\n_Stopped after %1 tool rounds — ask me to continue if you want more._").arg(m_maxSteps);
     }
     setActiveToolState(QString(), QString());
+    // P5: a plan was accepted or rejected this turn, but the model issued no
+    // tool calls to act on. Feed the note back so it starts executing (or
+    // corrects) the plan instead of the run ending here.
+    if (!m_planNote.isEmpty() && toolCalls.isEmpty()) {
+        m_agentMessages.append(QJsonObject{ { QStringLiteral("role"), QStringLiteral("user") },
+                                             { QStringLiteral("content"), m_planNote } });
+        m_planNote.clear();
+        dispatchAgentTurn();
+        return;
+    }
+    // P5 bounded replan: 2 consecutive plan steps failed. Ask the model for
+    // a revised plan (it replaces the current one via checkForPlan).
+    if (m_replanNeeded) {
+        m_replanNeeded = false;
+        const QString failedStep = m_planIndex < m_plan.size()
+            ? QStringLiteral("Step %1 (%2)").arg(m_plan[m_planIndex].step).arg(m_plan[m_planIndex].tool)
+            : QStringLiteral("the current step");
+        m_agentMessages.append(QJsonObject{
+            { QStringLiteral("role"), QStringLiteral("user") },
+            { QStringLiteral("content"),
+              QStringLiteral("[%1 failed twice. Output a revised ```plan block that works around the problem. "
+                             "This is replan %2 of 2.]")
+                  .arg(failedStep).arg(m_replanCount) } });
+        dispatchAgentTurn();
+        return;
+    }
     updateResponseMeta();
     if (m_accumulatedText.trimmed().isEmpty()) {
         if (!m_toolSteps.isEmpty()) {
@@ -399,6 +554,39 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
         emitFinal(m_accumulatedText);
     }
     emit statusChanged(QStringLiteral("idle"));
+}
+
+QString BuddyProvider::checkForPlan(const QString &text)
+{
+    const QJsonArray planArr = extractPlanBlock(text);
+    if (planArr.isEmpty())
+        return QString();
+
+    // M7: validate availability for THIS run (agent profile + tool diet),
+    // not just registry existence.
+    const PlanValidation v = validatePlan(planArr, [this](const QString &tool) {
+        return toolAllowedForActiveAgent(tool) && toolSchemaVisible(tool);
+    });
+    if (!v.ok) {
+        addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                             { QStringLiteral("event"), QStringLiteral("invalid") },
+                             { QStringLiteral("errors"), QJsonArray::fromStringList(v.errors) } });
+        return QStringLiteral("\n[Plan rejected: %1 — please output a corrected ```plan block.]")
+            .arg(v.errors.join(QStringLiteral("; ")));
+    }
+
+    // A new valid plan replaces any current one (this is also the replan path).
+    m_plan = v.steps;
+    m_planActive = true;
+    m_planIndex = 0;
+    m_consecutivePlanFailures = 0;
+    addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                         { QStringLiteral("event"), QStringLiteral("accepted") },
+                         { QStringLiteral("steps"), v.steps.size() },
+                         { QStringLiteral("replans"), m_replanCount } });
+    return QStringLiteral("\n[Plan accepted (%1 steps). Execute step 1 now: %2 — verify: %3]")
+        .arg(v.steps.size())
+        .arg(v.steps.first().tool, v.steps.first().verify);
 }
 
 void BuddyProvider::processNextToolCall()
@@ -452,14 +640,63 @@ void BuddyProvider::processNextToolCall()
                 { QStringLiteral("role"), QStringLiteral("user") },
                 { QStringLiteral("content"), resultsContent }
             });
+        } else if ((m_provider == QLatin1String("ollama")
+                   && structuredLevel() == StructuredLevel::JsonMode)
+                   || m_toolsDisabledForTurn) {
+            // P2: JSON mode has no role:"tool" messages — results go back as
+            // one user turn in the text protocol.
+            QStringList lines;
+            lines << QStringLiteral("[Tool results]");
+            for (const ToolOutcome &out : m_completedTools) {
+                lines << QStringLiteral("- %1%2: %3")
+                             .arg(out.name,
+                                  out.isError ? QStringLiteral(" (error)") : QString(),
+                                  out.output);
+            }
+            m_agentMessages.append(QJsonObject{
+                { QStringLiteral("role"), QStringLiteral("user") },
+                { QStringLiteral("content"), lines.join(QChar('\n')) } });
         } else {
+            // OpenAI-style providers take {role:"tool"} messages. Screenshots
+            // used to be dropped here, leaving every non-Claude model blind
+            // while the prompt told it to look at the screen.
+            const bool canSee = modelVisionCapable();
             for (const ToolOutcome &out : m_completedTools) {
                 QJsonObject toolMsg{
                     { QStringLiteral("role"), QStringLiteral("tool") },
                     { QStringLiteral("tool_call_id"), out.id },
                     { QStringLiteral("name"), out.name },
-                    { QStringLiteral("content"), out.output }
                 };
+                if (!out.imageBase64.isEmpty() && canSee) {
+                    const QString mediaType = out.imageMediaType.isEmpty()
+                        ? QStringLiteral("image/png") : out.imageMediaType;
+                    if (m_provider == QLatin1String("ollama")) {
+                        // Ollama /api/chat carries images in a top-level array.
+                        toolMsg[QStringLiteral("content")] = out.output;
+                        toolMsg[QStringLiteral("images")] = QJsonArray{ out.imageBase64 };
+                    } else {
+                        toolMsg[QStringLiteral("content")] = QJsonArray{
+                            QJsonObject{
+                                { QStringLiteral("type"), QStringLiteral("text") },
+                                { QStringLiteral("text"), out.output } },
+                            QJsonObject{
+                                { QStringLiteral("type"), QStringLiteral("image_url") },
+                                { QStringLiteral("image_url"), QJsonObject{
+                                    { QStringLiteral("url"),
+                                      QStringLiteral("data:%1;base64,%2")
+                                          .arg(mediaType, out.imageBase64) } } } }
+                        };
+                    }
+                } else if (!out.imageBase64.isEmpty()) {
+                    // Say so explicitly instead of silently dropping the
+                    // screenshot: otherwise a blind model keeps asking for
+                    // pictures it never receives.
+                    toolMsg[QStringLiteral("content")] = out.output + QStringLiteral(
+                        "\n\n(Screenshot captured but not shown: this model cannot process images. "
+                        "Describe what you need from the screen in words instead.)");
+                } else {
+                    toolMsg[QStringLiteral("content")] = out.output;
+                }
                 m_agentMessages.append(toolMsg);
             }
         }
@@ -470,6 +707,12 @@ void BuddyProvider::processNextToolCall()
     }
 
     const PendingToolCall call = m_pendingTools.takeFirst();
+    // The call never parsed into something runnable: answer with a correction
+    // nudge instead of executing, so the model can fix the arguments and retry.
+    if (!call.repairError.isEmpty()) {
+        finishCurrentToolCall(call, call.repairError, QString(), true);
+        return;
+    }
     const QString summary = summarizeToolCall(call.name, call.input);
     m_stepTimer.start();
     // A batch of computer actions was planned against the screen as it was
@@ -499,6 +742,17 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
         m_stepStatusOverride = QStringLiteral("denied");
         finishCurrentToolCall(call, toModel, QString(), true);
     };
+
+    // P6 tool diet: the model tried a deferred tool without loading it via
+    // tool_search first. Tell it how, instead of a cryptic unknown-tool deny.
+    if (m_toolDiet && !toolSchemaVisible(call.name) && toolSchema(call.name)) {
+        deny(QStringLiteral("diet:not-loaded"),
+             tr("Tool '%1' is not loaded").arg(call.name),
+             QStringLiteral("The tool '%1' is available but its schema was not sent to save context. "
+                            "Call tool_search with query '%1' to load it, then try again.")
+                 .arg(call.name));
+        return;
+    }
 
     // Loop guard: the same tool with the same input again and again means
     // the model is stuck; tell it to change approach.
@@ -540,12 +794,10 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
         return;
     }
 
-    // Handoffs move control between agents and have no side effects.
-    if (call.name.startsWith(QLatin1String("transfer_to_"))) {
-        setStepFields(call.stepIndex, { { QStringLiteral("policy"), QStringLiteral("handoff") } });
-        executeHandoff(call);
-        return;
-    }
+    // Handoffs move control between agents and have no side effects; the
+    // policy allow-lists them, so they flow through evaluate() like any
+    // other call and stay under the single choke point.
+    const bool isHandoff = call.name.startsWith(QLatin1String("transfer_to_"));
     // A specialist only gets its own toolset (the model sees only those
     // tools, but an out-of-set call is still refused here).
     if (!toolAllowedForActiveAgent(call.name)) {
@@ -555,7 +807,36 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
         return;
     }
 
-    const AgentPolicy::Decision d = m_policy.evaluate(call.name, call.input);
+    // P3: PreToolUse hook bus. The path-normalize hook may rewrite the
+    // input (relative paths resolved against the workspace); the policy
+    // hook then evaluates the rewritten call and stashes the Decision for
+    // the bookkeeping below. Everything past this point uses `effective`,
+    // so approval, saved rules and execution all bind to the rewritten args.
+    PendingToolCall effective = call;
+    {
+        HookContext hctx;
+        hctx.event = HookEvent::PreToolUse;
+        hctx.toolName = call.name;
+        hctx.input = call.input;
+        const HookResult pre = m_hookBus.run(HookEvent::PreToolUse, hctx);
+        if (pre.hasRewrite)
+            effective.input = hctx.input;
+        // M1: the gate previously read only the policy stash, so a deny or
+        // ask from any other hook was dead code. A hook may make the
+        // decision stricter, never looser; Defer resolves to Ask (the user
+        // decides now) so nothing silently falls through.
+        if (pre.decision == HookDecision::Deny) {
+            m_lastPolicyDecision.verdict = AgentPolicy::Verdict::Deny;
+            m_lastPolicyDecision.rule = pre.rule;
+            m_lastPolicyDecision.reason = pre.reason;
+        } else if ((pre.decision == HookDecision::Ask || pre.decision == HookDecision::Defer)
+                   && m_lastPolicyDecision.verdict == AgentPolicy::Verdict::Allow) {
+            m_lastPolicyDecision.verdict = AgentPolicy::Verdict::Ask;
+            m_lastPolicyDecision.rule = pre.rule;
+            m_lastPolicyDecision.reason = pre.reason;
+        }
+    }
+    const AgentPolicy::Decision d = m_lastPolicyDecision;
     addSpan(QJsonObject{ { "type", "permission" }, { "tool", call.name }, { "rule", d.rule },
                          { "verdict", d.verdict == AgentPolicy::Verdict::Allow ? "allow"
                                     : d.verdict == AgentPolicy::Verdict::Deny ? "deny" : "ask" } });
@@ -565,14 +846,19 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
                             "choose a safer approach or ask the user.").arg(d.reason));
         return;
     }
+    if (isHandoff) {
+        setStepFields(call.stepIndex, { { QStringLiteral("policy"), QStringLiteral("handoff") } });
+        executeHandoff(effective);
+        return;
+    }
     if (d.verdict == AgentPolicy::Verdict::Ask && !direct) {
         // Human in the loop: pause this call until the user decides.
-        m_approvalCall = call;
+        m_approvalCall = effective;
         // Only a plain "this changes files" question can become a standing
         // rule; the special asks (secrets, opaque commands, private network,
         // screen content ...) stay questions every time.
         m_approvalRule = (d.rule == QLatin1String("ask:shell") || d.rule == QLatin1String("ask:edit"))
-            ? m_policy.suggestRule(call.name, call.input) : AgentPolicy::SavedRule();
+            ? m_policy.suggestRule(effective.name, effective.input) : AgentPolicy::SavedRule();
         QVariantMap step = (call.stepIndex >= 0 && call.stepIndex < m_toolSteps.size())
             ? m_toolSteps.at(call.stepIndex).toMap() : QVariantMap();
         setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("pending") },
@@ -583,10 +869,10 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
             { QStringLiteral("id"), call.id },
             { QStringLiteral("stepIndex"), call.stepIndex },
             { QStringLiteral("tool"), call.name },
-            { QStringLiteral("badge"), badgeForTool(call.name, call.input) },
-            { QStringLiteral("icon"), iconForTool(call.name, call.input) },
-            { QStringLiteral("title"), AgentPolicy::displaySafe(redact(summarizeToolCall(call.name, call.input)), 200) },
-            { QStringLiteral("detail"), AgentPolicy::displaySafe(redact(detailForToolCall(call.name, call.input)), 600) },
+            { QStringLiteral("badge"), badgeForTool(effective.name, effective.input) },
+            { QStringLiteral("icon"), iconForTool(effective.name, effective.input) },
+            { QStringLiteral("title"), AgentPolicy::displaySafe(redact(summarizeToolCall(effective.name, effective.input)), 200) },
+            { QStringLiteral("detail"), AgentPolicy::displaySafe(redact(detailForToolCall(effective.name, effective.input)), 600) },
             { QStringLiteral("reason"), d.reason },
             { QStringLiteral("rule"), d.rule },
             { QStringLiteral("secondsLeft"), m_approvalSecondsLeft },
@@ -603,7 +889,7 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
     }
     setStepFields(call.stepIndex, { { QStringLiteral("policy"),
                                       d.verdict == AgentPolicy::Verdict::Ask ? QStringLiteral("user-initiated") : d.rule } });
-    executeToolCall(call);
+    executeToolCall(effective);
 }
 
 void BuddyProvider::executeToolCall(const PendingToolCall &call)
@@ -639,6 +925,12 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
             return;
         }
         executeMemoryTool(call);
+    } else if (call.name == QLatin1String("memory_search")) {
+        if (!m_allowMemory) {
+            finishCurrentToolCall(call, QStringLiteral("Error: memory search is disabled in Settings > Buddy."), QString(), true);
+            return;
+        }
+        executeMemorySearchTool(call);
     } else if (call.name == QLatin1String("web_search")) {
         if (!m_allowWebSearch) {
             finishCurrentToolCall(call, QStringLiteral("Error: web search tool is disabled in Settings > Buddy."), QString(), true);
@@ -761,9 +1053,31 @@ int BuddyProvider::compactContext()
         bool hasImage = false;
         bool already = false;
         if (ref.block < 0) {
-            const QString c = m.value(QStringLiteral("content")).toString();
-            chars = c.size();
-            already = c.startsWith(QLatin1String("[Earlier tool result cleared"));
+            // OpenAI-style tool message. Since vision support, its content can
+            // be an array: [{type:"text",...},{type:"image_url",...}], and
+            // Ollama carries screenshots in a top-level "images" array.
+            const QJsonValue content = m.value(QStringLiteral("content"));
+            const bool ollamaImages = !m.value(QStringLiteral("images")).toArray().isEmpty();
+            if (content.isArray()) {
+                bool stillHasImage = ollamaImages;
+                for (const QJsonValue &part : content.toArray()) {
+                    const QJsonObject po = part.toObject();
+                    if (po.value(QStringLiteral("type")).toString() == QLatin1String("image_url"))
+                        stillHasImage = true;
+                    else
+                        chars += po.value(QStringLiteral("text")).toString().size();
+                }
+                hasImage = stillHasImage;
+                // Never "already cleared": without an image the message is an
+                // ordinary result again, and bulky text still compacts below.
+                already = false;
+            } else {
+                const QString c = content.toString();
+                chars = c.size();
+                already = c.startsWith(QLatin1String("[Earlier tool result cleared"))
+                       || c.startsWith(QLatin1String("[Earlier screenshot removed"));
+                hasImage = ollamaImages;
+            }
         } else {
             const QJsonValue v = m.value(QStringLiteral("content")).toArray().at(ref.block).toObject()
                                      .value(QStringLiteral("content"));
@@ -796,13 +1110,58 @@ int BuddyProvider::compactContext()
     for (const Candidate &cand : candidates) {
         QJsonObject m = m_agentMessages.at(cand.ref.msg).toObject();
         if (cand.ref.block < 0) {
-            m[QStringLiteral("content")] = placeholder(cand.chars);
+            if (cand.image) {
+                // Drop the image but keep the text: the model still sees what
+                // the tool reported, just not the pixels.
+                const QJsonValue content = m.value(QStringLiteral("content"));
+                if (content.isArray()) {
+                    QJsonArray parts;
+                    for (const QJsonValue &part : content.toArray()) {
+                        if (part.toObject().value(QStringLiteral("type")).toString()
+                                == QLatin1String("image_url"))
+                            continue;
+                        parts.append(part);
+                    }
+                    m[QStringLiteral("content")] = parts;
+                } else {
+                    m[QStringLiteral("content")] = QStringLiteral("[Earlier screenshot removed to save context.]");
+                }
+                m.remove(QStringLiteral("images"));
+            } else {
+                m[QStringLiteral("content")] = placeholder(cand.chars);
+            }
         } else {
             QJsonArray content = m.value(QStringLiteral("content")).toArray();
             QJsonObject block = content.at(cand.ref.block).toObject();
-            block[QStringLiteral("content")] = cand.image
-                ? QStringLiteral("[Earlier screenshot removed to save context.]")
-                : placeholder(cand.chars);
+            const QJsonValue bc = block.value(QStringLiteral("content"));
+            if (cand.image && bc.isArray()) {
+                // Anthropic tool results pair text with the screenshot
+                // ([{type:"text",...},{type:"image",...}]): drop only the
+                // image parts so the model keeps what the tool reported, but
+                // note the removal so it doesn't wonder where the image went.
+                QJsonArray parts;
+                bool droppedImage = false;
+                for (const QJsonValue &part : bc.toArray()) {
+                    if (part.toObject().value(QStringLiteral("type")).toString()
+                            == QLatin1String("image")) {
+                        droppedImage = true;
+                        continue;
+                    }
+                    parts.append(part);
+                }
+                if (droppedImage) {
+                    parts.append(QJsonObject{
+                        { QStringLiteral("type"), QStringLiteral("text") },
+                        { QStringLiteral("text"),
+                          QStringLiteral("[Earlier screenshot removed to save context.]") }
+                    });
+                }
+                block[QStringLiteral("content")] = QJsonValue(parts);
+            } else {
+                block[QStringLiteral("content")] = cand.image
+                    ? QStringLiteral("[Earlier screenshot removed to save context.]")
+                    : placeholder(cand.chars);
+            }
             content[cand.ref.block] = block;
             m[QStringLiteral("content")] = content;
         }
@@ -829,9 +1188,19 @@ bool BuddyProvider::scheduleRetry(int status, QNetworkReply::NetworkError err, c
     ++m_retryCount;
     int delayMs = 1000 * (1 << (m_retryCount - 1));            // 1 s, 2 s, 4 s
     bool ok = false;
-    const int ra = QString::fromLatin1(retryAfter).trimmed().toInt(&ok);
-    if (ok && ra > 0)
+    const QString raStr = QString::fromLatin1(retryAfter).trimmed();
+    const int ra = raStr.toInt(&ok);
+    if (ok && ra > 0) {
         delayMs = qMin(ra, 20) * 1000;
+    } else if (!raStr.isEmpty()) {
+        // Retry-After may also be an HTTP-date (RFC 9110 §13.1.3).
+        const QDateTime retryAt = QDateTime::fromString(raStr, Qt::RFC2822Date);
+        if (retryAt.isValid()) {
+            const qint64 secs = QDateTime::currentDateTimeUtc().secsTo(retryAt.toUTC());
+            if (secs > 0)
+                delayMs = int(qMin<qint64>(secs, 20)) * 1000;
+        }
+    }
     delayMs += int(QRandomGenerator::global()->bounded(250));  // jitter
     addSpan(QJsonObject{ { "type", "retry" }, { "status", status }, { "attempt", m_retryCount },
                          { "delayMs", delayMs } });
@@ -846,16 +1215,104 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
 {
     if (isError && call.name == QLatin1String("computer"))
         m_computerBatchFailed = true;
-    bool flagged = false;
+    // P5: track plan progress. A successful tool call that matches the current
+    // plan step advances the plan; failures count toward the replan trigger.
+    if (m_planActive && m_planIndex < m_plan.size()) {
+        PlanStep &ps = m_plan[m_planIndex];
+        if (call.name == ps.tool) {
+            if (m_stepStatusOverride == QLatin1String("denied") || !call.repairError.isEmpty()) {
+                // M7: gate semantics (denial) and repair nudges never
+                // executed anything — the step is skipped, NOT failed, and
+                // must not burn the bounded-replan budget.
+                ps.status = QStringLiteral("skipped");
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                                     { QStringLiteral("event"), QStringLiteral("step-skipped") },
+                                     { QStringLiteral("step"), ps.step },
+                                     { QStringLiteral("tool"), call.name },
+                                     { QStringLiteral("reason"),
+                                       m_stepStatusOverride == QLatin1String("denied")
+                                           ? QStringLiteral("denied") : QStringLiteral("repair") } });
+            } else if (isError) {
+                ps.status = QStringLiteral("failed");
+                ++m_consecutivePlanFailures;
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                                     { QStringLiteral("event"), QStringLiteral("step-failed") },
+                                     { QStringLiteral("step"), ps.step },
+                                     { QStringLiteral("tool"), call.name },
+                                     { QStringLiteral("consecutiveFailures"), m_consecutivePlanFailures } });
+                // P5 bounded replan: 2 consecutive failures → ask for a new
+                // plan (max 2 replans); beyond that the plan has failed.
+                if (m_consecutivePlanFailures >= 2) {
+                    if (m_replanCount < 2) {
+                        ++m_replanCount;
+                        m_replanNeeded = true;
+                        m_consecutivePlanFailures = 0;
+                        addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                                             { QStringLiteral("event"), QStringLiteral("replan-triggered") },
+                                             { QStringLiteral("replans"), m_replanCount } });
+                    } else {
+                        m_planActive = false;
+                        addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                                             { QStringLiteral("event"), QStringLiteral("failed") },
+                                             { QStringLiteral("reason"), QStringLiteral("replan-limit") } });
+                    }
+                }
+            } else {
+                ps.status = QStringLiteral("done");
+                m_consecutivePlanFailures = 0;
+                ++m_planIndex;
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                                     { QStringLiteral("event"), QStringLiteral("step-done") },
+                                     { QStringLiteral("step"), ps.step },
+                                     { QStringLiteral("tool"), call.name } });
+                if (m_planIndex >= m_plan.size()) {
+                    m_planActive = false;
+                    addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
+                                         { QStringLiteral("event"), QStringLiteral("completed") } });
+                    // P8: distill the finished plan into a reusable
+                    // procedure; saved by the end-of-run extractor.
+                    QString proc = QStringLiteral("Completed plan checklist:\n");
+                    for (const PlanStep &s : m_plan)
+                        proc += QStringLiteral("%1. %2 — verify: %3\n")
+                                    .arg(s.step).arg(s.tool, s.verify);
+                    m_pendingProcedure = proc;
+                }
+            }
+        }
+    }
     const QString statusOverride = m_stepStatusOverride;
     m_stepStatusOverride.clear();
-    const QString guarded = isError ? redact(output) : guardToolOutput(call, output, &flagged);
-    const QString capped = capOutput(guarded);
+    // P3: PostToolUse hook bus. The output-guard hook applies the same
+    // guardrail (fencing, injection scan, secret redaction); other hooks
+    // can observe or rewrite further. Error outputs go through it too:
+    // proxy/DNS error pages and tool stderr can carry attacker-influenced
+    // text (and invisible chars).
+    // P1/perf: cap BEFORE the guardrail. The model only ever sees the
+    // capped text (outcome.output = capped below), so running ~24 regex
+    // passes over the full pre-cap output (up to 256 KB bash / 1 MB web)
+    // buys nothing — two orders of magnitude cheaper, same security
+    // surface. Fencing coherence improves: the <untrusted_content> tags
+    // now wrap exactly what the model receives.
+    const QString capped = capOutput(output);
+    QString guarded;
+    {
+        HookContext octx;
+        octx.event = HookEvent::PostToolUse;
+        octx.toolName = call.name;
+        octx.input = call.input;
+        octx.output = capped;
+        octx.isError = isError;
+        const HookResult post = m_hookBus.run(HookEvent::PostToolUse, octx);
+        guarded = octx.output;
+        Q_UNUSED(post);
+    }
+    const bool flagged = m_outputGuardFlagged;
     const int elapsedMs = m_stepTimer.isValid() ? qMax(1, int(m_stepTimer.elapsed())) : 1;
     if (call.stepIndex >= 0 && call.stepIndex < m_toolSteps.size()) {
         QVariantMap step = m_toolSteps.at(call.stepIndex).toMap();
-        // Structured result fields for the trace UI.
-        step[QStringLiteral("output")] = redact(output).left(800);
+        // Structured result fields for the trace UI. UI record reuses the
+        // capped+guarded text instead of re-redacting the full raw output.
+        step[QStringLiteral("output")] = guarded.left(800);
         step[QStringLiteral("status")] = !statusOverride.isEmpty() ? statusOverride
                                        : isError ? QStringLiteral("error") : QStringLiteral("done");
         step[QStringLiteral("durationMs")] = elapsedMs;
@@ -879,7 +1336,7 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
     ToolOutcome outcome;
     outcome.id = call.id;
     outcome.name = call.name;
-    outcome.output = capped;
+    outcome.output = guarded;   // capped-then-guarded (see above)
     outcome.imageBase64 = imageBase64;
     outcome.imageMediaType = imageMediaType;
     outcome.toolsetName = call.toolsetName;

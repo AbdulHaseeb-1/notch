@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ComputerUseKeys.h"
+
 #include <QElapsedTimer>
 #include <QImage>
 #include <QJsonObject>
@@ -31,14 +33,6 @@ enum class Action {
     MouseMove, LeftClick, RightClick, MiddleClick, DoubleClick, TripleClick,
     LeftClickDrag, Scroll, Type, Key,                           // input
     LeftMouseDown, LeftMouseUp, HoldKey,                        // fine-grained input
-};
-
-struct KeyCombo {
-    QStringList modifiers;   // canonical: ctrl, alt, shift, super
-    QString key;             // canonical key name: a, f4, return, escape, ...
-    QString error;
-    bool valid() const { return error.isEmpty(); }
-    QString toString() const;
 };
 
 struct ParsedAction {
@@ -93,13 +87,6 @@ QSize fitToLimits(const QSize &logical, const ImageLimits &limits);
 QStringList actionNames();
 bool isInputAction(Action a);
 ParsedAction parseAction(const QJsonObject &input, const QSize &agentSize);
-KeyCombo parseKeyCombo(const QString &combo);
-// Combos that open a run dialog, a terminal, task manager, lock or sign out:
-// fine for the user, but asked for even in Trusted mode once the agent has
-// read the screen (which may be showing it instructions).
-bool isRiskyKeyCombo(const KeyCombo &combo);
-// Typed text that reads like a shell command or URL fetch.
-bool looksLikeShellText(const QString &text);
 
 } // namespace cu
 
@@ -172,9 +159,11 @@ public:
     virtual ~ComputerBackend() = default;
     virtual QString name() const = 0;
     virtual QPoint cursorPos() const = 0;                 // logical global
-    virtual void moveTo(const QPoint &logical) = 0;
-    virtual void button(Qt::MouseButton b, bool down) = 0;
-    virtual void scroll(int dx, int dy) = 0;              // wheel notches; +dy = up
+    // Input injection: return false when the OS refuses the events (UIPI),
+    // so the caller reports failure instead of phantom success.
+    virtual bool moveTo(const QPoint &logical) = 0;
+    virtual bool button(Qt::MouseButton b, bool down) = 0;
+    virtual bool scroll(int dx, int dy) = 0;              // wheel notches; +dy = up
     virtual bool typeText(const QString &text) = 0;
     virtual bool keyCombo(const cu::KeyCombo &combo) = 0;
     // Press (down) or release (up) every key of a combo without the other
@@ -199,9 +188,9 @@ class SimulatedBackend : public ComputerBackend
 public:
     QString name() const override { return QStringLiteral("simulated"); }
     QPoint cursorPos() const override { return m_cursor; }
-    void moveTo(const QPoint &p) override;
-    void button(Qt::MouseButton b, bool down) override;
-    void scroll(int dx, int dy) override;
+    bool moveTo(const QPoint &p) override;
+    bool button(Qt::MouseButton b, bool down) override;
+    bool scroll(int dx, int dy) override;
     bool typeText(const QString &text) override;
     bool keyCombo(const cu::KeyCombo &combo) override;
     bool keyState(const cu::KeyCombo &combo, bool down) override;
@@ -303,6 +292,9 @@ public:
     void begin();
     void end();
     void perform(const cu::ParsedAction &a, Done done);
+    // Reports failure through done when the OS refused injected input (UIPI),
+    // so the model never acts on phantom success. Returns ok.
+    bool injectedOrFail(bool ok, const Done &done, const char *what);
 
     // Real user input arrived while the agent was in control.
     void userInput(bool abort);

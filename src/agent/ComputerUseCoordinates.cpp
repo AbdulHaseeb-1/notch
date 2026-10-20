@@ -27,9 +27,10 @@ QList<ScreenInfo> CoordinateMapper::qtScreens()
         ScreenInfo i;
         i.geometry = s->geometry();
         i.dpr = s->devicePixelRatio();
-        // Qt keeps each screen's origin in native pixels and scales within
-        // the screen, so the physical top-left equals the logical one.
-        i.nativeOrigin = s->geometry().topLeft();
+        // geometry() is in device-independent pixels (origin and size), so the
+        // physical top-left is the logical origin scaled by the DPR. A 200%
+        // secondary monitor at logical (1920,0) starts at physical (3840,0).
+        i.nativeOrigin = (QPointF(s->geometry().topLeft()) * s->devicePixelRatio()).toPoint();
         i.name = s->name();
         i.primary = s == primary;
         out << i;
@@ -62,6 +63,10 @@ ScreenInfo CoordinateMapper::current() const
 {
     if (m_display >= 0 && m_display < m_screens.size())
         return m_screens.at(m_display);
+    // A stale display index falls back to the first real screen, not an
+    // invented geometry: grabbing with fake coordinates misleads the model.
+    if (!m_screens.isEmpty())
+        return m_screens.at(0);
     ScreenInfo fallback;
     fallback.geometry = QRect(0, 0, 1280, 800);
     fallback.primary = true;
@@ -154,22 +159,25 @@ bool RateLimiter::tryAcquire(qint64 now, qint64 *retryIn)
 
 // ---- SimulatedBackend --------------------------------------------------------
 
-void SimulatedBackend::moveTo(const QPoint &p)
+bool SimulatedBackend::moveTo(const QPoint &p)
 {
     m_cursor = p;
     log << QStringLiteral("move %1,%2").arg(p.x()).arg(p.y());
+    return true;
 }
 
-void SimulatedBackend::button(Qt::MouseButton b, bool down)
+bool SimulatedBackend::button(Qt::MouseButton b, bool down)
 {
     const QString n = b == Qt::RightButton ? QStringLiteral("right") : b == Qt::MiddleButton ? QStringLiteral("middle")
                                                                                               : QStringLiteral("left");
     log << QStringLiteral("%1 %2").arg(n, down ? QStringLiteral("down") : QStringLiteral("up"));
+    return true;
 }
 
-void SimulatedBackend::scroll(int dx, int dy)
+bool SimulatedBackend::scroll(int dx, int dy)
 {
     log << QStringLiteral("scroll %1,%2").arg(dx).arg(dy);
+    return true;
 }
 
 bool SimulatedBackend::typeText(const QString &text)

@@ -116,6 +116,8 @@ public:
     // *.pem, id_rsa, browser profiles: reading them asks.
     static QString credentialPathReason(const QString &path, const QString &base = QString());
     static bool isSecretsFile(const QString &path);
+    // True when the path is under one of the user's private roots.
+    bool isPrivatePath(const QString &path) const;
     // Files whose content steers Buddy from now on: instruction files (NOCH.md,
     // AGENTS.md, CLAUDE.md) and anything under a .noch folder (slash commands).
     // A run that changes one is changing its own future instructions, so any
@@ -134,7 +136,7 @@ public:
     // (redirects, cp/mv/rm/Set-Content ... arguments) listed separately.
     // `moved` lists what mv / move / Move-Item take away from its place: the
     // gate treats those as reads, but undoing a run has to put them back.
-    struct ShellPaths { QStringList reads; QStringList writes; QStringList moved; };
+    struct ShellPaths { QStringList reads; QStringList writes; QStringList moved; bool changesDir = false; };
     static ShellPaths shellPaths(const QString &command);
 
     // web_fetch / web_search urls: only http(s) is fetched; private,
@@ -170,6 +172,5 @@ private:
     bool m_tainted = false;
     bool m_screenTainted = false;
 
-    bool isPrivatePath(const QString &path) const;
     Decision evaluateShell(const QJsonObject &input) const;
 };

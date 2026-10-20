@@ -3,6 +3,7 @@
 #pragma once
 
 #include "BuddyProvider.h"
+#include "ToolSchemas.h"
 
 #include <QBuffer>
 #include <QClipboard>
@@ -17,6 +18,7 @@
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QMap>
 #include <QNetworkRequest>
 #include <QPixmap>
 #include <QRandomGenerator>
@@ -163,7 +165,6 @@ QString parseDuckDuckGoHtml(const QString &html, int maxResults,
         QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
 
     QRegularExpressionMatchIterator linkIt = linkRe.globalMatch(html);
-    QRegularExpressionMatchIterator snipIt = snippetRe.globalMatch(html);
 
     QStringList results;
     int count = 0;
@@ -171,13 +172,16 @@ QString parseDuckDuckGoHtml(const QString &html, int maxResults,
         const QRegularExpressionMatch lm = linkIt.next();
         const QString url = unwrapDuckDuckGoUrl(lm.captured(1));
         const QString title = stripHtmlTags(lm.captured(2)).simplified();
-        QString snippet;
-        if (snipIt.hasNext()) {
-            const QRegularExpressionMatch sm = snipIt.next();
-            snippet = stripHtmlTags(sm.captured(1).isEmpty() ? sm.captured(2) : sm.captured(1)).simplified();
-        }
         if (title.isEmpty() || url.isEmpty() || url.contains(QLatin1String("duckduckgo.com/y.js")))
             continue;
+        // The snippet belongs to the HTML between this link and the next one:
+        // a separate parallel iterator desyncs whenever a link is skipped.
+        QString snippet;
+        const int regionStart = lm.capturedEnd(0);
+        const int regionEnd = linkIt.hasNext() ? linkIt.peekNext().capturedStart(0) : html.size();
+        const QRegularExpressionMatch sm = snippetRe.match(html.mid(regionStart, regionEnd - regionStart));
+        if (sm.hasMatch())
+            snippet = stripHtmlTags(sm.captured(1).isEmpty() ? sm.captured(2) : sm.captured(1)).simplified();
         ++count;
         if (outCitations)
             outCitations->append(qMakePair(title, url));
@@ -341,6 +345,353 @@ QString capOutput(const QString &raw, int maxChars = kMaxToolOutputChars)
     return trimmed.left(half)
          + QStringLiteral("\n\n... [%1 characters truncated] ...\n\n").arg(trimmed.size() - maxChars)
          + trimmed.right(half);
+}
+
+// ---- Model-agnostic tool-call repair --------------------------------------
+// Weak models emit near-miss tool calls: JSON wrapped in fences, trailing
+// commas, wrong argument names ("cmd" for "command"), or numbers/booleans as
+// strings. normalizeToolCall fixes what it safely can and reports the rest,
+// so a bad call costs a correction nudge instead of a wasted turn. Pure and
+// unit-tested (tests/tst_toolrepair.cpp).
+
+enum class ToolCallRepair { Ok, Repaired, Unrepairable };
+
+// "tool:alias" -> canonical argument name. Only renames when the canonical
+// name is absent, so a real argument is never clobbered.
+const QMap<QString, QString> &toolArgAliases()
+{
+    static const QMap<QString, QString> aliases{
+        { QStringLiteral("bash:cmd"), QStringLiteral("command") },
+        { QStringLiteral("bash:cwd"), QStringLiteral("working_dir") },
+        { QStringLiteral("bash:dir"), QStringLiteral("working_dir") },
+        { QStringLiteral("bash:workingdir"), QStringLiteral("working_dir") },
+        { QStringLiteral("str_replace_editor:cmd"), QStringLiteral("command") },
+        { QStringLiteral("str_replace_editor:filepath"), QStringLiteral("path") },
+        { QStringLiteral("str_replace_editor:file"), QStringLiteral("path") },
+        { QStringLiteral("str_replace_editor:filename"), QStringLiteral("path") },
+        { QStringLiteral("memory:cmd"), QStringLiteral("command") },
+        { QStringLiteral("memory:filepath"), QStringLiteral("path") },
+        { QStringLiteral("memory:file"), QStringLiteral("path") },
+        { QStringLiteral("glob_grep:query"), QStringLiteral("pattern") },
+        { QStringLiteral("glob_grep:regex"), QStringLiteral("pattern") },
+        { QStringLiteral("computer:coords"), QStringLiteral("coordinate") },
+        { QStringLiteral("computer:coordinates"), QStringLiteral("coordinate") },
+        { QStringLiteral("computer:xy"), QStringLiteral("coordinate") },
+        { QStringLiteral("web_fetch:link"), QStringLiteral("url") },
+        { QStringLiteral("web_fetch:uri"), QStringLiteral("url") },
+        { QStringLiteral("web_search:q"), QStringLiteral("query") },
+        { QStringLiteral("todo_write:tasks"), QStringLiteral("todos") },
+        { QStringLiteral("todo_write:todos_list"), QStringLiteral("todos") },
+    };
+    return aliases;
+}
+
+struct ToolArgSpec {
+    QStringList required;  // missing -> the call cannot run
+    QStringList known;     // named in the correction nudge
+};
+
+// Mirrors the schemas built in BuddyProviderPrompts.cpp. Tools without
+// required arguments accept an empty input.
+const QMap<QString, ToolArgSpec> &toolArgSpecs()
+{
+    static const QMap<QString, ToolArgSpec> specs{
+        { QStringLiteral("bash"),
+          { { QStringLiteral("command") },
+            { QStringLiteral("command"), QStringLiteral("working_dir") } } },
+        { QStringLiteral("computer"),
+          { { QStringLiteral("action") },
+            { QStringLiteral("action"), QStringLiteral("coordinate"),
+              QStringLiteral("start_coordinate"), QStringLiteral("text"),
+              QStringLiteral("scroll_direction"), QStringLiteral("scroll_amount"),
+              QStringLiteral("duration"), QStringLiteral("region"),
+              QStringLiteral("display") } } },
+        { QStringLiteral("str_replace_editor"),
+          { { QStringLiteral("command"), QStringLiteral("path") },
+            { QStringLiteral("command"), QStringLiteral("path"),
+              QStringLiteral("file_text"), QStringLiteral("old_str"),
+              QStringLiteral("new_str"), QStringLiteral("insert_line"),
+              QStringLiteral("view_range") } } },
+        { QStringLiteral("glob_grep"),
+          { { QStringLiteral("mode"), QStringLiteral("pattern") },
+            { QStringLiteral("mode"), QStringLiteral("pattern"),
+              QStringLiteral("path"), QStringLiteral("file_glob"),
+              QStringLiteral("max_results") } } },
+        { QStringLiteral("memory"),
+          { { QStringLiteral("command") },
+            { QStringLiteral("command"), QStringLiteral("path"),
+              QStringLiteral("file_text"), QStringLiteral("old_str"),
+              QStringLiteral("new_str"), QStringLiteral("insert_line"),
+              QStringLiteral("insert_text"), QStringLiteral("old_path"),
+              QStringLiteral("new_path"), QStringLiteral("view_range") } } },
+        { QStringLiteral("web_search"),
+          { {},
+            { QStringLiteral("query"), QStringLiteral("url"),
+              QStringLiteral("max_results") } } },
+        { QStringLiteral("web_fetch"),
+          { { QStringLiteral("url") },
+            { QStringLiteral("url"), QStringLiteral("extract_mode") } } },
+        { QStringLiteral("tool_search"),
+          { { QStringLiteral("query") },
+            { QStringLiteral("query"), QStringLiteral("mode") } } },
+        { QStringLiteral("advisor"),
+          { { QStringLiteral("task"), QStringLiteral("question") },
+            { QStringLiteral("task"), QStringLiteral("question"),
+              QStringLiteral("focus"), QStringLiteral("draft_plan") } } },
+        { QStringLiteral("todo_write"),
+          { { QStringLiteral("action") },
+            { QStringLiteral("action"), QStringLiteral("todos"),
+              QStringLiteral("text") } } },
+        { QStringLiteral("ask_user_question"),
+          { { QStringLiteral("questions") },
+            { QStringLiteral("questions") } } },
+        { QStringLiteral("share_screenshot"),
+          { {},
+            { QStringLiteral("caption"), QStringLiteral("display") } } },
+    };
+    return specs;
+}
+
+// "tool:argument" -> "int" | "double" | "bool": stringified scalars are
+// converted when they parse cleanly, otherwise left alone.
+QJsonValue coerceScalar(const QJsonValue &v, const QString &kind, bool *ok)
+{
+    *ok = false;
+    if (!v.isString())
+        return v;
+    const QString s = v.toString().trimmed();
+    if (kind == QLatin1String("int")) {
+        static const QRegularExpression intRe(QStringLiteral("^-?\\d+$"));
+        if (intRe.match(s).hasMatch()) {
+            *ok = true;
+            return QJsonValue(s.toInt());
+        }
+    } else if (kind == QLatin1String("double")) {
+        static const QRegularExpression dblRe(QStringLiteral("^-?\\d+(\\.\\d+)?$"));
+        if (dblRe.match(s).hasMatch()) {
+            *ok = true;
+            return QJsonValue(s.toDouble());
+        }
+    } else if (kind == QLatin1String("bool")) {
+        if (s.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0) {
+            *ok = true;
+            return QJsonValue(true);
+        }
+        if (s.compare(QLatin1String("false"), Qt::CaseInsensitive) == 0) {
+            *ok = true;
+            return QJsonValue(false);
+        }
+    }
+    return v;
+}
+
+// P1: Field-level validation against the registry. Returns a list of
+// specific problems ("missing required 'command'", "'insert_line' should be
+// an integer, got 'abc'"), empty when the call is valid.
+QStringList validateToolCall(const QString &toolName, const QJsonObject &input)
+{
+    QStringList problems;
+    const ToolSchema *schema = toolSchema(toolName);
+    if (!schema)
+        return problems;  // unknown tools keep the gate's deny path
+
+    for (const ToolArgDef &arg : schema->args) {
+        const QJsonValue v = input.value(arg.name);
+        const bool present = !v.isUndefined() && !v.isNull()
+            && !(v.isString() && v.toString().trimmed().isEmpty());
+        if (arg.required && !present) {
+            problems << QStringLiteral("missing required argument '%1'").arg(arg.name);
+            continue;
+        }
+        if (!present)
+            continue;
+        // Type check.
+        bool typeOk = true;
+        if (arg.type == QLatin1String("string"))
+            typeOk = v.isString();
+        else if (arg.type == QLatin1String("integer"))
+            typeOk = v.isDouble() && qRound(v.toDouble()) == v.toDouble();
+        else if (arg.type == QLatin1String("number"))
+            typeOk = v.isDouble();
+        else if (arg.type == QLatin1String("boolean"))
+            typeOk = v.isBool();
+        else if (arg.type == QLatin1String("array"))
+            typeOk = v.isArray();
+        else if (arg.type == QLatin1String("object"))
+            typeOk = v.isObject();
+        if (!typeOk) {
+            problems << QStringLiteral("'%1' should be %2, got %3")
+                            .arg(arg.name, arg.type,
+                                 v.isString() ? QStringLiteral("string \"%1\"").arg(v.toString().left(40))
+                                              : QStringLiteral("non-%1 value").arg(arg.type));
+        }
+        // Enum check.
+        if (!arg.enumValues.isEmpty() && v.isString()
+                && !arg.enumValues.contains(v.toString())) {
+            problems << QStringLiteral("'%1' should be one of [%2], got \"%3\"")
+                            .arg(arg.name, arg.enumValues.join(QStringLiteral(", ")),
+                                 v.toString().left(40));
+        }
+    }
+    // Unknown arguments (likely misnamings the alias pass missed).
+    for (auto it = input.constBegin(); it != input.constEnd(); ++it) {
+        if (!schema->findArg(it.key()))
+            problems << QStringLiteral("unknown argument '%1'").arg(it.key());
+    }
+    return problems;
+}
+
+ToolCallRepair normalizeToolCall(const QString &toolName, QJsonObject &input,
+                                 const QString &rawArguments, QString *noteOut)
+{
+    bool fixed = false;
+    const ToolSchema *schema = toolSchema(toolName);
+
+    // 1. The arguments were not a JSON object: strip code fences and fix the
+    // classic weak-model tell, trailing commas, then parse once more.
+    if (input.isEmpty() && !rawArguments.trimmed().isEmpty()) {
+        QString s = rawArguments.trimmed();
+        static const QRegularExpression fenceRe(
+            QStringLiteral("^```[a-zA-Z]*\\s*\\n?(.*?)\\n?```\\s*$"),
+            QRegularExpression::DotMatchesEverythingOption);
+        const QRegularExpressionMatch fm = fenceRe.match(s);
+        if (fm.hasMatch())
+            s = fm.captured(1).trimmed();
+        QJsonDocument doc = QJsonDocument::fromJson(s.toUtf8());
+        if ((doc.isNull() || !doc.isObject()) && s.contains(QChar(','))) {
+            s.replace(QRegularExpression(QStringLiteral(",\\s*([}\\]])")),
+                      QStringLiteral("\\1"));
+            doc = QJsonDocument::fromJson(s.toUtf8());
+        }
+        if (!doc.isNull() && doc.isObject() && !doc.object().isEmpty()) {
+            input = doc.object();
+            fixed = true;
+        }
+    }
+
+    // Unknown tools keep the gate's deny path; nothing to repair against.
+    if (!schema)
+        return fixed ? ToolCallRepair::Repaired : ToolCallRepair::Ok;
+
+    // 2. Rename known near-miss argument names (never clobber a real one).
+    // A redundant alias alongside its canonical name is dropped.
+    for (auto it = schema->aliases.constBegin(); it != schema->aliases.constEnd(); ++it) {
+        const QString alias = it.key();
+        const QString canonical = it.value();
+        if (!input.contains(alias))
+            continue;
+        if (input.contains(canonical)) {
+            input.remove(alias);
+            fixed = true;
+        } else {
+            input[canonical] = input.value(alias);
+            input.remove(alias);
+            fixed = true;
+        }
+    }
+
+    // 3. Coerce stringified scalars for typed arguments.
+    for (auto it = schema->coercions.constBegin(); it != schema->coercions.constEnd(); ++it) {
+        const QString arg = it.key();
+        if (!input.contains(arg))
+            continue;
+        bool ok = false;
+        const QJsonValue coerced = coerceScalar(input.value(arg), it.value(), &ok);
+        if (ok) {
+            input[arg] = coerced;
+            fixed = true;
+        }
+    }
+
+    // 4. Validate against the registry: field-level errors, not just
+    // "missing X", so the model knows exactly what to fix.
+    const QStringList problems = validateToolCall(toolName, input);
+    if (!problems.isEmpty()) {
+        if (noteOut) {
+            *noteOut = QStringLiteral("Your '%1' tool call was not run:\n- %2\n")
+                           .arg(toolName, problems.join(QStringLiteral("\n- ")))
+                       + QStringLiteral("Call it again with corrected arguments. Required: %1. Known arguments: %2.")
+                           .arg(schema->requiredArgs().join(QStringLiteral(", ")),
+                                schema->knownArgs().join(QStringLiteral(", ")));
+            if (!rawArguments.trimmed().isEmpty())
+                *noteOut += QStringLiteral(" Your arguments were: %1")
+                                .arg(rawArguments.trimmed().left(300));
+        }
+        return ToolCallRepair::Unrepairable;
+    }
+    return fixed ? ToolCallRepair::Repaired : ToolCallRepair::Ok;
+}
+
+// ---- P2: text/JSON tool protocol -------------------------------------------
+// For models without native function calling, tool calls ride in the reply
+// text as a JSON envelope:
+//   {"text": "...", "tool_calls": [{"name": "bash", "input": {...}}]}
+// or a single call: {"tool": "bash", "input": {...}}. In Ollama JSON mode
+// the whole reply is that object (constrained by the envelope schema as the
+// `format`); elsewhere the object may sit inside a ```json / ```tool fence.
+// A call is accepted only when its name is a real tool in the registry, so
+// prose that happens to contain JSON cannot misfire into actions.
+struct TextToolCall {
+    QString name;
+    QJsonObject input;
+};
+
+inline QList<TextToolCall> callsFromEnvelope(const QJsonObject &obj)
+{
+    QList<TextToolCall> out;
+    auto accept = [&out](const QString &name, const QJsonValue &input) {
+        if (name.isEmpty() || !toolSchema(name))
+            return;
+        TextToolCall tc;
+        tc.name = name;
+        tc.input = input.isObject() ? input.toObject() : QJsonObject();
+        // A stringified input is common from weak models; parse it through.
+        if (input.isString()) {
+            const QJsonDocument d = QJsonDocument::fromJson(input.toString().toUtf8());
+            if (d.isObject())
+                tc.input = d.object();
+        }
+        out.append(tc);
+    };
+    const QJsonArray arr = obj.value(QStringLiteral("tool_calls")).toArray();
+    for (const QJsonValue &v : arr) {
+        const QJsonObject c = v.toObject();
+        accept(c.value(QStringLiteral("name")).toString(
+                   c.value(QStringLiteral("tool")).toString()),
+               c.value(QStringLiteral("input")));
+    }
+    if (out.isEmpty())   // single-call shape: {"tool": ..., "input": ...}
+        accept(obj.value(QStringLiteral("tool")).toString(), obj.value(QStringLiteral("input")));
+    return out;
+}
+
+inline QList<TextToolCall> extractTextToolCalls(const QString &text)
+{
+    if (text.trimmed().isEmpty())
+        return {};
+    // 1. The whole reply is the envelope (Ollama JSON mode).
+    QJsonParseError err;
+    const QJsonDocument whole = QJsonDocument::fromJson(text.trimmed().toUtf8(), &err);
+    if (err.error == QJsonParseError::NoError && whole.isObject()) {
+        const QList<TextToolCall> found = callsFromEnvelope(whole.object());
+        if (!found.isEmpty())
+            return found;
+    }
+    // 2. Fenced blocks: ```json or ```tool.
+    static const QRegularExpression fenceRe(
+        QStringLiteral("```(?:json|tool)\\s*\\n(.*?)\\n?```"),
+        QRegularExpression::DotMatchesEverythingOption | QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator it = fenceRe.globalMatch(text);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        const QJsonDocument doc = QJsonDocument::fromJson(m.captured(1).trimmed().toUtf8());
+        if (doc.isObject()) {
+            const QList<TextToolCall> found = callsFromEnvelope(doc.object());
+            if (!found.isEmpty())
+                return found;
+        }
+    }
+    return {};
 }
 
 } // namespace

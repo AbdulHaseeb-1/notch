@@ -46,6 +46,7 @@ QString BuddyProvider::systemPrompt() const
         // Contents come from the per-run snapshot (memoryIndex) further down,
         // so this line stays identical across turns.
         caps << QStringLiteral("- `memory`: Anthropic Memory tool rooted at `/memories` (saved files are listed below). Use `view`, `create`, `str_replace`, `insert`, `delete`, or `rename` to recall and persist user facts, preferences, and ongoing notes across sessions.");
+        caps << QStringLiteral("- `memory_search`: Search saved memories and procedures by relevance (`query`, optional `top_k`). Use it to recall facts instead of guessing.");
     }
     if (m_allowWebSearch) {
         caps << QStringLiteral("- `web_search`: Search the live web (`query`, `max_results`) for current information, news, prices, or documentation.");
@@ -84,8 +85,57 @@ QString BuddyProvider::systemPrompt() const
                                  "editing or building code use `transfer_to_code`. Handle quick questions yourself.");
     safety += m_memoryIndexSnapshot;
     safety += m_instructionsSection;
+    // P5 plan-then-act: for tasks with 3+ steps, the model should first
+    // output a structured plan. The harness validates it (real tools, real
+    // arg names) before execution.
+    const QString planNote = QStringLiteral(
+        "\n\nFor multi-step tasks (3+ tool calls), plan first: output a ```plan fenced block with "
+        "a JSON array of steps, then execute them in order. Each step: {\"step\": N, \"tool\": \"<name>\", "
+        "\"args_sketch\": {<arg>: <value sketch>}, \"verify\": \"<how to check it worked>\"}. "
+        "Use only tools you have schemas for, with real argument names. Keep plans under 20 steps. "
+        "After the plan is accepted, execute step by step; if a step fails twice, output a revised ```plan block.");
+    QString toolNote;
+    if (m_toolDiet && m_allowToolSearch) {
+        // P6: only core tools have full schemas this turn; the rest are
+        // loaded on demand. The caps above describe them; this tells the
+        // model how to actually get them. The list is computed from the
+        // CURRENT run state — a hardcoded list went stale twice (it named
+        // core tools as deferred and mentioned disabled tools).
+        QStringList loadable;
+        const auto maybe = [&](const QString &name, bool enabled) {
+            if (enabled && !toolSchemaVisible(name) && toolAllowedForActiveAgent(name)
+                && toolSchema(name))
+                loadable << QStringLiteral("`%1`").arg(name);
+        };
+        maybe(QStringLiteral("memory"), m_allowMemory);
+        maybe(QStringLiteral("memory_search"), m_allowMemory);
+        maybe(QStringLiteral("web_search"), m_allowWebSearch);
+        maybe(QStringLiteral("web_fetch"), m_allowWebSearch);
+        maybe(QStringLiteral("advisor"), m_allowAdvisor);
+        maybe(QStringLiteral("todo_write"), m_allowTodoTask);
+        if (!loadable.isEmpty())
+            toolNote = QStringLiteral(
+                "\n\nTool diet is on: the tools above marked by full schemas are the only ones you can call "
+                "right now. The others (%1) are available on demand — call `tool_search` with the tool's "
+                "name to load its schema, then use it.").arg(loadable.join(QStringLiteral(", ")));
+    }
+    // P2 text protocol: this model gets no native tool parameter, so tool
+    // calls ride in the reply JSON. Keep it short: the `format` schema
+    // already constrains the shape. H1: also applies after a 400 tool
+    // rejection disabled tools for the turn (any provider).
+    const bool textProto = m_toolsDisabledForTurn
+        || (m_provider == QLatin1String("ollama")
+            && structuredLevel() == StructuredLevel::JsonMode && hasAnyToolEnabled());
+    const QString textProtoNote = textProto
+        ? QStringLiteral("\n\nTo use a tool, reply with JSON of the form "
+                         "{\"text\": \"your message to the user\", \"tool_calls\": "
+                         "[{\"name\": \"<tool>\", \"input\": {<arguments>}}]}. "
+                         "Use the tool names and argument names from the list above. "
+                         "Only call tools that are listed. To finish without tools, "
+                         "reply {\"text\": \"<answer>\", \"tool_calls\": []}.")
+        : QString();
     return base + safety + QStringLiteral("\n\nYou have the Anthropic Agent SDK tool suite armed:\n")
-         + caps.join('\n')
+         + caps.join('\n') + toolNote + textProtoNote + planNote
          + QStringLiteral("\nWhen tackling multi-step or technical tasks, you can consult `advisor`, track progress with `todo_write`, search tools with `tool_search`, search the web with `web_search`/`web_fetch`, persist knowledge in `memory`, or act on the system via `bash`, `str_replace_editor`, `glob_grep`, and `computer`.");
 }
 
@@ -127,7 +177,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("command") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("bash")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("bash"),
@@ -212,7 +262,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("action") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("computer")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("computer"),
@@ -264,7 +314,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("command"), QStringLiteral("path") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("str_replace_editor")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("str_replace_editor"),
@@ -299,7 +349,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("mode"), QStringLiteral("pattern") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("glob_grep")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("glob_grep"),
@@ -307,7 +357,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
             schema));
     }
 
-    if (m_allowMemory) {
+    if (m_allowMemory && toolSchemaVisible(QStringLiteral("memory"))) {
         QJsonObject props{
             { QStringLiteral("command"), QJsonObject{
                 { QStringLiteral("type"), QStringLiteral("string") },
@@ -362,7 +412,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("command") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("memory")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("memory"),
@@ -370,7 +420,30 @@ QJsonArray BuddyProvider::buildToolsArray() const
             schema));
     }
 
-    if (m_allowWebSearch) {
+    // P8: BM25 retrieval over /memories (deferred under the P6 diet).
+    if (m_allowMemory && toolSchemaVisible(QStringLiteral("memory_search"))) {
+        QJsonObject props{
+            { QStringLiteral("query"), QJsonObject{
+                { QStringLiteral("type"), QStringLiteral("string") },
+                { QStringLiteral("description"), QStringLiteral("What to recall, in words (e.g. 'user project deadlines').") }
+            }},
+            { QStringLiteral("top_k"), QJsonObject{
+                { QStringLiteral("type"), QStringLiteral("integer") },
+                { QStringLiteral("description"), QStringLiteral("How many memories to return (default 5, max 10).") }
+            }},
+        };
+        QJsonObject schema{
+            { QStringLiteral("type"), QStringLiteral("object") },
+            { QStringLiteral("properties"), props },
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("memory_search")) }
+        };
+        tools.append(wrapSchema(
+            QStringLiteral("memory_search"),
+            QStringLiteral("Search saved memories and procedures by relevance (BM25). Returns gists with paths; use the memory tool to view a full file."),
+            schema));
+    }
+
+    if (m_allowWebSearch && toolSchemaVisible(QStringLiteral("web_search"))) {
         QJsonObject searchProps{
             { QStringLiteral("query"), QJsonObject{
                 { QStringLiteral("type"), QStringLiteral("string") },
@@ -412,12 +485,14 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject fetchSchema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), fetchProps },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("url") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("web_fetch")) }
         };
-        tools.append(wrapSchema(
-            QStringLiteral("web_fetch"),
-            QStringLiteral("Anthropic Web Fetch tool: retrieve a URL and extract readable text, hyperlinks, or structured page metadata."),
-            fetchSchema));
+        if (toolSchemaVisible(QStringLiteral("web_fetch"))) {
+            tools.append(wrapSchema(
+                QStringLiteral("web_fetch"),
+                QStringLiteral("Anthropic Web Fetch tool: retrieve a URL and extract readable text, hyperlinks, or structured page metadata."),
+                fetchSchema));
+        }
     }
 
     if (m_allowToolSearch) {
@@ -435,7 +510,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("query") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("tool_search")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("tool_search"),
@@ -443,7 +518,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
             schema));
     }
 
-    if (m_allowAdvisor) {
+    if (m_allowAdvisor && toolSchemaVisible(QStringLiteral("advisor"))) {
         QJsonObject props{
             { QStringLiteral("task"), QJsonObject{
                 { QStringLiteral("type"), QStringLiteral("string") },
@@ -472,7 +547,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("task"), QStringLiteral("question") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("advisor")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("advisor"),
@@ -480,7 +555,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
             schema));
     }
 
-    if (m_allowTodoTask) {
+    if (m_allowTodoTask && toolSchemaVisible(QStringLiteral("todo_write"))) {
         QJsonObject todoItemSchema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), QJsonObject{
@@ -529,7 +604,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         QJsonObject schema{
             { QStringLiteral("type"), QStringLiteral("object") },
             { QStringLiteral("properties"), props },
-            { QStringLiteral("required"), QJsonArray{ QStringLiteral("action") } }
+            { QStringLiteral("required"), requiredArgsJson(QStringLiteral("todo_write")) }
         };
         tools.append(wrapSchema(
             QStringLiteral("todo_write"),
@@ -537,7 +612,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
             schema));
     }
 
-    if (m_allowScreenshots) {
+    if (m_allowScreenshots && toolSchemaVisible(QStringLiteral("share_screenshot"))) {
         QJsonObject props{
             { QStringLiteral("caption"), QJsonObject{
                 { QStringLiteral("type"), QStringLiteral("string") },
@@ -559,7 +634,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
             schema));
     }
 
-    if (m_allowAskUser) {
+    if (m_allowAskUser && toolSchemaVisible(QStringLiteral("ask_user_question"))) {
         tools.append(wrapSchema(
             QStringLiteral("ask_user_question"),
             QStringLiteral("Ask the user one to four multiple-choice questions when the request is ambiguous or the decision is theirs. "
@@ -630,6 +705,23 @@ QJsonObject BuddyProvider::buildAgentPayload() const
     if (!tools.isEmpty())
         payload[QStringLiteral("tools")] = tools;
 
+    // P2: Ollama JSON mode — the model has no native tool support, so the
+    // tools parameter is withheld and the reply is constrained to the
+    // tool-call envelope instead (`format` = the envelope schema). The
+    // system prompt carries the text-protocol instructions.
+    const bool ollamaJsonMode = m_provider == QLatin1String("ollama")
+        && structuredLevel() == StructuredLevel::JsonMode && !tools.isEmpty();
+    if (ollamaJsonMode) {
+        payload.remove(QStringLiteral("tools"));
+        payload[QStringLiteral("format")] = textProtocolSchema();
+    }
+
+    // Sampling discipline (structured-call protocol): sampling knobs actively
+    // sabotage schema-valid output on small models, so any turn that carries
+    // tools samples at temperature 0. The user's setting still applies to
+    // tool-free turns.
+    const double structuredTemp = tools.isEmpty() ? m_temperature : 0.0;
+
     if (m_provider == QLatin1String("anthropic")) {
         payload[QStringLiteral("max_tokens")] = m_outputTokenLimit;
         // Prompt caching: the system prompt and tool definitions are identical
@@ -659,11 +751,13 @@ QJsonObject BuddyProvider::buildAgentPayload() const
             cached[cached.size() - 1] = last;
             payload[QStringLiteral("tools")] = cached;
         }
-        payload[QStringLiteral("temperature")] = m_temperature;
+        payload[QStringLiteral("temperature")] = structuredTemp;
     } else if (m_provider == QLatin1String("ollama")) {
         payload[QStringLiteral("stream")] = false;
+        if (!tools.isEmpty())
+            payload[QStringLiteral("options")] = QJsonObject{ { QStringLiteral("temperature"), 0.0 } };
     } else {
-        payload[QStringLiteral("temperature")] = m_temperature;
+        payload[QStringLiteral("temperature")] = structuredTemp;
     }
     if (wantsStreaming()) {
         payload[QStringLiteral("stream")] = true;

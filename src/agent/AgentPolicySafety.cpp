@@ -25,6 +25,9 @@ QString AgentPolicy::redactSecrets(const QString &text, const QStringList &known
         RX(QStringLiteral(R"RX(\bBearer\s+[A-Za-z0-9\-._~+/]+=*)RX"), CI),
         RX(QStringLiteral(R"RX(\b(?:x-api-key|api-key)\s*[:=]\s*["']?[A-Za-z0-9_\-]{16,})RX"), CI),
         RX(QStringLiteral(R"RX((?:postgres|mysql|mongodb|redis|amqp|https?)://[^:\s/@]+:[^@\s/]{6,}@)RX"), CI),
+        RX(QStringLiteral(R"RX(\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,})RX")),
+        RX(QStringLiteral(R"RX(\bhf_[A-Za-z0-9]{20,})RX")),
+        RX(QStringLiteral(R"RX(\bnpm_[A-Za-z0-9]{20,})RX")),
     };
     for (const RX &re : patterns)
         out.replace(re, QStringLiteral("[redacted]"));
@@ -44,10 +47,11 @@ bool AgentPolicy::looksLikePromptInjection(const QString &text)
     // Strip invisible characters first so "ig\u200bnore previous" still matches.
     const QString t = stripInvisible(text);
     static const RX re(QStringLiteral(
-        R"RX(ignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|messages)|)RX"
-        R"RX(disregard\s+(the\s+|your\s+)?(system|previous|prior)\s+(prompt|instructions)|)RX"
+        R"RX(ignore\s+(all\s+|any\s+|the\s+)?(of\s+the\s+)?(previous|prior|above|earlier)\s+(instructions|prompts|directives|messages)|)RX"
+        R"RX(disregard\s+(all\s+|the\s+|your\s+)?(system|previous|prior)\s+(prompt|instructions|directives)|)RX"
+        R"RX((forget|override|supersede|discard)\s+(all\s+|the\s+|your\s+)?(previous|prior|system\s+)?(instructions|prompts|directives|orders)|)RX"
         R"RX(you\s+are\s+now\s+(in\s+)?(developer|dan|jailbreak)|)RX"
-        R"RX(<\|im_start\|>|\[\s*system\s*\]\s*:|new\s+system\s+prompt|)RX"
+        R"RX(<\|im_start\|>|\[\s*system\s*\]\s*:|new\s+(system\s+|updated\s+)?(instructions|directives|orders)\s*:|)RX"
         R"RX((send|post|upload|exfiltrate)\s+(your|the|all)\s+(api\s*key|credentials|secrets|tokens|passwords)|)RX"
         R"RX((do\s+not\s+tell\s+the\s+user|hidden\s+instruction|tool\s+call\s+now)|)RX"
         R"RX(<\/?untrusted_content\b)RX"), CI);

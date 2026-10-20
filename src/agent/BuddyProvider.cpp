@@ -1,4 +1,5 @@
 #include "BuddyProviderInternal.h"
+#include "MemoryStore.h"
 
 using namespace noch::buddyprovider;
 
@@ -39,6 +40,67 @@ BuddyProvider::BuddyProvider(QObject *parent)
     connect(&m_retryTimer, &QTimer::timeout, this, &BuddyProvider::dispatchAgentTurn);
     m_policy.setWorkspaceRoots({ effectiveWorkspace() });
     syncPrivatePaths();
+    registerBuiltinHooks();
+}
+
+// P3: the harness's lifecycle points are hooks on the bus. Registration
+// order is significant: PreToolUse rewrites (path-normalize) run before the
+// policy hook so the permission decision sees canonical paths.
+void BuddyProvider::registerBuiltinHooks()
+{
+    // Input rewriting: relative editor paths and shell working dirs resolve
+    // against the workspace before anything judges them.
+    m_hookBus.addHook(HookEvent::PreToolUse, QStringLiteral("path-normalize"),
+        [this](const HookContext &ctx) -> HookResult {
+            QJsonObject in = ctx.input;
+            bool changed = false;
+            const QString base = effectiveWorkspace();
+            if (ctx.toolName == QLatin1String("str_replace_editor")) {
+                const QString path = in.value(QStringLiteral("path")).toString();
+                if (!path.isEmpty() && QDir::isRelativePath(path)) {
+                    in[QStringLiteral("path")] = QDir(base).absoluteFilePath(path);
+                    changed = true;
+                }
+            } else if (ctx.toolName == QLatin1String("bash")) {
+                const QString wd = in.value(QStringLiteral("working_dir")).toString();
+                if (!wd.isEmpty() && QDir::isRelativePath(wd)) {
+                    in[QStringLiteral("working_dir")] = QDir(base).absoluteFilePath(wd);
+                    changed = true;
+                }
+            }
+            return changed ? HookResult::rewriteInput(in) : HookResult::allow();
+        });
+
+    // The permission policy reframed as a PreToolUse hook. The full Decision
+    // is stashed for the gate's bookkeeping (spans, grants, approval UI).
+    m_hookBus.addHook(HookEvent::PreToolUse, QStringLiteral("policy"),
+        [this](const HookContext &ctx) -> HookResult {
+            m_lastPolicyDecision = m_policy.evaluate(ctx.toolName, ctx.input);
+            switch (m_lastPolicyDecision.verdict) {
+            case AgentPolicy::Verdict::Deny:
+                return HookResult::deny(m_lastPolicyDecision.rule, m_lastPolicyDecision.reason);
+            case AgentPolicy::Verdict::Ask:
+                return HookResult::ask(m_lastPolicyDecision.rule, m_lastPolicyDecision.reason);
+            case AgentPolicy::Verdict::Allow:
+                break;
+            }
+            return HookResult::allow();
+        });
+
+    // Tool output guardrail as a PostToolUse hook: secret redaction,
+    // untrusted-content fencing and injection detection on every output
+    // (error outputs included — the call site always runs the bus).
+    m_hookBus.addHook(HookEvent::PostToolUse, QStringLiteral("output-guard"),
+        [this](const HookContext &ctx) -> HookResult {
+            PendingToolCall probe;
+            probe.name = ctx.toolName;
+            probe.input = ctx.input;
+            bool flagged = false;
+            const QString guarded = guardToolOutput(probe, ctx.output, &flagged);
+            m_outputGuardFlagged = flagged;
+            return guarded != ctx.output ? HookResult::rewriteOutput(guarded)
+                                          : HookResult::allow();
+        });
 }
 
 // ---- safety settings -------------------------------------------------------
@@ -98,6 +160,76 @@ void BuddyProvider::setMaxSteps(int n)
         return;
     m_maxSteps = n;
     emit agentConfigChanged();
+}
+
+// Model-agnostic harness: whether the configured model can process images.
+// Anthropic models can; elsewhere we go by model name, because the chat APIs
+// do not expose the capability. Unknown models count as blind: an image
+// payload to a text-only model fails the whole turn, while a blind model
+// only gets a note that the screenshot was withheld.
+bool BuddyProvider::modelVisionCapable() const
+{
+    if (m_provider == QLatin1String("anthropic"))
+        return true;
+    const QString m = m_model.toLower();
+    static const QStringList hints{
+        QStringLiteral("gpt-4o"), QStringLiteral("gpt-4-turbo"),
+        QStringLiteral("gpt-4-vision"), QStringLiteral("o1"), QStringLiteral("o3"),
+        QStringLiteral("claude"), QStringLiteral("gemini"),
+        QStringLiteral("vision"), QStringLiteral("llava"),
+        QStringLiteral("qwen-vl"), QStringLiteral("qwen2-vl"),
+        QStringLiteral("minicpm-v"), QStringLiteral("pixtral"),
+        QStringLiteral("moondream"), QStringLiteral("bakllava"),
+        QStringLiteral("llama-3.2"), QStringLiteral("molmo"),
+    };
+    for (const QString &h : hints) {
+        if (m.contains(h))
+            return true;
+    }
+    return false;
+}
+
+// P2: which rung of the structured-output ladder does this provider+model
+// get? Native function calling where it's supported; Ollama models without
+// tool support fall to JSON mode (constrained by the envelope schema);
+// anything else gets the text parser.
+BuddyProvider::StructuredLevel BuddyProvider::structuredLevel() const
+{
+    if (m_provider != QLatin1String("ollama"))
+        return StructuredLevel::FunctionCalling;
+    const QString m = m_model.toLower();
+    static const QStringList toolCapable{
+        QStringLiteral("llama3.1"), QStringLiteral("llama3.2"), QStringLiteral("llama3.3"),
+        QStringLiteral("llama4"), QStringLiteral("qwen2.5"), QStringLiteral("qwen3"),
+        QStringLiteral("mistral"), QStringLiteral("mixtral"), QStringLiteral("command-r"),
+        QStringLiteral("firefunction"), QStringLiteral("hermes"), QStringLiteral("devstral"),
+        QStringLiteral("magistral"), QStringLiteral("gpt-oss"),
+    };
+    for (const QString &h : toolCapable)
+        if (m.contains(h))
+            return StructuredLevel::FunctionCalling;
+    return StructuredLevel::JsonMode;
+}
+
+QJsonObject BuddyProvider::textProtocolSchema() const
+{
+    // {"text": "...", "tool_calls": [{"name": "bash", "input": {...}}]}
+    QJsonObject callSchema{
+        { QStringLiteral("type"), QStringLiteral("object") },
+        { QStringLiteral("properties"), QJsonObject{
+            { QStringLiteral("name"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+            { QStringLiteral("input"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("object") } } } } },
+        { QStringLiteral("required"), QJsonArray{ QStringLiteral("name"), QStringLiteral("input") } },
+    };
+    return QJsonObject{
+        { QStringLiteral("type"), QStringLiteral("object") },
+        { QStringLiteral("properties"), QJsonObject{
+            { QStringLiteral("text"), QJsonObject{ { QStringLiteral("type"), QStringLiteral("string") } } },
+            { QStringLiteral("tool_calls"), QJsonObject{
+                { QStringLiteral("type"), QStringLiteral("array") },
+                { QStringLiteral("items"), callSchema } } } } },
+        { QStringLiteral("required"), QJsonArray{ QStringLiteral("tool_calls") } },
+    };
 }
 
 // Newest tool version each model accepts (Anthropic's computer-use docs).
@@ -324,22 +456,37 @@ void BuddyProvider::executeHandoff(const PendingToolCall &call)
     finishCurrentToolCall(call, msg, QString(), false);
 }
 
-QString BuddyProvider::memoryIndex() const
+// P8: the per-run memory snapshot is now top-K by relevance to the
+// current request (BM25 over /memories) with one-line gists, not a raw
+// file listing. Stable per run so the prompt cache stays warm; the model
+// can pull full files via memory_search/memory.
+QString BuddyProvider::memoryIndex(const QString &query) const
 {
     if (!m_allowMemory)
         return QString();
-    const QString dir = memoriesPath();
-    QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
-    QStringList entries;
-    while (it.hasNext() && entries.size() < 16) {
-        const QString f = it.next();
-        const QFileInfo fi(f);
-        entries << QStringLiteral("/memories/%1 (%2 B)").arg(QDir(dir).relativeFilePath(f)).arg(fi.size());
-    }
-    if (entries.isEmpty())
+    MemoryStore store(memoriesPath());
+    const QList<MemoryFact> all = store.list();
+    if (all.isEmpty())
         return QStringLiteral("\n\nYour /memories directory is empty.");
-    return QStringLiteral("\n\nSaved memories from earlier sessions (view the relevant ones before you start; "
-                          "keep them up to date):\n- ") + entries.join(QStringLiteral("\n- "));
+
+    const QList<MemoryStore::SearchHit> hits = store.search(all, query, 8);  // P0: search the list we already loaded
+    QStringList entries;
+    if (hits.isEmpty()) {
+        // Nothing relevant: fall back to the 4 newest, so the model at
+        // least knows what exists.
+        for (int i = 0; i < qMin(4, all.size()); ++i)
+            entries << QStringLiteral("- /memories/%1 — %2").arg(all.at(i).id, all.at(i).gist);
+        return QStringLiteral("\n\nSaved memories (newest; use memory_search to recall by topic):\n")
+             + entries.join(QChar('\n'));
+    }
+    for (const MemoryStore::SearchHit &h : hits) {
+        entries << QStringLiteral("- /memories/%1%2 — %3")
+                       .arg(h.fact.id,
+                            h.fact.procedure ? QStringLiteral(" [procedure]") : QString(),
+                            h.fact.gist);
+    }
+    return QStringLiteral("\n\nMemories relevant to this request (use memory_search to dig deeper, "
+                          "and keep them up to date):\n") + entries.join(QChar('\n'));
 }
 
 bool BuddyProvider::wantsStreaming() const

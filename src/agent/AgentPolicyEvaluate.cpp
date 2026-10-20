@@ -1,4 +1,5 @@
 #include "AgentPolicyInternal.h"
+#include "ComputerUseKeys.h"
 
 #include <QFileInfo>
 #include <QJsonObject>
@@ -55,6 +56,18 @@ AgentPolicy::Decision AgentPolicy::evaluateShell(const QJsonObject &input) const
                                 || cred.contains(QLatin1String("secrets"))))
             return deny(QStringLiteral("deny:credential-write"),
                         QStringLiteral("Blocked: writing %1.").arg(cred));
+    }
+    // A mid-command cd/pushd/popd/Set-Location moves the cwd that the relative
+    // writes above were vetted against, so the base can't be trusted for them:
+    // never auto-allow (bypass, session grant, saved rule), ask instead.
+    if (paths.changesDir) {
+        for (const QString &w : paths.writes) {
+            if (!noch::agentpolicy::isAbsoluteShellPath(w))
+                return ask(QStringLiteral("ask:cd-relative-write"),
+                           QStringLiteral("This command changes directory, so its relative paths "
+                                          "cannot be checked against the workspace. Confirm where "
+                                          "it writes before it runs."));
+        }
     }
     // Paths the command would read: credential stores and Noch private data ask.
     for (const QString &r : paths.reads) {
@@ -125,7 +138,9 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         return evaluateShell(input);
 
     if (tool == QLatin1String("computer")) {
-        const QString action = input.value(QStringLiteral("action")).toString();
+        // Normalize once, up front: the executor lowercases/trims too, so the
+        // gate must judge the same action string the executor will run.
+        const QString action = input.value(QStringLiteral("action")).toString().trimmed().toLower();
         if (isObservingComputerAction(action))
             return allow(QStringLiteral("read-only"));
         if (plan)
@@ -134,7 +149,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         static const QStringList known{
             "mouse_move", "left_click", "right_click", "middle_click", "double_click", "triple_click",
             "left_click_drag", "scroll", "type", "key", "left_mouse_down", "left_mouse_up", "hold_key" };
-        if (!known.contains(action.trimmed().toLower()))
+        if (!known.contains(action))
             return deny(QStringLiteral("deny:computer-action"),
                         QStringLiteral("Unknown computer action '%1'.").arg(action.left(40)));
         const QString text = input.value(QStringLiteral("text")).toString();
@@ -142,20 +157,13 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
             return deny(QStringLiteral("deny:type-length"), QStringLiteral("Typing more than 2000 characters at once is blocked."));
         // After reading the screen, a risky shortcut or command-like typing
         // is asked for even when Trusted mode or a grant would allow it.
+        // Combos go through the canonical parser, so aliases (win+r,
+        // ctrl+alt+del, option+f4, ...) resolve to the same combos the
+        // executor sees instead of being matched as raw text.
         if (m_screenTainted || m_tainted) {
-            const QString t = text.trimmed().toLower();
-            static const QStringList riskyKeys{
-                "super+r", "win+r", "meta+r", "cmd+r", "super+x", "win+x", "ctrl+shift+escape", "ctrl+shift+esc",
-                "ctrl+alt+delete", "ctrl+alt+del", "alt+f4", "ctrl+shift+return", "ctrl+shift+enter", "super", "win" };
-            static const QRegularExpression shellRx(
-                QStringLiteral("(\\b(powershell|pwsh|cmd(\\.exe)?|bash|wsl|curl|wget|invoke-webrequest|iwr|iex|"
-                               "invoke-expression|start-process|certutil|mshta|rundll32|regsvr32|bitsadmin|"
-                               "reg\\s+(add|delete)|schtasks|net\\s+user|set-mppreference)\\b)"
-                               "|(-enc(odedcommand)?\\s)|(\\|\\s*(sh|bash|iex)\\b)|(rm\\s+-rf)|(del\\s+/[sfq])|(format\\s+[a-z]:)"),
-                QRegularExpression::CaseInsensitiveOption);
             const bool riskyKey = (action == QLatin1String("key") || action == QLatin1String("hold_key"))
-                && riskyKeys.contains(t.simplified().remove(QLatin1Char(' ')));
-            const bool shellText = action == QLatin1String("type") && shellRx.match(text).hasMatch();
+                && cu::isRiskyKeyCombo(cu::parseKeyCombo(text));
+            const bool shellText = action == QLatin1String("type") && cu::looksLikeShellText(text);
             if (riskyKey || shellText)
                 return ask(QStringLiteral("ask:screen-tainted"),
                            riskyKey ? QStringLiteral("After reading the screen, Buddy wants to press %1 (opens system tools).").arg(text.trimmed())
@@ -174,7 +182,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         const QString prot = protectedPathReason(path, m_base);
         if (isPrivatePath(path)) {
             if (isReadOnlyEditorCommand(cmd))
-                return (bypass || granted) ? allow(QStringLiteral("session-grant"))
+                return bypass ? allow(QStringLiteral("mode:bypass"))
                     : ask(QStringLiteral("ask:private-read"),
                           QStringLiteral("Reading Noch's own settings or API key."));
             return deny(QStringLiteral("deny:private-path"),
@@ -182,7 +190,9 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         }
         if (isReadOnlyEditorCommand(cmd)) {
             const QString cred = credentialPathReason(path, m_base);
-            if ((!cred.isEmpty() || !prot.isEmpty()) && !bypass && !granted)
+            // A session grant covers ordinary reads, not secrets: a file that
+            // may contain secrets always asks (Trusted mode aside).
+            if ((!cred.isEmpty() || !prot.isEmpty()) && !bypass)
                 return ask(QStringLiteral("ask:sensitive-read"),
                            QStringLiteral("Reading %1.").arg(!cred.isEmpty() ? cred : prot));
             return allow(QStringLiteral("read-only"));
@@ -198,8 +208,9 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         if (bypass)
             return allow(QStringLiteral("mode:bypass"));
         if (isSecretsFile(path) || !credentialPathReason(path, m_base).isEmpty())
-            return granted ? allow(QStringLiteral("session-grant"))
-                           : ask(QStringLiteral("ask:secrets-file"), QStringLiteral("%1 may contain secrets.").arg(path));
+            // A session grant covers ordinary edits, not secrets: reading a
+            // file that may contain secrets always asks (Trusted mode aside).
+            return ask(QStringLiteral("ask:secrets-file"), QStringLiteral("%1 may contain secrets.").arg(path));
         if (m_mode == Mode::AcceptEdits && insideWorkspace(path))
             return allow(QStringLiteral("mode:acceptEdits"));
         if (granted)
@@ -217,7 +228,10 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
             if (!isFetchableUrl(url))
                 return deny(QStringLiteral("deny:url-scheme"),
                             QStringLiteral("Blocked: only http(s) URLs can be fetched (%1).").arg(url));
-            if (isPrivateUrl(url) && !granted)
+            // Private-network targets always ask, even with a session grant:
+            // "always allow web_fetch" must not silently cover cloud-metadata
+            // and loopback URLs.
+            if (isPrivateUrl(url))
                 return ask(QStringLiteral("ask:private-network"),
                            QStringLiteral("%1 points at your local machine or network.").arg(url));
             // Tainted run: even public URLs ask (exfil / follow-on injection).
@@ -248,9 +262,11 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         return allow(QStringLiteral("read-only"));
 
     // Sandboxed or read-only tools.
-    if (tool == QLatin1String("memory") || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
+    if (tool == QLatin1String("memory") || tool == QLatin1String("memory_search")
+            || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
             || tool == QLatin1String("tool_search") || tool.startsWith(QLatin1String("tool_search_tool"))
-            || tool == QLatin1String("advisor") || tool.startsWith(QLatin1String("advisor_")))
+            || tool == QLatin1String("advisor") || tool.startsWith(QLatin1String("advisor_"))
+            || tool.startsWith(QLatin1String("transfer_to_")))
         return allow(QStringLiteral("safe-tool"));
 
     return deny(QStringLiteral("deny:unknown-tool"), QStringLiteral("Unknown tool '%1'.").arg(tool));

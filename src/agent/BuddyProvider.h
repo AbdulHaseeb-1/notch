@@ -18,6 +18,8 @@
 
 #include "AgentPolicy.h"
 #include "ComputerUse.h"
+#include "HookBus.h"
+#include "PlanValidator.h"
 #include "ProjectContext.h"
 #include "RunJournal.h"
 #include "SessionFormat.h"
@@ -77,6 +79,8 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowTodoTask READ allowTodoTask WRITE setAllowTodoTask NOTIFY agentConfigChanged)
     // Clarifying questions: Buddy may pause to ask a multiple-choice question.
     Q_PROPERTY(bool allowAskUser READ allowAskUser WRITE setAllowAskUser NOTIFY agentConfigChanged)
+    // P6 tool diet: only core tools upfront, rest loaded on demand via tool_search.
+    Q_PROPERTY(bool toolDiet READ toolDiet WRITE setToolDiet NOTIFY agentConfigChanged)
     // Lets Buddy put a screenshot of the screen into the chat for the user to see
     // (share_screenshot). The image stays on this computer: the model is only told it was shown.
     Q_PROPERTY(bool allowScreenshots READ allowScreenshots WRITE setAllowScreenshots NOTIFY agentConfigChanged)
@@ -163,6 +167,12 @@ public:
 
     bool agentMode() const { return m_agentMode; }
     void setAgentMode(bool on);
+    bool toolDiet() const { return m_toolDiet; }
+    void setToolDiet(bool on);
+    // P6: is this tool's schema sent to the model right now? Core tools and
+    // tool_search always; deferred tools only once loaded via tool_search
+    // (or always, when the diet is off).
+    bool toolSchemaVisible(const QString &toolName) const;
     bool allowBash() const { return m_allowBash; }
     void setAllowBash(bool on);
     bool allowComputer() const { return m_allowComputer; }
@@ -341,12 +351,16 @@ private slots:
     void onReplyFinished(QNetworkReply *reply);
 
 private:
+    friend class TstBuddyAgent;  // audit-driven tests for the structured ladder
+    friend class TstToolRepair;  // (HookBus / repair tests already use free functions)
     struct PendingToolCall {
         QString id;
         QString name;
         QJsonObject input;
         int stepIndex = -1;
         QString toolsetName;   // set when the model called a toolset member (e.g. left_click of "computer")
+        QString rawArguments;  // the model's raw argument text when it was not a JSON object (for repair)
+        QString repairError;   // non-empty when the call could not be repaired: answered, never executed
     };
 
     struct ToolOutcome {
@@ -378,9 +392,25 @@ private:
     bool m_allowTodoTask = true;
     bool m_allowAskUser = true;
     bool m_allowScreenshots = true;
+    // P6 tool diet: when on, only core tools (bash, editor, glob_grep,
+    // computer) plus tool_search are sent upfront; deferred tools are
+    // advertised by one-liner and loaded via tool_search on demand.
+    // P6 tool diet: only core tools + tool_search are advertised up
+    // front; deferred tools (web, memory, advisor...) load on demand.
+    // Default ON: ~25% fewer tokens per request. Toggle in settings.
+    bool m_toolDiet = true;
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
+    // P3 hook bus: lifecycle events (PreToolUse/PostToolUse/Stop/
+    // SessionStart/PreCompact) with allow/deny/ask/defer + rewrites.
+    HookBus m_hookBus;
+    void registerBuiltinHooks();
+    // Last PreToolUse verdict, stashed by the policy hook for the gate's
+    // bookkeeping (spans, session grants, approval UI).
+    AgentPolicy::Decision m_lastPolicyDecision;
+    // Last PostToolUse injection flag, stashed by the output-guard hook.
+    bool m_outputGuardFlagged = false;
     QString m_permissionMode = QStringLiteral("default");
     QString m_workspaceRoot;
     bool m_redactSecrets = true;
@@ -413,6 +443,14 @@ private:
     mutable int m_lastCacheMark = -1;   // message index the previous request ended its cacheable prefix at
     int m_cachedTokens = 0;
     int m_deniedCalls = 0;
+    int m_repairedCalls = 0;   // tool calls normalized from near-miss arguments this run
+    int m_malformedCalls = 0;  // tool calls answered with a correction nudge this run
+    int m_totalToolCalls = 0;  // all tool calls seen this run (for repair-rate alerting)
+    // P1 bounded repair: unrepairable-call count PER TOOL (L1: a single
+    // "last failed tool" slot let alternating broken calls dodge the
+    // escalation). Two failures of the same tool → escalate, not loop.
+    QHash<QString, int> m_repairFailCounts;
+    bool m_repairRateAlerted = false;
 
     QVariantList m_toolSteps;
     QVariantList m_attachments;
@@ -421,6 +459,9 @@ private:
     QString m_activeToolSummary;
     int m_agentIteration = 0;
     bool m_toolsDisabledForTurn = false;
+    // A tool call arrived without an id this turn: a 400 mentioning tools is
+    // our own malformed tool_result, not a capability signal.
+    bool m_emptyToolIdInTurn = false;
     QString m_accumulatedText;
     // Output-limit continuation (stop_reason max_tokens / finish_reason
     // length): the text of the cut turns so far, how many continuations this
@@ -449,6 +490,22 @@ private:
     QElapsedTimer m_stepTimer;
     QHash<QString, QString> m_fileUndoBackups;
     QSet<QString> m_unlockedDeferredTools;
+    // ---- P5 plan-then-act ------------------------------------------------
+    // A validated plan the model produced for this run. Steps execute in
+    // order; 2 consecutive failures trigger a bounded replan (max 2).
+    QList<PlanStep> m_plan;
+    bool m_planActive = false;
+    int m_planIndex = 0;
+    int m_consecutivePlanFailures = 0;
+    int m_replanCount = 0;
+    // Note to send the model after a plan is accepted/rejected (when the
+    // turn had no tool calls to carry it).
+    QString m_planNote;
+    // P5: set when 2 consecutive plan steps fail and a replan is needed.
+    bool m_replanNeeded = false;
+    // P8: distilled procedure text from a plan that completed this run;
+    // saved to /memories/procedures/ by the end-of-run extractor.
+    QString m_pendingProcedure;
 
     QJsonArray m_agentMessages;
     QList<PendingToolCall> m_pendingTools;
@@ -474,7 +531,7 @@ private:
     void setActiveAgent(const QString &id);
     bool toolAllowedForActiveAgent(const QString &tool) const;
     void executeHandoff(const PendingToolCall &call);
-    QString memoryIndex() const;
+    QString memoryIndex(const QString &query = QString()) const;
     quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
     QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
     QList<ToolOutcome> m_completedTools;
@@ -508,6 +565,9 @@ private:
     void dispatchAgentTurn();
     void executeToolCall(const PendingToolCall &call);
     void gateAndExecute(const PendingToolCall &call);
+    // P5: detect a ```plan block in model text, validate, and activate it.
+    // Returns a note for the model (empty when no plan block was present).
+    QString checkForPlan(const QString &text);
     void setStepFields(int stepIndex, const QVariantMap &fields);
     void clearPendingApproval();
     void clearPendingQuestion();
@@ -535,7 +595,21 @@ private:
     void addBetaHeaders(QNetworkRequest &request, const QJsonObject &payload) const;
     bool historyHasComputerToolUse() const;
     static bool mentionsComputerTool(const QString &error);
+    // P2 structured-output ladder: plain text+parser < JSON mode <
+    // function calling < constrained decoding. Ollama's `format` with a
+    // JSON Schema is constrained decoding; plain-text models get the
+    // parser. Validation (P1) still applies on top.
+    enum class StructuredLevel { TextParser, JsonMode, FunctionCalling };
+    StructuredLevel structuredLevel() const;
+    // The JSON Schema used as Ollama's `format` in JsonMode: a tool-call
+    // envelope the model must fill. One schema for every tool keeps the
+    // diet small and the parser uniform.
+    QJsonObject textProtocolSchema() const;
     void updateResponseMeta();
+    // Model-agnostic harness: whether the configured model can process
+    // images. Decided by provider and model name; unknown models count as
+    // blind, because an image payload to a text-only model fails the turn.
+    bool modelVisionCapable() const;
     void addCitation(const QString &title, const QString &url);
 
     void executeBashTool(const PendingToolCall &call);
@@ -543,6 +617,12 @@ private:
     void executeEditorTool(const PendingToolCall &call);
     void executeCodeSearchTool(const PendingToolCall &call);
     void executeMemoryTool(const PendingToolCall &call);
+    // P8: BM25 retrieval over the memory store.
+    void executeMemorySearchTool(const PendingToolCall &call);
+    // P8: end-of-run memory pipeline — extract atomic facts from the run's
+    // user messages, BM25-dedupe against the store, ADD/UPDATE, and distill
+    // completed plans into procedures.
+    void extractRunMemories();
     void executeWebSearchTool(const PendingToolCall &call);
     void executeWebFetchTool(const PendingToolCall &call);
     void executeToolSearchTool(const PendingToolCall &call);
