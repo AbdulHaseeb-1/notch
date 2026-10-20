@@ -39,4 +39,19 @@ bool isSilent(const QByteArray &pcm16);
 // words are not clipped. Returns the input unchanged when it is all silence.
 QByteArray trimSilence(const QByteArray &pcm16);
 
+// Prepares raw microphone audio for the recognizer: removes the DC offset
+// (sound cards bias the samples) and lifts quiet clips to a speaking level.
+// On-device speech models are trained on normalized audio; without this a
+// low-gain microphone transcribes as silence or garbage. Leaves loud clips
+// and pure silence untouched.
+QByteArray conditionForStt(const QByteArray &pcm16);
+
+// Repairs the common mistakes a small on-device recognizer makes, before a
+// transcript becomes a command: sentence-cases the text, ends it with
+// punctuation, collapses stuttered words, and fixes the multi-word
+// technology names recognizers mangle ("power shell" -> "PowerShell").
+// Conservative by design: only exact word-boundary matches are touched,
+// and nothing semantic (word choice, homophones) is ever "corrected".
+QString fixTranscript(const QString &text);
+
 } // namespace voice

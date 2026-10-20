@@ -5,6 +5,7 @@
 #include <QPointer>
 #include <QThread>
 #include <QTimer>
+#include <QVariantMap>
 
 #include <functional>
 #include <memory>
@@ -90,6 +91,9 @@ public:
     // Another speech-to-text engine (tests use a scripted one). Takes effect for the next request.
     void setTranscriber(std::unique_ptr<Transcriber> transcriber);
     Q_INVOKABLE void openModelFolder() const;
+    // What the settings shows about the speech model: the engine name,
+    // whether it is usable, and its files with their state.
+    Q_INVOKABLE QVariantMap sttModelStatus() const;
 
     // One transcription of a clip (16 kHz mono 16-bit PCM), by the same engine as
     // push-to-talk and without touching push-to-talk's state. `done` runs once on

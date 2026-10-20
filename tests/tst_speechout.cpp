@@ -333,8 +333,45 @@ private slots:
         QVERIFY(s.error().isEmpty());
     }
 
-    void kokoroServerDownFallsBackToTheSystemVoice() {
-        QTemporaryDir dir;
+    void engineStatusesReportWhatIsConfigured() {
+        SpeechOut s;
+        QVariantMap all = s.engineStatuses();
+        QVERIFY(all.contains(QStringLiteral("system")));
+        QVERIFY(all.contains(QStringLiteral("google")));
+        QVERIFY(all.contains(QStringLiteral("kokoro")));
+
+        const QVariantMap google = all.value(QStringLiteral("google")).toMap();
+        QVERIFY(!google.value(QStringLiteral("ready")).toBool());   // no key yet
+        QVERIFY(!google.value(QStringLiteral("detail")).toString().isEmpty());
+
+        const QVariantMap kokoro = all.value(QStringLiteral("kokoro")).toMap();
+        QVERIFY(kokoro.value(QStringLiteral("ready")).toBool());    // valid defaults
+
+        s.setGoogleKey("abc123");
+        s.setGoogleVoice("en-US-Neural2-F");
+        all = s.engineStatuses();
+        QVERIFY(all.value(QStringLiteral("google")).toMap().value(QStringLiteral("ready")).toBool());
+    }
+
+    void kokoroPipelineSpeaksSentenceBySentence() {
+        FakeStt api;
+        api.reply = wavFile(0.4);
+        SpeechOut s;
+        s.player()->setDeviceDisabled(true);
+        s.setEngine("kokoro");
+        s.setKokoroBase(api.base());
+        s.setEnabled(true);
+        // Two sentences: the pipeline sends one synthesis request per chunk
+        // and plays them back to back.
+        s.speakReport("The first sentence of this report is deliberately rather long. "
+                      "The second sentence of this report is also somewhat long on purpose.");
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests, 2, 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(s.player()->playedUtterances(), 2, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(!s.speaking(), 3000);
+        QVERIFY(s.error().isEmpty());
+    }
+
+    void kokoroServerDownFallsBackToTheSystemVoice() {        QTemporaryDir dir;
         const QString out = dir.filePath("said.txt");
         SpeechOut s;
         useRecorder(s, out);
@@ -425,6 +462,40 @@ private slots:
         QCOMPARE(s.maxChars(), 120);
         s.setEngine("bogus");
         QCOMPARE(s.engine(), QString("system"));
+    }
+
+    // ---- sentence chunks for pipelined synthesis -------------------------------------
+
+    void speechChunksSplitOnSentences() {
+        const QStringList chunks = SpeechOut::splitSpeechChunks(
+            QStringLiteral("Press and hold the power button on the side panel for five full seconds today. "
+                           "Wait until the fan inside has stopped spinning fully before doing anything else at all. "
+                           "Now you can safely open up the case and look at the motherboard."));
+        // Each sentence is longer than the merge floor, so each is its own chunk.
+        QCOMPARE(chunks.size(), 3);
+        QVERIFY(chunks.at(0).endsWith(QLatin1String("today.")));
+        QVERIFY(chunks.at(2).endsWith(QLatin1String("motherboard.")));
+    }
+
+    void speechChunksMergeShortFragmentsForward() {
+        // A lone "Yes." is too small to synthesize alone: it joins the next sentence.
+        const QStringList chunks = SpeechOut::splitSpeechChunks(QStringLiteral("Yes. I made the file you asked for yesterday."));
+        QCOMPARE(chunks.size(), 1);
+        QCOMPARE(chunks.first(), QStringLiteral("Yes. I made the file you asked for yesterday."));
+    }
+
+    void speechChunksBoundALongSentence() {
+        const QString longSentence = (QStringLiteral("word ") .repeated(150)).trimmed() + QStringLiteral(".");
+        const QStringList chunks = SpeechOut::splitSpeechChunks(longSentence);
+        QVERIFY(chunks.size() >= 2);
+        for (const QString &c : chunks)
+            QVERIFY2(c.size() <= 320, qPrintable(QString::number(c.size())));
+    }
+
+    void speechChunksOfNothingIsNothing() {
+        QVERIFY(SpeechOut::splitSpeechChunks(QString()).isEmpty());
+        QVERIFY(SpeechOut::splitSpeechChunks(QStringLiteral("   ")).isEmpty());
+        QCOMPARE(SpeechOut::splitSpeechChunks(QStringLiteral("Hello world.")).size(), 1);
     }
 
     void emptyOrCodeOnlyReplyIsNotSpoken() {

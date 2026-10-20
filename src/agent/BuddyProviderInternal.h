@@ -302,6 +302,8 @@ QString defaultBaseFor(const QString &provider)
         return QStringLiteral("https://api.anthropic.com");
     if (provider == QLatin1String("openai"))
         return QStringLiteral("https://api.openai.com");
+    if (provider == QLatin1String("opencode"))
+        return QStringLiteral("https://opencode.ai/zen");
     return QString();
 }
 

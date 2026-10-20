@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSettings>
+#include <QVariantMap>
 
 #include "Moonshine.h"
 
@@ -58,6 +59,32 @@ public:
             }
         }
         return m_model.transcribe(pcm16, error);
+    }
+
+    QVariantList modelFiles() const override
+    {
+        // What settings shows: each needed file, whether it is there, and
+        // where it was (or should be) found. encoder + decoder may sit in
+        // the user folder or next to the executable; the vocabulary may
+        // also come from the bundled resources.
+        QVariantList out;
+        auto describe = [&out](const QString &name, const QString &path) {
+            const QFileInfo fi(path);
+            out.append(QVariantMap{
+                { QStringLiteral("name"), name },
+                { QStringLiteral("path"), path },
+                { QStringLiteral("found"), !path.isEmpty() && fi.exists() },
+                { QStringLiteral("bytes"), qint64(!path.isEmpty() && fi.exists() ? fi.size() : 0) },
+            });
+        };
+        const QString dir = modelDir();
+        // When nothing is installed, point at the first folder the engine
+        // looks in (the env override in tests, else the user's folder).
+        const QString base = dir.isEmpty() ? searchDirs().value(0) : dir;
+        describe(QStringLiteral("encoder.onnx"), base + QStringLiteral("/encoder.onnx"));
+        describe(QStringLiteral("decoder.onnx"), base + QStringLiteral("/decoder.onnx"));
+        describe(QStringLiteral("vocab.json"), vocabPath());
+        return out;
     }
 
 private:

@@ -80,6 +80,176 @@ SettingsPage {
         }
     }
 
+    property var modelStt: ({})
+    property var modelWake: ({})
+    property var modelTts: ({})
+
+    function refreshModels() {
+        modelStt = Voice.sttModelStatus()
+        modelWake = Wake.detectorModelStatus()
+        modelTts = Speech.engineStatuses()
+    }
+
+    function filesMissing(files) {
+        for (let i = 0; i < files.length; ++i)
+            if (!files[i].found)
+                return true
+        return false
+    }
+
+    function fileSizeText(bytes, found) {
+        if (!found)
+            return qsTr("missing")
+        if (bytes > 0)
+            return (bytes / 1048576).toFixed(1) + qsTr(" MB")
+        return qsTr("built in")
+    }
+
+    readonly property bool allModelsReady: !filesMissing(modelStt.files || [])
+                                           && modelTts.system && modelTts.system.ready
+
+    SettingsSectionHeader {
+        title: qsTr("Speech models")
+        rightText: page.allModelsReady ? qsTr("Ready") : qsTr("Needs attention")
+        description: qsTr("The speech models on this computer and whether they are correctly configured.")
+    }
+
+    SettingsGroupCard {
+        Column {
+            width: parent.width
+            spacing: 6
+
+            Text {
+                width: parent.width
+                text: qsTr("Moonshine Tiny (speech to text)")
+                color: Theme.ink
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                font.weight: Font.Medium
+            }
+            Text {
+                width: parent.width
+                text: page.modelStt.ready
+                      ? qsTr("Ready. English only. Nothing you say leaves this computer.")
+                      : (page.modelStt.problem || qsTr("The model files are not all here."))
+                color: page.modelStt.ready ? Theme.textDim : Theme.warning
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            Repeater {
+                model: page.modelStt.files || []
+                delegate: Text {
+                    required property var modelData
+                    width: parent.width
+                    text: modelData.name + " · " + page.fileSizeText(modelData.bytes, modelData.found)
+                    color: modelData.found ? Theme.textDim : Theme.warning
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontSm
+                }
+            }
+            SettingsPillButton {
+                icon: "folder"
+                label: qsTr("Open models folder")
+                onClicked: Voice.openModelFolder()
+            }
+        }
+
+        SettingsCardDivider {}
+
+        Column {
+            width: parent.width
+            spacing: 6
+
+            Text {
+                width: parent.width
+                text: qsTr("Wake detector (openWakeWord)")
+                color: Theme.ink
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                font.weight: Font.Medium
+            }
+            Text {
+                width: parent.width
+                text: page.modelWake.detector === "local"
+                      ? qsTr("The phrase is found on this computer.")
+                      : page.modelWake.detector === "loading" ? qsTr("Starting…")
+                      : qsTr("No local model: sentences are transcribed and compared with the phrase instead.")
+                color: page.modelWake.detector === "speech" ? Theme.warning : Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            Repeater {
+                visible: page.modelWake.detector !== "speech"
+                model: page.modelWake.files || []
+                delegate: Text {
+                    required property var modelData
+                    width: parent.width
+                    text: modelData.name + " · " + page.fileSizeText(modelData.bytes, modelData.found)
+                    color: modelData.found ? Theme.textDim : Theme.warning
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontSm
+                }
+            }
+            SettingsPillButton {
+                icon: "folder"
+                label: qsTr("Open models folder")
+                onClicked: Wake.openModelFolder()
+            }
+        }
+
+        SettingsCardDivider {}
+
+        Column {
+            width: parent.width
+            spacing: 6
+
+            Text {
+                width: parent.width
+                text: qsTr("Spoken answers (text to speech)")
+                color: Theme.ink
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                font.weight: Font.Medium
+            }
+            Repeater {
+                model: [
+                    { id: "system", name: qsTr("This computer") },
+                    { id: "google", name: qsTr("Google Cloud") },
+                    { id: "kokoro", name: qsTr("Kokoro") }
+                ]
+                delegate: Text {
+                    required property var modelData
+                    readonly property var s: page.modelTts[modelData.id]
+                    width: parent.width
+                    text: (s && s.ready ? "✓ " : "! ") + modelData.name + " — " + (s ? s.detail : "")
+                    color: s && s.ready ? Theme.textDim : Theme.warning
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontSm
+                    wrapMode: Text.WordWrap
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: Voice
+        function onReadyChanged() { page.refreshModels() }
+        function onConfigChanged() { page.refreshModels() }
+    }
+    Connections {
+        target: Wake
+        function onStateChanged() { page.refreshModels() }
+        function onDetectorChanged() { page.refreshModels() }
+    }
+    Connections {
+        target: Speech
+        function onConfigChanged() { page.refreshModels() }
+        function onErrorChanged() { page.refreshModels() }
+    }
+    Component.onCompleted: page.refreshModels()
+
     SettingsSectionHeader {
         visible: panel.prefs.buddyVoiceEnabled
         title: qsTr("Wake word")
@@ -159,16 +329,13 @@ SettingsPage {
     }
 
     SettingsSectionHeader {
-        visible: panel.prefs.buddyVoiceEnabled
         title: qsTr("Spoken answers")
         rightText: !panel.prefs.buddySpeakReports ? qsTr("Off") : ({ system: qsTr("This computer"), google: qsTr("Google Cloud"), kokoro: qsTr("Kokoro") })[panel.prefs.buddyTtsEngine] || ""
         description: qsTr("Buddy reads a short summary of each answer out loud: never code or links.")
     }
 
     SettingsGroupCard {
-        visible: panel.prefs.buddyVoiceEnabled
         SettingsToggleRow {
-            visible: panel.prefs.buddyVoiceEnabled
             label: qsTr("Read answers aloud")
             sub: qsTr("When a request started by voice finishes, needs your approval or fails, Buddy says a short summary out loud. Never code or links.")
             checked: panel.prefs.buddySpeakReports
@@ -176,7 +343,7 @@ SettingsPage {
         }
 
         Column {
-            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddySpeakReports
+            visible: panel.prefs.buddySpeakReports
             width: parent.width
             spacing: 10
 

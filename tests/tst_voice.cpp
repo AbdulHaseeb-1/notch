@@ -370,7 +370,9 @@ private slots:
         QCOMPARE(r.mic->stops, 1);                         // the microphone is closed first
         QCOMPARE(r.voice.level(), 0.0);
         QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
-        QCOMPARE(words.first().first().toString(), QStringLiteral("hello world"));
+        // The recognizer's mistakes are repaired on the way out (fixTranscript):
+        // bare lowercase becomes a sentence.
+        QCOMPARE(words.first().first().toString(), QStringLiteral("Hello world."));
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
         QVERIFY(r.voice.error().isEmpty());
         QCOMPARE(r.stt.requests.load(), 1);
@@ -447,15 +449,15 @@ private slots:
         QCOMPARE(words.size(), 0);
     }
 
-    void whitespaceInTheAnswerIsTidied() {
+    void theAnswerIsTidiedAndRepaired() {
         Rig r;
-        r.stt.set([](FakeTranscriber &t) { t.reply = QStringLiteral("  open   notepad \n"); });
+        r.stt.set([](FakeTranscriber &t) { t.reply = QStringLiteral("  open   note pad \n"); });
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         r.voice.beginListening();
         r.mic->feed(tone(1.0));
         r.voice.endListening();
         QTRY_COMPARE_WITH_TIMEOUT(words.size(), 1, 5000);
-        QCOMPARE(words.first().first().toString(), QStringLiteral("open notepad"));
+        QCOMPARE(words.first().first().toString(), QStringLiteral("Open Notepad."));
     }
 
     void cancelWhileListeningDiscardsEverything() {
@@ -498,7 +500,7 @@ private slots:
         QVERIFY(a != b && a != 0 && b != 0);
         r.voice.abort(a);
         QTRY_COMPARE_WITH_TIMEOUT(got.size(), 1, 5000);
-        QCOMPARE(got.first(), QStringLiteral("second"));   // requests run in order; the aborted one is just dropped
+        QCOMPARE(got.first(), QStringLiteral("Second"));   // requests run in order; the aborted one is just dropped
         QTest::qWait(200);
         QCOMPARE(got.size(), 1);
     }
@@ -602,6 +604,114 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(words.size() + failed.size(), 1, 20000);
         QCOMPARE(failed.size(), 0);
         QCOMPARE(words.first().first().toString(), QStringLiteral("Take a screenshot and show me my screen."));
+    }
+
+    // ---- conditioning (DC removal + quiet gain) ---------------------------------------
+
+    QByteArray biasedTone(double amp, qint16 dc)
+    {
+        QByteArray out = tone(1.0, 300, amp);
+        auto *s = reinterpret_cast<qint16 *>(out.data());
+        for (int i = 0; i < int(out.size() / 2); ++i)
+            s[i] = qint16(qBound(-32768, int(s[i]) + dc, 32767));
+        return out;
+    }
+
+    void conditioningRemovesTheDcOffset() {
+        // A biased sound card shifts every sample: a 2000-count DC offset on
+        // a 0.3-amplitude tone must come back to a centred signal.
+        const QByteArray out = voice::conditionForStt(biasedTone(0.3, 2000));
+        const auto *s = reinterpret_cast<const qint16 *>(out.constData());
+        double mean = 0;
+        for (int i = 0; i < int(out.size() / 2); ++i)
+            mean += double(s[i]);
+        QVERIFY(qAbs(mean / (out.size() / 2)) < 60);   // was 2000
+    }
+
+    void conditioningLiftsAQuietMicrophone() {
+        // 0.1 amplitude is barely there; conditioning must lift the peak to
+        // near full scale without distorting the tone.
+        const QByteArray out = voice::conditionForStt(tone(1.0, 300, 0.1));
+        QVERIFY2(voice::peak(out) > 0.85, qPrintable(QString::number(voice::peak(out))));
+        QVERIFY(voice::peak(out) <= 1.0);
+        QVERIFY(qAbs(frequencyOf(out, 16000) - 300) < 5);
+    }
+
+    void conditioningLeavesHealthyAudioAlone() {
+        // 0.5 amplitude only gets the (near-zero) DC removed: the peak must
+        // not be lifted to full scale, or loud speech would be reshaped.
+        const QByteArray out = voice::conditionForStt(tone(1.0, 300, 0.5));
+        QVERIFY(qAbs(voice::peak(out) - 0.5) < 0.02);
+    }
+
+    void conditioningIgnoresPureSilence() {
+        QCOMPARE(voice::conditionForStt(silence(1.0)), silence(1.0));
+    }
+
+    // ---- transcript repair ------------------------------------------------------------
+
+    void repairSentenceCasesAndEnds() {
+        QCOMPARE(voice::fixTranscript(QStringLiteral("open notepad")), QStringLiteral("Open notepad."));
+    }
+
+    void repairMendsMangledTechNames() {
+        QCOMPARE(voice::fixTranscript(QStringLiteral("open the power shell")),
+                 QStringLiteral("Open the PowerShell."));
+        QCOMPARE(voice::fixTranscript(QStringLiteral("go to get hub dot com")),
+                 QStringLiteral("Go to GitHub dot com."));
+        QCOMPARE(voice::fixTranscript(QStringLiteral("open v s code")), QStringLiteral("Open VS Code."));
+    }
+
+    void repairCollapsesStutters() {
+        QCOMPARE(voice::fixTranscript(QStringLiteral("open the the notepad")),
+                 QStringLiteral("Open the notepad."));
+        QCOMPARE(voice::fixTranscript(QStringLiteral("the the the notepad is open")),
+                 QStringLiteral("The notepad is open."));
+        // A genuine double ("had had") is left alone.
+        QCOMPARE(voice::fixTranscript(QStringLiteral("it had had problems")),
+                 QStringLiteral("It had had problems."));
+    }
+
+    void repairLeavesGoodTextUntouched() {
+        QCOMPARE(voice::fixTranscript(QStringLiteral("Take a screenshot and show me my screen.")),
+                 QStringLiteral("Take a screenshot and show me my screen."));
+        QCOMPARE(voice::fixTranscript(QStringLiteral("Hey?")), QStringLiteral("Hey?"));
+        QCOMPARE(voice::fixTranscript(QStringLiteral("")), QStringLiteral(""));
+        QCOMPARE(voice::fixTranscript(QStringLiteral("ok")), QStringLiteral("Ok"));
+    }
+
+    void repairDoesNotFixSemantics() {
+        // Homophones are not guessable on-device: "write" stays "write".
+        QCOMPARE(voice::fixTranscript(QStringLiteral("write it down")),
+                 QStringLiteral("Write it down."));
+    }
+
+    // ---- model status for settings -----------------------------------------------------
+
+    void sttModelStatusListsItsFiles() {
+        QTemporaryDir empty;
+        qputenv("NOCH_MOONSHINE_DIR", empty.path().toUtf8());
+        VoiceInput v;   // default engine: Moonshine Tiny
+        const QVariantMap s = v.sttModelStatus();
+        qputenv("NOCH_MOONSHINE_DIR", QByteArray());
+        QCOMPARE(s.value(QStringLiteral("engine")).toString(), QStringLiteral("Moonshine Tiny"));
+        const QVariantList files = s.value(QStringLiteral("files")).toList();
+        QCOMPARE(files.size(), 3);
+        QStringList names;
+        for (const QVariant &f : files) {
+            const QVariantMap m = f.toMap();
+            names << m.value(QStringLiteral("name")).toString();
+            if (m.value(QStringLiteral("name")).toString() != QStringLiteral("vocab.json")) {
+                // The model binaries must come from disk (nothing is bundled);
+                // vocab.json may legitimately fall back to the bundled copy.
+                QVERIFY2(m.value(QStringLiteral("path")).toString().contains(empty.path()),
+                         qPrintable(m.value(QStringLiteral("path")).toString()));
+                QVERIFY(!m.value(QStringLiteral("found")).toBool());
+            }
+        }
+        QVERIFY(names.contains(QStringLiteral("encoder.onnx")));
+        QVERIFY(names.contains(QStringLiteral("decoder.onnx")));
+        QVERIFY(names.contains(QStringLiteral("vocab.json")));
     }
 
     void theMeterRisesFastAndFallsSlowly() {

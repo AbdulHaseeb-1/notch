@@ -266,6 +266,13 @@ Item {
     property real dragVelX: 0
     property real dragVelY: 0
     property real neon: 0              // 0..1: neon gradient halo, the buddy's "happy glow"
+
+    // Hover, held explicitly instead of reading buddyHit.containsMouse in the
+    // frame loop and bindings: the glow widens the window's input mask, and
+    // when the mask shrinks back as the glow fades, Windows can swallow the
+    // mouse-leave — leaving containsMouse true and the halo lit forever. The
+    // cursor poll force-releases this flag when the pointer is really gone.
+    property bool hovering: false
     // The halo's gradient stops, chosen in Settings > Buddy > Ring colour.
     readonly property var ringColors: SystemAppearance.ringColors
 
@@ -717,6 +724,21 @@ Item {
             buddy.petAccum = Math.max(0, buddy.petAccum - 3.5)
 
             const c = Overlay.cursorPos()
+            // Dead-man's release for the hover halo: if the exit event was
+            // ever swallowed (the glow widens the native input mask, and the
+            // mask shrinking back as the glow fades can eat the mouse-leave),
+            // drop the hover flag as soon as the pointer is really outside the
+            // buddy plus its glow pad. Not while dragging: the press holds the
+            // grab wherever the pointer goes.
+            if (buddy.hovering && !buddyHit.pressed) {
+                const pad = Math.round(26 * buddy.s)
+                const gx0 = buddy.x - pad, gy0 = buddy.y - pad
+                const gx1 = buddy.x + buddy.width + pad, gy1 = buddy.y + buddy.height + pad
+                if (c.x < gx0 || c.x > gx1 || c.y < gy0 || c.y > gy1) {
+                    buddy.hovering = false
+                    buddy.springing = true
+                }
+            }
             const moved = Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 1.2
             if (moved && !buddy.gazeLock) {
                 buddy.lx = c.x
@@ -761,7 +783,7 @@ Item {
 
             // Target expression morphs based on current mood & interaction
             const wantHappy = (buddy.mood === "happy" || buddy.mood === "love"
-                               || (buddyHit.containsMouse && !buddy.dragging && buddy.session === "idle")) ? 1.0 : 0.0
+                               || (buddy.hovering && !buddy.dragging && buddy.session === "idle")) ? 1.0 : 0.0
             const wantWide = buddy.dragging ? 0.30
                            : (buddy.mood === "surprised" ? 0.34
                            : (buddy.mood === "listening" ? 0.14
@@ -773,7 +795,7 @@ Item {
             const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
             const wantNeon = buddy.busy ? 1.0
                            : (buddy.mood === "happy" || buddy.mood === "love") ? 1.0
-                           : (buddyHit.containsMouse && !buddy.dragging && buddy.session === "idle" ? 0.55 : 0.0)
+                           : (buddy.hovering && !buddy.dragging && buddy.session === "idle" ? 0.55 : 0.0)
 
             const expRate = Math.min(1.0, dt * 14.0)
             buddy.happyArc  += (wantHappy - buddy.happyArc) * expRate
@@ -878,11 +900,11 @@ Item {
         radius: buddy.orbRadius
         color: Theme.orb
         border.width: !buddy.solidRing ? 0
-                    : (buddyHit.containsMouse || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
+                    : (buddy.hovering || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
         border.color: !buddy.solidRing ? "transparent"
                     : (buddy.mood === "error" ? Theme.danger
                     : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? Theme.accent
-                    : (buddyHit.containsMouse || buddy.session === "input" ? Theme.accent : Theme.borderStrong)))
+                    : (buddy.hovering || buddy.session === "input" ? Theme.accent : Theme.borderStrong)))
         Behavior on border.color { ColorAnimation { duration: 140 } }
 
         rotation: Math.max(-14, Math.min(14, buddy.gazeRoll * 0.55 + buddy.dragVelX * 0.18))
@@ -2008,6 +2030,7 @@ Item {
         property bool dragged: false
 
         onEntered: {
+            buddy.hovering = true
             buddy.lastHoverX = mouseX
             buddy.lastHoverY = mouseY
             buddy.springing = true
@@ -2018,7 +2041,10 @@ Item {
             if (BuddySound)
                 BuddySound.prewarm()
         }
-        onExited: buddy.springing = true
+        onExited: {
+            buddy.hovering = false
+            buddy.springing = true
+        }
         onPressed: (mouse) => {
             buddy.wake()
             dozeTimer.restart()

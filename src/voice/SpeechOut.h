@@ -43,7 +43,7 @@ class SpeechOut : public QObject
     Q_PROPERTY(QString googleVoice READ googleVoice WRITE setGoogleVoice NOTIFY configChanged)
     Q_PROPERTY(QString kokoroBase READ kokoroBase WRITE setKokoroBase NOTIFY configChanged)
     Q_PROPERTY(QString kokoroVoice READ kokoroVoice WRITE setKokoroVoice NOTIFY configChanged)
-    // 0.7 .. 1.5, for Google and Kokoro.
+    // 0.7 .. 1.5, for Google, Kokoro and (through SSML prosody) the system voice.
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY configChanged)
     // How much of a reply is read (characters, 120 .. 2000).
     Q_PROPERTY(int maxChars READ maxChars WRITE setMaxChars NOTIFY configChanged)
@@ -96,6 +96,8 @@ public:
     // Say it even when the setting is off (the Settings "Test voice" button).
     Q_INVOKABLE void test();
     Q_INVOKABLE void stop();
+    // What the settings shows about the three voices: {id: {ready, detail}}.
+    Q_INVOKABLE QVariantMap engineStatuses() const;
 
     // ---- pure helpers (unit tested) ----------------------------------------------
     // The URL of a Kokoro server's speech endpoint ("" if the address is unusable).
@@ -104,6 +106,10 @@ public:
     static QString kokoroAddressProblem(const QString &base);
     // "en-US-Neural2-F" -> "en-US".
     static QString googleLanguage(const QString &voice);
+    // Splits spoken text at sentence boundaries for pipelined synthesis:
+    // short fragments merge into the next chunk, and no chunk exceeds
+    // ~320 characters, so the first sound starts after one sentence.
+    static QStringList splitSpeechChunks(const QString &text);
 
 signals:
     void configChanged();
@@ -113,8 +119,13 @@ signals:
 private:
     void start(const QString &text, bool force = false);
     void startSystem(const QString &text);
-    void startGoogle(const QString &text);
-    void startKokoro(const QString &text);
+    // Cloud voices speak in sentence chunks: chunk i+1 is synthesized while
+    // chunk i plays, so time-to-first-sound is one sentence's synthesis.
+    void beginPipeline(const QString &text);
+    void synthesizeNext();
+    void onChunkAudio(const QByteArray &pcm, int rate, int channels);
+    void onPlayerChunkFinished();
+    QString remainingSpeech() const;   // current chunk + everything unsaid
     void onAudio(const QByteArray &wav, const QString &text);
     void onFailure(const QString &why, const QString &text);
     void setError(const QString &why);
@@ -128,6 +139,14 @@ private:
     SpeechPlayer m_player;
     quint64 m_generation = 0;
     bool m_synthesizing = false;
+    // Pipeline state (google/kokoro): chunks not yet synthesized, plus one
+    // synthesized chunk buffered while the player finishes the previous one.
+    bool m_pipeline = false;
+    QStringList m_chunks;
+    QString m_currentChunk;
+    QByteArray m_bufferedPcm;
+    int m_bufferedRate = 0;
+    int m_bufferedChannels = 0;
     bool m_lastSpeaking = false;
     bool m_enabled = false;
     QString m_engine = QStringLiteral("system");

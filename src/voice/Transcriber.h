@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
+#include <QVariantList>
 
 #include <memory>
 
@@ -20,6 +22,9 @@ public:
     virtual QString prepare() = 0;
     // 16 kHz mono 16-bit PCM in; the words out ("" for no words). A failure sets `error`.
     virtual QString transcribe(const QByteArray &pcm16, QString *error) = 0;
+    // The model files the engine needs, for the settings to show their state:
+    // a list of {name, path, found, bytes} maps. "" list when there are none.
+    virtual QVariantList modelFiles() const { return {}; }
 };
 
 // Moonshine Tiny on this computer (see Moonshine.h). `folder` is where the user can

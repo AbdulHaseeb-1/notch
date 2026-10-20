@@ -1,6 +1,7 @@
 // Wake word: phrase matching, finding utterances in audio, spoken summaries, and
 // the whole listen -> check -> command flow (fake microphone, fake speech server).
 #include <QtTest>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QSignalSpy>
 
@@ -81,6 +82,48 @@ class TstWakeWord : public QObject
     };
 
 private slots:
+    // ---- the sustain vote ---------------------------------------------------------
+
+    void detectorModelStatusListsItsFiles() {
+        Rig r(false);
+        const QVariantMap s = r.wake.detectorModelStatus();
+        const QVariantList files = s.value(QStringLiteral("files")).toList();
+        QCOMPARE(files.size(), 3);
+        QStringList names;
+        for (const QVariant &f : files) {
+            const QVariantMap m = f.toMap();
+            names << m.value(QStringLiteral("name")).toString();
+            // Consistency check, not content: found must match the path.
+            QCOMPARE(m.value(QStringLiteral("found")).toBool(),
+                     !m.value(QStringLiteral("path")).toString().isEmpty()
+                         && QFile::exists(m.value(QStringLiteral("path")).toString()));
+        }
+        QVERIFY(names.contains(QStringLiteral("melspectrogram.onnx")));
+        QVERIFY(names.contains(QStringLiteral("embedding_model.onnx")));
+    }
+
+    void aLoneHotChunkIsNotAWake() {
+        // One above-threshold score, then quiet: a phoneme coincidence, not a phrase.
+        int streak = 0;
+        QVERIFY(!wake::confirmSustained(streak, 0.9f, 0.5f, 2));
+        QVERIFY(!wake::confirmSustained(streak, 0.1f, 0.5f, 2));   // streak resets
+        QVERIFY(!wake::confirmSustained(streak, 0.9f, 0.5f, 2));   // one hot chunk is not enough
+    }
+
+    void twoConsecutiveHotChunksAreAWake() {
+        int streak = 0;
+        QVERIFY(!wake::confirmSustained(streak, 0.6f, 0.5f, 2));
+        QVERIFY(wake::confirmSustained(streak, 0.7f, 0.5f, 2));    // fires exactly once
+        QVERIFY(!wake::confirmSustained(streak, 0.8f, 0.5f, 2));   // needs a fresh streak
+    }
+
+    void aSubThresholdChunkBreaksTheStreak() {
+        int streak = 0;
+        QVERIFY(!wake::confirmSustained(streak, 0.6f, 0.5f, 2));
+        QVERIFY(!wake::confirmSustained(streak, 0.49f, 0.5f, 2));  // just under: reset
+        QVERIFY(!wake::confirmSustained(streak, 0.6f, 0.5f, 2));   // one again: not enough
+    }
+
     // ---- the phrase ---------------------------------------------------------------
 
     void normalizesWords() {
@@ -299,7 +342,7 @@ private slots:
         r.stt.reply = reply("Hey Buddy, open notepad");
         r.say();
         QTRY_COMPARE(r.command.count(), 1);
-        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad."));
         QCOMPARE(r.woke.count(), 1);
         QCOMPARE(r.wake.state(), QStringLiteral("listening"));
     }
@@ -323,7 +366,7 @@ private slots:
         QCOMPARE(r.wake.state(), QStringLiteral("awaiting"));
         r.mic->feed(speech(1.5) + silence(1.5));   // a request may be followed by a longer pause than a phrase
         QTRY_COMPARE(r.command.count(), 1);
-        QCOMPARE(r.command.first().first().toString(), QStringLiteral("what is the weather today"));
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("What is the weather today."));
         QCOMPARE(r.wake.state(), QStringLiteral("listening"));
     }
 
@@ -440,7 +483,7 @@ private slots:
         r.stt.reply = reply("Computer, lights on");
         r.say();
         QTRY_COMPARE(r.command.count(), 1);
-        QCOMPARE(r.command.first().first().toString(), QStringLiteral("lights on"));
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("lights on."));
         r.stt.reply = reply("hey buddy lights off");
         r.say();
         QTRY_COMPARE(r.stt.requests.load(), 2);
@@ -635,7 +678,7 @@ private slots:
 
         play(r.mic, speech(1.0) + silence(1.6));  // "open notepad", then the pause that ends a request
         QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 10000);
-        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("Open notepad."));
         QCOMPARE(r.stt.requests.load(), 1);              // only the request
     }
 
@@ -681,7 +724,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(r.woke.count(), 1, 10000);
         play(r.mic, speech(1.0) + silence(1.6));
         QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 10000);
-        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad"));
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad."));
     }
 
 };

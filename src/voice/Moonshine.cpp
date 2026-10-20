@@ -1,5 +1,7 @@
 #include "Moonshine.h"
 
+#include "VoiceAudio.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QObject>
@@ -109,11 +111,14 @@ QString Moonshine::transcribe(const QByteArray &pcm16, QString *error)
 {
     if (!m_loaded && !m_decoder.isOpen())
         return QString();
-    const qsizetype total = pcm16.size() / 2;
+    // Every caller benefits from conditioned audio: DC removal + quiet-clip
+    // gain is what makes low-gain microphones intelligible to the model.
+    const QByteArray cleaned = voice::conditionForStt(pcm16);
+    const qsizetype total = cleaned.size() / 2;
     if (total < qsizetype(kMinSeconds * kSampleRate))
         return QString();
     const qsizetype samples = std::min<qsizetype>(total, qsizetype(kMaxSeconds * kSampleRate));
-    const auto *pcm = reinterpret_cast<const int16_t *>(pcm16.constData());
+    const auto *pcm = reinterpret_cast<const int16_t *>(cleaned.constData());
     std::vector<float> audio;
     audio.resize(size_t(samples));
     for (qsizetype i = 0; i < samples; ++i)
@@ -201,6 +206,23 @@ QString Moonshine::transcribe(const QByteArray &pcm16, QString *error)
         }
         if (next == kEos)
             break;
+        // Runaway-repeat guard: on noise or an unintelligible stretch, a
+        // greedy decoder can emit the same token until the cap, and the
+        // caller would treat that garbage as a spoken command. Six copies
+        // of one token in a row is never speech: stop there and drop the
+        // run. If nothing meaningful precedes the loop, return nothing.
+        if (!ids.empty() && next == ids.back()) {
+            int run = 0;
+            for (int i = int(ids.size()) - 1; i >= 0 && ids[size_t(i)] == next; --i)
+                ++run;
+            if (run + 1 >= 6) {
+                while (!ids.empty() && ids.back() == next)
+                    ids.pop_back();
+                if (ids.size() < 2)
+                    return QString();
+                break;
+            }
+        }
         ids.push_back(next);
         current = next;
     }

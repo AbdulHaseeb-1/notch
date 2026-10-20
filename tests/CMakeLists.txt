@@ -110,8 +110,9 @@ noch_add_unit_test(tst_wakedetector
 noch_add_unit_test(tst_moonshine
     SOURCES tests/tst_moonshine.cpp
             src/voice/Moonshine.cpp src/voice/Moonshine.h
+            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
             src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
-    LIBS Qt6::Core
+    LIBS Qt6::Core Qt6::Multimedia
     DEFS NOCH_MOONSHINE_VOCAB="${PROJECT_SOURCE_DIR}/resources/moonshine/vocab.json"
          NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
 

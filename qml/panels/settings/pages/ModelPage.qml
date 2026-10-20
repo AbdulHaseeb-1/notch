@@ -42,6 +42,7 @@ SettingsPage {
                 height: 34
                 options: [
                     { label: panel.labelFor("openai"), value: "openai" },
+                    { label: panel.labelFor("opencode"), value: "opencode" },
                     { label: panel.labelFor("ollama"), value: "ollama" },
                     { label: panel.labelFor("anthropic"), value: "anthropic" },
                     { label: panel.labelFor("custom"), value: "custom" }
@@ -80,9 +81,10 @@ SettingsPage {
                 placeholder: panel.infoFor(panel.prefs.buddyProvider).needsKey
                              ? qsTr("Paste your API key")
                              : qsTr("Optional for local servers")
-                hint: panel.infoFor(panel.prefs.buddyProvider).needsKey
+                hint: panel.infoFor(panel.prefs.buddyProvider).keyHint
+                      || (panel.infoFor(panel.prefs.buddyProvider).needsKey
                       ? qsTr("Stored locally in Noch settings.")
-                      : qsTr("Leave blank if not required.")
+                      : qsTr("Leave blank if not required."))
                 secret: true
                 mono: true
                 text: panel.prefs.buddyApiKey

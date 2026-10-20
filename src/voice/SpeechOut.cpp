@@ -4,10 +4,13 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <algorithm>
+#include <utility>
 
 #include "WakeWord.h"
 
@@ -51,6 +54,7 @@ SpeechOut::SpeechOut(QObject *parent)
             setSpeaking();
     });
     connect(&m_player, &SpeechPlayer::finished, this, &SpeechOut::setSpeaking);
+    connect(&m_player, &SpeechPlayer::finished, this, &SpeechOut::onPlayerChunkFinished);
 }
 
 SpeechOut::~SpeechOut()
@@ -139,6 +143,26 @@ QString SpeechOut::problem() const
         return m_kokoroVoice.trimmed().isEmpty() ? tr("Add a Kokoro voice name, for example af_heart.") : QString();
     }
     return m_program.isEmpty() ? tr("No voice is installed on this computer.") : QString();
+}
+
+QVariantMap SpeechOut::engineStatuses() const
+{
+    QVariantMap out;
+    auto entry = [](bool ready, const QString &detail) {
+        return QVariantMap{ { QStringLiteral("ready"), ready }, { QStringLiteral("detail"), detail } };
+    };
+    out[QStringLiteral("system")] = entry(!m_program.isEmpty(),
+                                          m_program.isEmpty() ? tr("No system voice program was found.")
+                                                              : tr("Reads with %1.").arg(m_program));
+    out[QStringLiteral("google")] = entry(!m_googleKey.trimmed().isEmpty(),
+                                          m_googleKey.trimmed().isEmpty()
+                                              ? tr("Add a Google Cloud API key (Cloud Text-to-Speech API).")
+                                              : tr("Voice %1 with your Google key.").arg(m_googleVoice));
+    const QString kp = kokoroAddressProblem(m_kokoroBase);
+    out[QStringLiteral("kokoro")] = entry(kp.isEmpty() && !m_kokoroVoice.trimmed().isEmpty(),
+                                          kp.isEmpty() ? tr("Voice %1 on %2.").arg(m_kokoroVoice, m_kokoroBase)
+                                                       : kp);
+    return out;
 }
 
 void SpeechOut::setEnabled(bool on)
@@ -253,9 +277,9 @@ void SpeechOut::start(const QString &text, bool force)
     setError(QString());
     ++m_generation;
     if (m_engine == QLatin1String("google") && !m_googleKey.trimmed().isEmpty()) {
-        startGoogle(text);
+        beginPipeline(text);
     } else if (m_engine == QLatin1String("kokoro") && problem().isEmpty()) {
-        startKokoro(text);
+        beginPipeline(text);
     } else {
         if (m_engine != QLatin1String("system"))
             setError(problem() + QLatin1Char(' ') + tr("Using the system voice."));
@@ -268,6 +292,34 @@ void SpeechOut::startSystem(const QString &text)
     if (m_program.isEmpty())
         return;
     m_proc.setProgram(m_program);
+#ifdef Q_OS_WIN
+    // The default PowerShell voice ignored the speed setting before: when it
+    // differs from 1.0, speak the text as SSML with a prosody rate instead.
+    // Only the default command is reshaped; a user-set command stays as-is.
+    const bool ssml = !qFuzzyCompare(m_speed, 1.0) && m_args.size() == 4
+                      && m_args.at(2) == QStringLiteral("-Command")
+                      && m_args.at(3).contains(QStringLiteral("SpeechSynthesizer"));
+    if (ssml) {
+        QString script = m_args.at(3);
+        script.replace(QStringLiteral("$s.Speak($t)"), QStringLiteral("$s.SpeakSsml($t)"));
+        QStringList args = m_args;
+        args[3] = script;
+        m_proc.setArguments(args);
+        const int rate = qBound(50, qRound(m_speed * 100.0), 200);
+        QString escaped = text;
+        escaped.replace(QLatin1Char('&'), QStringLiteral("&amp;"))
+            .replace(QLatin1Char('<'), QStringLiteral("&lt;"))
+            .replace(QLatin1Char('>'), QStringLiteral("&gt;"));
+        m_proc.start();
+        setSpeaking();
+        m_proc.write(QStringLiteral("<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\"><prosody rate=\"%1%\">%2</prosody></speak>")
+                         .arg(rate)
+                         .arg(escaped)
+                         .toUtf8());
+        m_proc.closeWriteChannel();
+        return;
+    }
+#endif
     m_proc.setArguments(m_args);
     m_proc.start();
     setSpeaking();   // starting counts as speaking: the listener must not hear it
@@ -276,86 +328,190 @@ void SpeechOut::startSystem(const QString &text)
     m_proc.closeWriteChannel();
 }
 
-void SpeechOut::startGoogle(const QString &text)
+// ---- pipelined cloud speech ---------------------------------------------------------------
+// A reply is spoken in sentence chunks: chunk i+1 is synthesized while chunk i
+// plays, so the first sound starts after one sentence's synthesis instead of
+// the whole reply's. The player handles one chunk at a time; the finished
+// signal advances the pipeline. Any chunk that fails falls back to reading
+// the rest with the system voice, so a reply is never left half-heard.
+
+QStringList SpeechOut::splitSpeechChunks(const QString &text)
 {
-    QNetworkRequest request{ QUrl(m_googleEndpoint) };
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    // The key goes in a header, not the URL, so it does not end up in any log of addresses.
-    request.setRawHeader("X-Goog-Api-Key", m_googleKey.trimmed().toUtf8());
-    request.setTransferTimeout(30000);
-    QJsonObject audio{ { QStringLiteral("audioEncoding"), QStringLiteral("LINEAR16") },
-                       { QStringLiteral("sampleRateHertz"), 24000 } };
-    if (!qFuzzyCompare(m_speed, 1.0))
-        audio[QStringLiteral("speakingRate")] = m_speed;
-    const QJsonObject body{
-        { QStringLiteral("input"), QJsonObject{ { QStringLiteral("text"), text } } },
-        { QStringLiteral("voice"), QJsonObject{ { QStringLiteral("languageCode"), googleLanguage(m_googleVoice) },
-                                                  { QStringLiteral("name"), m_googleVoice } } },
-        { QStringLiteral("audioConfig"), audio },
-    };
+    static const int kMaxChunk = 320;
+    static const int kMergeBelow = 60;
+    static const QRegularExpression sentenceEnd(QStringLiteral("([.!?…]+)(\\s+|$)"));
+    const QString s = text.simplified();
+    if (s.isEmpty())
+        return {};
+
+    QStringList sentences;
+    int pos = 0;
+    auto it = sentenceEnd.globalMatch(s);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        sentences << s.mid(pos, m.capturedEnd() - pos).trimmed();
+        pos = m.capturedEnd();
+    }
+    if (pos < s.size())
+        sentences << s.mid(pos).trimmed();
+
+    // Short fragments read oddly alone, so they join the next sentence.
+    QStringList chunks;
+    for (const QString &sent : sentences) {
+        if (sent.isEmpty())
+            continue;
+        if (!chunks.isEmpty() && chunks.last().size() < kMergeBelow)
+            chunks.last() += QLatin1Char(' ') + sent;
+        else
+            chunks << sent;
+    }
+    // Bound the worst case: a long sentence is cut at word boundaries.
+    QStringList out;
+    for (const QString &c : chunks) {
+        if (c.size() <= kMaxChunk) {
+            out << c;
+            continue;
+        }
+        int from = 0;
+        while (from < c.size()) {
+            int take = qMin(kMaxChunk, c.size() - from);
+            if (from + take < c.size()) {
+                const int sp = c.lastIndexOf(QLatin1Char(' '), from + take);
+                if (sp > from + kMaxChunk / 2)
+                    take = sp - from;
+            }
+            out << c.mid(from, take).trimmed();
+            from += take;
+            while (from < c.size() && c.at(from).isSpace())
+                ++from;
+        }
+    }
+    return out;
+}
+
+void SpeechOut::beginPipeline(const QString &text)
+{
+    m_chunks = splitSpeechChunks(text);
+    if (m_chunks.isEmpty()) {
+        setSpeaking();
+        return;
+    }
+    m_pipeline = true;
     m_synthesizing = true;
-    m_reply = m_nam.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    synthesizeNext();
+    setSpeaking();
+}
+
+void SpeechOut::synthesizeNext()
+{
+    if (!m_pipeline || m_chunks.isEmpty())
+        return;
+    m_currentChunk = m_chunks.takeFirst();
     const quint64 gen = m_generation;
+    const bool google = m_engine == QLatin1String("google");
+    QNetworkRequest request{ QUrl(google ? m_googleEndpoint : kokoroUrl(m_kokoroBase)) };
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    QJsonObject body;
+    if (google) {
+        // The key goes in a header, not the URL, so it does not end up in any log of addresses.
+        request.setRawHeader("X-Goog-Api-Key", m_googleKey.trimmed().toUtf8());
+        request.setTransferTimeout(30000);
+        QJsonObject audio{ { QStringLiteral("audioEncoding"), QStringLiteral("LINEAR16") },
+                           { QStringLiteral("sampleRateHertz"), 24000 } };
+        if (!qFuzzyCompare(m_speed, 1.0))
+            audio[QStringLiteral("speakingRate")] = m_speed;
+        body = {
+            { QStringLiteral("input"), QJsonObject{ { QStringLiteral("text"), m_currentChunk } } },
+            { QStringLiteral("voice"), QJsonObject{ { QStringLiteral("languageCode"), googleLanguage(m_googleVoice) },
+                                                    { QStringLiteral("name"), m_googleVoice } } },
+            { QStringLiteral("audioConfig"), audio },
+        };
+    } else {
+        request.setTransferTimeout(60000);
+        body = {
+            { QStringLiteral("model"), QStringLiteral("kokoro") },
+            { QStringLiteral("input"), m_currentChunk },
+            { QStringLiteral("voice"), m_kokoroVoice },
+            { QStringLiteral("response_format"), QStringLiteral("wav") },
+            { QStringLiteral("speed"), m_speed },
+        };
+    }
+    m_reply = m_nam.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
     QNetworkReply *reply = m_reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply, gen, text] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, gen, google] {
         reply->deleteLater();
-        if (gen != m_generation)
+        if (gen != m_generation || !m_pipeline)
             return;
-        m_synthesizing = false;
         const QByteArray data = reply->readAll();
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
             QString why = apiMessage(data);
-            if (status == 400 || status == 403 || status == 401)
-                why = why.isEmpty() ? tr("Google refused the request (HTTP %1). Check the API key and that the Text-to-Speech API is enabled.").arg(status)
-                                    : tr("Google: %1").arg(why);
-            else if (why.isEmpty())
-                why = status > 0 ? tr("Google Cloud Text-to-Speech answered HTTP %1.").arg(status)
-                                 : tr("Could not reach Google Cloud Text-to-Speech.");
-            onFailure(why, text);
+            if (google) {
+                if (status == 400 || status == 403 || status == 401)
+                    why = why.isEmpty() ? tr("Google refused the request (HTTP %1). Check the API key and that the Text-to-Speech API is enabled.").arg(status)
+                                        : tr("Google: %1").arg(why);
+                else if (why.isEmpty())
+                    why = status > 0 ? tr("Google Cloud Text-to-Speech answered HTTP %1.").arg(status)
+                                     : tr("Could not reach Google Cloud Text-to-Speech.");
+            } else if (why.isEmpty()) {
+                why = status > 0 ? tr("The Kokoro server answered HTTP %1.").arg(status)
+                                 : tr("Could not reach the Kokoro server. Is it running?");
+            }
+            onFailure(why, remainingSpeech());
             return;
         }
-        const QByteArray wav = QByteArray::fromBase64(
-            QJsonDocument::fromJson(data).object().value(QStringLiteral("audioContent")).toString().toLatin1());
-        onAudio(wav, text);
+        const QByteArray wav = google
+                                   ? QByteArray::fromBase64(QJsonDocument::fromJson(data)
+                                                                .object()
+                                                                .value(QStringLiteral("audioContent"))
+                                                                .toString()
+                                                                .toLatin1())
+                                   : data;
+        onAudio(wav, remainingSpeech());
     });
     setSpeaking();
 }
 
-void SpeechOut::startKokoro(const QString &text)
+QString SpeechOut::remainingSpeech() const
 {
-    QNetworkRequest request{ QUrl(kokoroUrl(m_kokoroBase)) };
-    request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setTransferTimeout(60000);
-    const QJsonObject body{
-        { QStringLiteral("model"), QStringLiteral("kokoro") },
-        { QStringLiteral("input"), text },
-        { QStringLiteral("voice"), m_kokoroVoice },
-        { QStringLiteral("response_format"), QStringLiteral("wav") },
-        { QStringLiteral("speed"), m_speed },
-    };
-    m_synthesizing = true;
-    m_reply = m_nam.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
-    const quint64 gen = m_generation;
-    QNetworkReply *reply = m_reply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply, gen, text] {
-        reply->deleteLater();
-        if (gen != m_generation)
-            return;
-        m_synthesizing = false;
-        const QByteArray data = reply->readAll();
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
-            QString why = apiMessage(data);
-            if (why.isEmpty())
-                why = status > 0 ? tr("The Kokoro server answered HTTP %1.").arg(status)
-                                 : tr("Could not reach the Kokoro server. Is it running?");
-            onFailure(why, text);
-            return;
-        }
-        onAudio(data, text);
-    });
+    QStringList parts;
+    if (!m_currentChunk.isEmpty())
+        parts << m_currentChunk;
+    parts << m_chunks;
+    return parts.join(QLatin1Char(' '));
+}
+
+void SpeechOut::onChunkAudio(const QByteArray &pcm, int rate, int channels)
+{
+    if (!m_player.play(pcm, rate, channels)) {
+        onFailure(tr("The sound could not be played."), remainingSpeech());
+        return;
+    }
     setSpeaking();
+    synthesizeNext();   // overlap: the next chunk is synthesized while this one plays
+}
+
+void SpeechOut::onPlayerChunkFinished()
+{
+    if (!m_pipeline)
+        return;
+    if (!m_bufferedPcm.isEmpty()) {
+        // Chunk i+1 arrived while chunk i played: start it and synthesize i+2.
+        const QByteArray pcm = std::exchange(m_bufferedPcm, QByteArray());
+        const int rate = m_bufferedRate, channels = m_bufferedChannels;
+        m_bufferedRate = m_bufferedChannels = 0;
+        onChunkAudio(pcm, rate, channels);
+        return;
+    }
+    if (m_chunks.isEmpty()) {
+        // The pipeline drained: everything has been said.
+        m_pipeline = false;
+        m_synthesizing = false;
+        m_currentChunk.clear();
+        setSpeaking();
+    }
+    // Otherwise the next chunk's synthesis is still in flight; when it
+    // arrives, onAudio sees an idle player and starts it at once.
 }
 
 void SpeechOut::onAudio(const QByteArray &wav, const QString &text)
@@ -367,17 +523,36 @@ void SpeechOut::onAudio(const QByteArray &wav, const QString &text)
         onFailure(why, text);
         return;
     }
-    if (!m_player.play(pcm, rate, channels)) {
-        onFailure(tr("The sound could not be played."), text);
+    if (!m_pipeline) {
+        if (!m_player.play(pcm, rate, channels))
+            onFailure(tr("The sound could not be played."), text);
+        setSpeaking();
         return;
     }
-    setSpeaking();
+    // The player is still reading the previous chunk: hold this one until it
+    // finishes, instead of cutting the sentence short.
+    if (m_player.playing()) {
+        m_bufferedPcm = pcm;
+        m_bufferedRate = rate;
+        m_bufferedChannels = channels;
+        return;
+    }
+    onChunkAudio(pcm, rate, channels);
 }
 
 // A voice that failed must not mean a reply that is never heard: say it with the
 // system voice and keep the reason where the settings can show it.
 void SpeechOut::onFailure(const QString &why, const QString &text)
 {
+    // A pipeline that failed must stop its cloud work at once: clear it, stop
+    // what is playing, and say the rest with the system voice.
+    m_pipeline = false;
+    m_synthesizing = false;
+    m_chunks.clear();
+    m_currentChunk.clear();
+    m_bufferedPcm.clear();
+    m_bufferedRate = m_bufferedChannels = 0;
+    m_player.stop();
     setError(why + QLatin1Char(' ') + (m_program.isEmpty() ? QString() : tr("Using the system voice.")));
     startSystem(text);
     setSpeaking();
@@ -386,6 +561,11 @@ void SpeechOut::onFailure(const QString &why, const QString &text)
 void SpeechOut::stop()
 {
     ++m_generation;       // a reply still on its way is dropped
+    m_pipeline = false;
+    m_chunks.clear();
+    m_currentChunk.clear();
+    m_bufferedPcm.clear();
+    m_bufferedRate = m_bufferedChannels = 0;
     if (m_reply) {
         QNetworkReply *r = m_reply;
         m_reply = nullptr;

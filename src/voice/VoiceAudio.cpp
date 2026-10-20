@@ -1,5 +1,7 @@
 #include "VoiceAudio.h"
 
+#include <QPair>
+#include <QSet>
 #include <QtEndian>
 #include <QtMath>
 
@@ -192,6 +194,136 @@ QByteArray trimSilence(const QByteArray &pcm16)
     const qsizetype from = qMax<qsizetype>(0, first - keep);
     const qsizetype to = qMin<qsizetype>(frames, last + 1 + keep);
     return pcm16.mid(from * frame * 2, (to - from) * frame * 2);
+}
+
+QByteArray conditionForStt(const QByteArray &pcm16)
+{
+    const qsizetype n = pcm16.size() / 2;
+    if (n < kSampleRate / 100)   // under 10 ms: nothing to condition
+        return pcm16;
+    const auto *s = reinterpret_cast<const std::int16_t *>(pcm16.constData());
+
+    // 1. The DC offset: the mean of the samples. A biased sound card shifts
+    // every sample by it and the model's mel features tilt with it.
+    double mean = 0;
+    for (qsizetype i = 0; i < n; ++i)
+        mean += double(s[i]);
+    mean /= double(n);
+
+    double pk = 0;
+    for (qsizetype i = 0; i < n; ++i)
+        pk = qMax(pk, std::abs(double(s[i]) - mean) / 32768.0);
+    if (pk < 0.02)
+        return pcm16;   // effectively silent: no gain rescues noise
+    // 2. Gain: a clip peaking below 0.25 is a low-gain microphone or a whisper;
+    // lift it to a -1 dBFS peak, capped at +21 dB so background noise is not
+    // amplified into phantom words. Clips already at a healthy level only get
+    // the DC removal above.
+    double gain = 1.0;
+    if (pk < 0.25)
+        gain = qMin(0.9 / pk, 12.0);
+    if (std::abs(mean) < 1.0 && gain == 1.0)
+        return pcm16;   // nothing to fix
+
+    QByteArray out(pcm16.size(), Qt::Uninitialized);
+    auto *dst = reinterpret_cast<std::int16_t *>(out.data());
+    for (qsizetype i = 0; i < n; ++i)
+        dst[i] = std::int16_t(qBound(-32768.0,
+                                     std::round((double(s[i]) - mean) * gain),
+                                     32767.0));
+    return out;
+}
+
+QString fixTranscript(const QString &text)
+{
+    QString s = text.simplified();
+    if (s.isEmpty())
+        return s;
+
+    // 1. Multi-word names a recognizer reliably splits or mishears. Matched
+    // case-insensitively on word boundaries (words are space-separated here
+    // because the input was simplified).
+    static const QList<QPair<QString, QString>> phrases = {
+        { QStringLiteral("power shell"), QStringLiteral("PowerShell") },
+        { QStringLiteral("note pad"), QStringLiteral("Notepad") },
+        { QStringLiteral("git hub"), QStringLiteral("GitHub") },
+        { QStringLiteral("get hub"), QStringLiteral("GitHub") },
+        { QStringLiteral("java script"), QStringLiteral("JavaScript") },
+        { QStringLiteral("type script"), QStringLiteral("TypeScript") },
+        { QStringLiteral("see plus plus"), QStringLiteral("C++") },
+        { QStringLiteral("see sharp"), QStringLiteral("C#") },
+        { QStringLiteral("dot net"), QStringLiteral(".NET") },
+        { QStringLiteral("wi fi"), QStringLiteral("Wi-Fi") },
+        { QStringLiteral("e mail"), QStringLiteral("email") },
+        { QStringLiteral("you tube"), QStringLiteral("YouTube") },
+        { QStringLiteral("whats app"), QStringLiteral("WhatsApp") },
+        { QStringLiteral("chat g p t"), QStringLiteral("ChatGPT") },
+        { QStringLiteral("open a i"), QStringLiteral("OpenAI") },
+        { QStringLiteral("v s code"), QStringLiteral("VS Code") },
+        { QStringLiteral("visual studio code"), QStringLiteral("Visual Studio Code") },
+        { QStringLiteral("snipping tool"), QStringLiteral("Snipping Tool") },
+        { QStringLiteral("task manager"), QStringLiteral("Task Manager") },
+        { QStringLiteral("control panel"), QStringLiteral("Control Panel") },
+        { QStringLiteral("file explorer"), QStringLiteral("File Explorer") },
+    };
+    for (const auto &rule : phrases) {
+        // Fresh lowercase per rule: a replacement changes lengths, which
+        // would stale every later search offset.
+        const QString lower = s.toLower();
+        int at = 0;
+        while ((at = lower.indexOf(rule.first, at)) >= 0) {
+            const bool leftOk = at == 0 || !lower.at(at - 1).isLetterOrNumber();
+            const int end = at + rule.first.size();
+            const bool rightOk = end >= lower.size() || !lower.at(end).isLetterOrNumber();
+            if (leftOk && rightOk) {
+                s.replace(at, rule.first.size(), rule.second);
+                break;   // one fix per phrase per transcript is plenty
+            }
+            ++at;
+        }
+    }
+
+    // 2. Stutters: any word three or more times in a row is a recognizer
+    // loop, not speech; common function words doubled ("the the") are too.
+    // Genuine doubles ("had had") survive because neither rule touches them.
+    static const QSet<QString> droppableDoubles = {
+        QStringLiteral("the"), QStringLiteral("a"), QStringLiteral("an"),
+        QStringLiteral("to"), QStringLiteral("of"), QStringLiteral("i"),
+        QStringLiteral("and"), QStringLiteral("is"), QStringLiteral("it"),
+    };
+    QStringList words = s.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    QStringList kept;
+    for (const QString &w : words) {
+        const QString wl = w.toLower();
+        if (!kept.isEmpty() && kept.constLast().toLower() == wl) {
+            const int runLen = [&] {
+                int c = 0;
+                for (int i = int(kept.size()) - 1; i >= 0 && kept.at(i).toLower() == wl; --i)
+                    ++c;
+                return c;
+            }();
+            if (runLen >= 2 || droppableDoubles.contains(wl))
+                continue;   // third copy of anything, or second copy of a function word
+        }
+        kept << w;
+    }
+    s = kept.join(QLatin1Char(' '));
+
+    // 3. Sentence shape: recognizers return bare lowercase. Capitalize the
+    // first letter and end a multi-word utterance with a period so the
+    // model reading it sees a complete instruction.
+    for (int i = 0; i < s.size(); ++i) {
+        if (s.at(i).isLetter()) {
+            s[i] = s.at(i).toUpper();
+            break;
+        }
+    }
+    if (kept.size() >= 2) {
+        const QChar last = s.at(s.size() - 1);
+        if (last != QLatin1Char('.') && last != QLatin1Char('!') && last != QLatin1Char('?'))
+            s += QLatin1Char('.');
+    }
+    return s;
 }
 
 } // namespace voice

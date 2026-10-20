@@ -31,6 +31,8 @@
 // Anthropic Agent SDK / Computer Use multi-turn tool loop across all providers:
 //   "none"      — no-op (local routes only)
 //   "openai"    — OpenAI-compatible /v1/chat/completions with function tools
+//   "opencode"  — OpenCode Zen (OpenAI-compatible /v1/chat/completions;
+//                 the *-free models cost nothing with a free Zen key)
 //   "ollama"    — local Ollama /api/chat with tools
 //   "anthropic" — Anthropic Messages API (/v1/messages) with Agent SDK & Computer Use tools
 //   "custom"    — arbitrary OpenAI-compatible endpoint with function tools

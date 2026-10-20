@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QStringList>
 #include <QUrl>
+#include <QVariantMap>
 
 #include <algorithm>
 
@@ -158,6 +159,18 @@ Match match(const QString &transcript, const QString &phrase)
         }
     }
     return m;
+}
+
+bool confirmSustained(int &streak, float score, float threshold, int needed)
+{
+    if (score < threshold) {
+        streak = 0;
+        return false;
+    }
+    if (++streak < qMax(1, needed))
+        return false;
+    streak = 0;   // consumed: the next wake needs a fresh streak
+    return true;
 }
 
 QString spokenSummary(const QString &text, int maxChars)
@@ -729,6 +742,29 @@ void WakeWord::openModelFolder() const
     QDesktopServices::openUrl(QUrl::fromLocalFile(m_modelFolder));
 }
 
+QVariantMap WakeWord::detectorModelStatus() const
+{
+    QVariantMap s;
+    s[QStringLiteral("detector")] = detector();
+    s[QStringLiteral("problem")] = m_localError;
+    QVariantList files;
+    auto describe = [&files](const QString &name, const QString &path) {
+        const QFileInfo fi(path);
+        files.append(QVariantMap{
+            { QStringLiteral("name"), name },
+            { QStringLiteral("path"), path },
+            // The bundled copies live in the Qt resources (":/..."), which is "found" too.
+            { QStringLiteral("found"), !path.isEmpty() && QFile::exists(path) },
+            { QStringLiteral("bytes"), qint64(path.startsWith(QLatin1Char(':')) || !fi.exists() ? 0 : fi.size()) },
+        });
+    };
+    describe(kMelName, featureModel(m_modelFolder, kMelName));
+    describe(kEmbedName, featureModel(m_modelFolder, kEmbedName));
+    describe(QStringLiteral("wake word model (.onnx)"), wakeModelPath(m_modelFolder));
+    s[QStringLiteral("files")] = files;
+    return s;
+}
+
 void WakeWord::setThreshold(double t)
 {
     const double v = std::clamp(t, 0.2, 0.9);
@@ -796,6 +832,7 @@ void WakeWord::feedLocal(const QByteArray &pcm)
 void WakeWord::resetLocalDetector()
 {
     ++m_detGeneration;
+    m_wakeStreak = 0;
     m_localBuf.clear();
     if (m_worker && m_local == Local::Ready)
         QMetaObject::invokeMethod(m_worker, [w = m_worker] { w->reset(); }, Qt::QueuedConnection);
@@ -806,7 +843,9 @@ void WakeWord::onWorkerScore(float best, quint64 generation)
     --m_inflight;
     if (generation != m_detGeneration || m_mode != Mode::Listening || !m_micOpen)
         return;
-    if (best < float(m_threshold))
+    // One hot chunk is not a wake phrase: require the score to sustain
+    // across consecutive callbacks (160 ms of "hey buddy", not a click).
+    if (!wake::confirmSustained(m_wakeStreak, best, float(m_threshold), kWakeStreakNeeded))
         return;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (now - m_lastCommandMs < m_cooldownMs || now - m_lastWakeMs < m_cooldownMs)

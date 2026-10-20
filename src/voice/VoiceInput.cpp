@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QMediaDevices>
 #include <QUrl>
+#include <QVariantMap>
 
 #include "VoiceAudio.h"
 
@@ -145,6 +146,16 @@ VoiceInput::~VoiceInput()
 QString VoiceInput::engine() const
 {
     return m_transcriber ? m_transcriber->name() : QString();
+}
+
+QVariantMap VoiceInput::sttModelStatus() const
+{
+    QVariantMap s;
+    s[QStringLiteral("engine")] = engine();
+    s[QStringLiteral("ready")] = configured() && m_ready;
+    s[QStringLiteral("problem")] = problem();
+    s[QStringLiteral("files")] = m_transcriber ? m_transcriber->modelFiles() : QVariantList();
+    return s;
 }
 
 QString VoiceInput::problem() const
@@ -403,7 +414,10 @@ void VoiceInput::onFinished(quint64 ticket, const QString &text, const QString &
     if (!p.done || !p.context)
         return;
     Transcription t;
-    const QString words = text.simplified();
+    // Repair the recognizer's predictable mistakes before this becomes a
+    // command or a chat message: stutters, mangled technology names,
+    // missing sentence shape.
+    const QString words = voice::fixTranscript(text.simplified());
     if (!error.isEmpty()) {
         t.error = error.left(300);
     } else if (words.isEmpty()) {

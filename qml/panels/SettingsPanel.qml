@@ -136,10 +136,44 @@ Item {
             models: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-5",
                      "claude-opus-4-1", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"]
         },
+        opencode: {
+            label: "OpenCode", base: "https://opencode.ai/zen", needsKey: true,
+            keyHint: "Free from opencode.ai (email sign-up, no card). The *-free models cost nothing.",
+            // OpenCode Zen's free models (verified against /zen/v1/models,
+            // Oct 2026); "Test connection" refreshes this list from the server.
+            models: ["glm-5.3-flash-free", "deepseek-v4.1-flash-free", "big-pickle",
+                     "beam-free", "mimo-v2.6-flash-free", "nemotron-3.5-super-vl-free",
+                     "nemotron-3.5-lightning-free", "minimax-m3.1-flash-free",
+                     "jev-1.13-free", "longcat-2.5-preview-free"]
+        },
         custom: { label: "Custom", base: "", needsKey: false, models: [] }
     })
     property string lastProvider: ""
+    // Every configured provider's {key, base, model, models}: persists across
+    // restarts (as JSON in prefs), so switching providers loses nothing.
     property var providerMemory: ({})
+    function loadProviderMemory() {
+        try {
+            const parsed = JSON.parse(prefs.buddyProviderConfigs || "{}")
+            providerMemory = (parsed && typeof parsed === "object") ? parsed : {}
+        } catch (e) {
+            providerMemory = {}
+        }
+    }
+    function saveProviderMemory() {
+        if (!prefs)
+            return
+        prefs.buddyProviderConfigs = JSON.stringify(providerMemory || {})
+    }
+    function rememberProvider(p) {
+        // Stash the full config of the provider being left.
+        providerMemory[p] = {
+            key: String(prefs.buddyApiKey || ""),
+            base: String(prefs.buddyApiBase || ""),
+            model: String(prefs.buddyModel || "")
+        }
+        saveProviderMemory()
+    }
     property var remoteModels: []
     property string testState: "idle"     // idle | testing | ok | failed
     property string testMessage: ""
@@ -174,6 +208,12 @@ Item {
         const presets = settings.presetsFor(settings.prefs ? settings.prefs.buddyProvider : "none")
         for (let i = 0; i < presets.length; ++i)
             add(presets[i])
+        // The models this provider served last time (persist per provider),
+        // then the ones just fetched.
+        const stored = settings.providerMemory[settings.prefs ? settings.prefs.buddyProvider : ""] || {}
+        const storedModels = stored.models || []
+        for (let i = 0; i < storedModels.length; ++i)
+            add(storedModels[i])
         for (let i = 0; i < settings.remoteModels.length; ++i)
             add(settings.remoteModels[i])
         return out
@@ -194,20 +234,19 @@ Item {
         const from = settings.prefs.buddyProvider
         if (v === from || !v || v === "none")
             return
-        settings.providerMemory[from] = {
-            base: settings.prefs.buddyApiBase,
-            model: settings.prefs.buddyModel
-        }
+        settings.rememberProvider(from)
         settings.prefs.buddyProvider = v
         settings.lastProvider = v
 
-        const was = settings.providerMemory[v]
+        const was = settings.providerMemory[v] || {}
         const presets = settings.presetsFor(v)
-        settings.prefs.buddyApiBase = (was && was.base !== undefined)
+        settings.prefs.buddyApiBase = (was.base !== undefined && was.base.length > 0)
             ? was.base : settings.infoFor(v).base
-        settings.prefs.buddyModel = (was && was.model && was.model.length > 0)
+        settings.prefs.buddyApiKey = was.key !== undefined ? was.key : ""
+        settings.prefs.buddyModel = (was.model && was.model.length > 0)
             ? was.model : (presets.length > 0 ? presets[0] : "")
         settings.markDirty()
+        settings.remoteModels = (was.models && was.models.length > 0) ? was.models : []
     }
 
     function setRealChat(on) {
@@ -234,6 +273,14 @@ Item {
         }
         function onModelsFetched(models) {
             settings.remoteModels = models || []
+            // Remember what this provider serves, so its chips survive a restart.
+            const p = settings.prefs ? settings.prefs.buddyProvider : ""
+            if (p && p !== "none" && models && models.length > 0) {
+                const entry = settings.providerMemory[p] || {}
+                entry.models = models.slice(0, 25)
+                settings.providerMemory[p] = entry
+                settings.saveProviderMemory()
+            }
         }
     }
 
@@ -265,7 +312,7 @@ Item {
     onRunningListChanged: if (settings.visible) refreshAvailableApps()
     onAppFilterChanged: refreshAvailableApps()
     onPageChanged: if (page === "apps") refreshAvailableApps()
-    Component.onCompleted: refreshAvailableApps()
+    Component.onCompleted: { refreshAvailableApps(); loadProviderMemory() }
 
     Connections {
         target: AppIndex

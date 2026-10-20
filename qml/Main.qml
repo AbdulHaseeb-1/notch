@@ -52,7 +52,7 @@ Window {
         // Past questions and answers, newest first (JSON, capped in Buddy.qml).
         property string buddyHistory: "[]"
         // ---- Desktop buddy AI provider ---------------------------------------
-        // "none" = demo fixtures only. "openai"/"custom" = OpenAI-compatible
+        // "none" = demo fixtures only. "openai"/"custom"/"opencode" = OpenAI-compatible
         // chat/completions endpoint. "ollama" = local Ollama. "anthropic" =
         // Anthropic Messages API.
         property string buddyProvider: "none"
@@ -60,6 +60,9 @@ Window {
         property string buddyApiBase: ""
         property string buddyModel: "gpt-4o-mini"
         property real buddyTemperature: 0.7
+        // Every provider's own {key, base, model, models} as JSON, so several
+        // providers can be configured at once and switching loses nothing.
+        property string buddyProviderConfigs: "{}"
         // ---- Anthropic Agent SDK & Computer Use tools ------------------------
         property bool buddyAgentMode: true
         property bool buddyAllowBash: true

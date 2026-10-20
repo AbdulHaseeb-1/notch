@@ -367,6 +367,17 @@ class TstBuddyAgent : public QObject
 private slots:
     void initTestCase() { QStandardPaths::setTestModeEnabled(true); QVERIFY(ws.isValid() && undoStore.isValid() && rulesStore.isValid() && userData.isValid()); }
 
+    void openCodeProviderUsesOpenAiStyleUrls() {
+        BuddyProvider p;
+        p.setProvider("opencode");
+        p.setApiBase("");   // fall back to the default
+        QCOMPARE(p.chatUrl(), QStringLiteral("https://opencode.ai/zen/v1/chat/completions"));
+        QCOMPARE(p.modelsUrl(), QStringLiteral("https://opencode.ai/zen/v1/models"));
+        // A custom base still works on top of the same paths.
+        p.setApiBase("https://my-relay.example.com/x");
+        QCOMPARE(p.chatUrl(), QStringLiteral("https://my-relay.example.com/x/v1/chat/completions"));
+    }
+
     void init() {
         fake = new FakeAnthropic;
         QVERIFY(fake->start());

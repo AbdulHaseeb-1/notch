@@ -8,6 +8,7 @@
 #include <QString>
 #include <QThread>
 #include <QTimer>
+#include <QVariantMap>
 
 #include <atomic>
 
@@ -62,6 +63,13 @@ Match match(const QString &transcript, const QString &phrase);
 // A reply as it should be read aloud: no code, links or Markdown, at most
 // `maxChars`, ending on a sentence where it can.
 QString spokenSummary(const QString &text, int maxChars = 280);
+
+// Sustain-voted wake decision. A single hot 80 ms chunk can be TV noise or a
+// phoneme coincidence, so the phrase only counts when the score stays at or
+// above the threshold for `needed` consecutive score callbacks (about 80 ms
+// of latency per extra vote). Returns true exactly once when the streak
+// reaches `needed`, and consumes the streak.
+bool confirmSustained(int &streak, float score, float threshold, int needed);
 
 // ---- finding utterances in a stream of audio (pure) ----------------------------------
 
@@ -134,6 +142,9 @@ public:
     static constexpr int kCooldownMs = 1500;
     static constexpr int kAwaitStartMs = 7000;     // how long to wait for the command after the phrase alone
     static constexpr int kMaxCommandChars = 2000;
+    // Two consecutive above-threshold score callbacks (~160 ms) before the
+    // phrase counts: one hot 80 ms chunk is too often TV noise.
+    static constexpr int kWakeStreakNeeded = 2;
 
     explicit WakeWord(VoiceInput *voice, QObject *parent = nullptr);
     ~WakeWord() override;
@@ -153,6 +164,8 @@ public:
     // Tests point this at a folder of models (the shipped ones are read from the resources).
     void setModelFolder(const QString &folder);
     Q_INVOKABLE void openModelFolder() const;
+    // What the settings shows about the wake models: the files and their state.
+    Q_INVOKABLE QVariantMap detectorModelStatus() const;
     bool active() const { return m_micOpen; }
     QString error() const { return m_error; }
 
@@ -242,6 +255,7 @@ private:
     quint64 m_detGeneration = 0;    // scores from before the last reset are stale
     std::atomic<int> m_inflight{0}; // audio batches handed to the worker and not scored yet
     qint64 m_lastWakeMs = 0;
+    int m_wakeStreak = 0;      // consecutive above-threshold score callbacks
     mutable int m_localWantedCache = -1;   // -1: not looked yet
     int m_dropped = 0;
     int m_checked = 0;

@@ -87,6 +87,24 @@ private slots:
         QVERIFY2(text.size() < 40, qPrintable(text));   // the token bound keeps a hallucination short
     }
 
+    void conditioningRepairsADcBiasedQuietMicrophone()
+    {
+        // A cheap sound card in a quiet room: the speech peaks at about
+        // -22 dB under a 4000-count DC bias. Unconditioned, the model hears
+        // "What did the weather like today?" (verified on these fixtures);
+        // after conditioning it must hear the sentence exactly.
+        QString why;
+        const QByteArray pcm = wavPcm(QStringLiteral("weather_tts.wav"));
+        auto *s = reinterpret_cast<const qint16 *>(pcm.constData());
+        QByteArray degraded(pcm.size(), Qt::Uninitialized);
+        auto *d = reinterpret_cast<qint16 *>(degraded.data());
+        for (int i = 0; i < pcm.size() / 2; ++i)
+            d[i] = qint16(qBound(-32768.0, double(s[i]) * 0.08 + 4000.0, 32767.0));
+        const QString text = m.transcribe(degraded, &why);
+        QVERIFY2(why.isEmpty(), qPrintable(why));
+        QCOMPARE(text, QStringLiteral("What is the weather like today?"));
+    }
+
     void detokenizeHandlesSpacesBytesAndSpecials()
     {
         // ids come from the real vocabulary: pick them by piece.
