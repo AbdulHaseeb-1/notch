@@ -274,6 +274,38 @@ const QList<ToolSchema> &toolSchemas()
             out << s;
         }
 
+        // music: the music pill on the desktop
+        {
+            ToolSchema s;
+            s.name = QStringLiteral("music");
+            s.description = QStringLiteral("Control the music pill: play, pause, skip, volume, Noch's queue.");
+            s.args = {
+                { QStringLiteral("action"), QStringLiteral("string"),
+                  QStringLiteral("What to do."), true,
+                  { QStringLiteral("status"), QStringLiteral("play"), QStringLiteral("pause"),
+                    QStringLiteral("next"), QStringLiteral("previous"), QStringLiteral("volume"),
+                    QStringLiteral("mute"), QStringLiteral("unmute"), QStringLiteral("queue"),
+                    QStringLiteral("play_track"), QStringLiteral("add"), QStringLiteral("play_online") } },
+                { QStringLiteral("query"), QStringLiteral("string"),
+                  QStringLiteral("For play_track: words from a title or artist in the queue. For play_online: what to play from "
+                                 "YouTube, as you would type it into its search box (artist and song, or a YouTube address)."), false },
+                { QStringLiteral("path"), QStringLiteral("string"),
+                  QStringLiteral("For add: a music file or a folder."), false },
+                { QStringLiteral("volume"), QStringLiteral("integer"),
+                  QStringLiteral("For volume: 0 to 100."), false },
+            };
+            s.aliases = {
+                { QStringLiteral("command"), QStringLiteral("action") },
+                { QStringLiteral("track"), QStringLiteral("query") },
+                { QStringLiteral("song"), QStringLiteral("query") },
+                { QStringLiteral("file"), QStringLiteral("path") },
+                { QStringLiteral("folder"), QStringLiteral("path") },
+                { QStringLiteral("level"), QStringLiteral("volume") },
+            };
+            s.coercions = { { QStringLiteral("volume"), QStringLiteral("int") } };
+            out << s;
+        }
+
         // memory_search (P8: BM25 retrieval over /memories)
         {
             ToolSchema s;

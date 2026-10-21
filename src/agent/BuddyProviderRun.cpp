@@ -969,6 +969,12 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
             return;
         }
         executeScreenshotTool(call);
+    } else if (call.name == QLatin1String("music")) {
+        if (!musicAvailable()) {
+            finishCurrentToolCall(call, QStringLiteral("Error: the music tool is disabled in Settings > Buddy or there is no music player."), QString(), true);
+            return;
+        }
+        executeMusicTool(call);
     } else if (call.name == QLatin1String("ask_user_question")) {
         if (!m_allowAskUser) {
             finishCurrentToolCall(call, QStringLiteral("Error: asking questions is disabled in Settings > Buddy. Make a reasonable assumption and say so."), QString(), true);

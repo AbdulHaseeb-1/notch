@@ -2,6 +2,8 @@
 
 #include <QImage>
 #include <QList>
+#include <QNetworkAccessManager>
+#include <QPointer>
 #include <QMutex>
 #include <QObject>
 #include <QQuickImageProvider>
@@ -11,8 +13,13 @@
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <functional>
+
+#include "OnlineTrack.h"
+
 class QAudioOutput;
 class QMediaPlayer;
+class QNetworkReply;
 
 // Noch's own player: a queue of local audio files, with play / pause / seek
 // and whatever title, artist and cover the file actually contains.
@@ -76,6 +83,17 @@ public:
     Q_INVOKABLE int addUrls(const QVariantList &urls);
     Q_INVOKABLE void remove(int index);
     Q_INVOKABLE void clear();
+    // A song from the internet (see YtDlp): put next in the queue and played now, shown in
+    // the pill with the title, artist and thumbnail it came with. It lives for this session
+    // only: it is not saved with the queue, since its stream address expires.
+    void playOnline(const OnlineTrack &track);
+    // How an expired stream address is renewed (for a track replayed hours later): given the
+    // page, hand back a fresh OnlineTrack or an error.
+    using OnlineResolver = std::function<void(const QString &webUrl, std::function<void(const OnlineTrack &, const QString &)> done)>;
+    void setOnlineResolver(OnlineResolver resolver) { m_resolver = std::move(resolver); }
+    bool currentIsOnline() const;
+    // The queue as it is saved (songs from the internet left out) and where the saved position falls in it.
+    QStringList persistentPaths(int *savedIndex = nullptr) const;
     // Splits a notch drop into songs (queued) and everything else (returned
     // so the dock can pin it).
     Q_INVOKABLE QVariantMap ingestDrop(const QVariantList &urls);
@@ -101,6 +119,11 @@ private:
         QString title;
         QString artist;
         QString album;
+        // A song from the internet: `path` is its page, played from `streamUrl`.
+        bool online = false;
+        QString streamUrl;
+        QString thumbnailUrl;
+        qint64 resolvedAtMs = 0;
     };
 
     void load();
@@ -112,6 +135,8 @@ private:
     void startNextFolderScan();
     void applyFolderScan(const QString &root, const QStringList &files, bool truncated);
     void playIndex(int index, bool start);
+    void loadThumbnail(const QString &url, const QString &forPage);
+    void renewAndPlay(int index, bool start);
     void readMetadata();
     void setCover(const QImage &image);
     void handleEnded();
@@ -128,6 +153,10 @@ private:
     bool m_loading = false;
     int m_failStreak = 0;
     qint64 m_pendingSeek = -1;
+
+    OnlineResolver m_resolver;
+    QNetworkAccessManager m_nam;
+    QPointer<QNetworkReply> m_thumbReply;
 
     mutable QMutex m_coverMutex;
     QImage m_cover;

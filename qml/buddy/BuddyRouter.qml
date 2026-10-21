@@ -15,7 +15,7 @@ QtObject {
 
     // ----- intent detection ------------------------------------------------
 
-    readonly property var chartWords: /(btc|bitcoin|eth|ethereum|sol|solana|xau|usdt|crypto|coin|chart|candle|price|levels?|support|resistance)/i
+    readonly property var chartWords: /\b(btc|bitcoin|eth|ethereum|sol|solana|xau|usdt|crypto|coin|chart|candle|candles|price|prices|levels?|support|resistance)\b/i
     readonly property var researchWords: /(news|sentiment|summar\w*|research|report|outlook|overview|read\W*up|headline)s?\b/i
     readonly property var taskWords: /(plan|todo|to-do|tasks?|checklist|schedule|remind me to)/i
     readonly property var timerWords: /\b(timer|focus|pomodoro|remind me in|in (\d+) min)/i

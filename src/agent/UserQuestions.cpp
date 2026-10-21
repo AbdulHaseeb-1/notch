@@ -1,6 +1,9 @@
 #include "UserQuestions.h"
 
 #include <QJsonArray>
+#include <QHash>
+#include <QPair>
+#include <QRegularExpression>
 #include <QSet>
 
 #include "AgentPolicy.h"
@@ -206,6 +209,198 @@ QString summary(const QList<Question> &questions)
         first = first.left(55).trimmed() + QStringLiteral("…");
     return questions.size() > 1 ? QStringLiteral("Ask: %1 (+%2 more)").arg(first).arg(questions.size() - 1)
                                 : QStringLiteral("Ask: %1").arg(first);
+}
+
+// ---- spoken answers ------------------------------------------------------------------
+
+namespace {
+
+QStringList words(const QString &text)
+{
+    QString t = text.toLower();
+    t.remove(QLatin1Char('\''));                         // don't -> dont
+    for (QChar &c : t)
+        if (!c.isLetterOrNumber())
+            c = QLatin1Char(' ');
+    return t.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+}
+
+bool isFiller(const QString &w)
+{
+    static const QSet<QString> filler = { QStringLiteral("the"), QStringLiteral("a"), QStringLiteral("an"),
+                                          QStringLiteral("of"), QStringLiteral("to"), QStringLiteral("and"),
+                                          QStringLiteral("or"), QStringLiteral("it"), QStringLiteral("for"),
+                                          QStringLiteral("in"), QStringLiteral("with"), QStringLiteral("on") };
+    return w.size() < 2 || filler.contains(w);
+}
+
+// 1-based position named by a spoken ordinal or number ("second", "option 2", "number three"), or 0.
+int spokenIndex(const QStringList &w)
+{
+    static const QHash<QString, int> ord = {
+        { QStringLiteral("first"), 1 }, { QStringLiteral("1st"), 1 }, { QStringLiteral("second"), 2 }, { QStringLiteral("2nd"), 2 },
+        { QStringLiteral("third"), 3 }, { QStringLiteral("3rd"), 3 }, { QStringLiteral("fourth"), 4 }, { QStringLiteral("4th"), 4 },
+        { QStringLiteral("last"), 99 } };
+    static const QHash<QString, int> card = {
+        { QStringLiteral("1"), 1 }, { QStringLiteral("2"), 2 }, { QStringLiteral("3"), 3 }, { QStringLiteral("4"), 4 },
+        { QStringLiteral("one"), 1 }, { QStringLiteral("two"), 2 }, { QStringLiteral("three"), 3 }, { QStringLiteral("four"), 4 } };
+    static const QSet<QString> intro = { QStringLiteral("option"), QStringLiteral("number"), QStringLiteral("choice"),
+                                         QStringLiteral("answer"), QStringLiteral("pick"), QStringLiteral("take") };
+    for (int i = 0; i < w.size(); ++i) {
+        if (ord.contains(w.at(i)))
+            return ord.value(w.at(i));
+        // A bare number only counts when it is introduced ("option two") or nearly all they said.
+        if (card.contains(w.at(i)) && ((i > 0 && intro.contains(w.at(i - 1))) || w.size() <= 2))
+            return card.value(w.at(i));
+    }
+    return 0;
+}
+
+double labelScore(const Option &o, const QString &saidLower, const QStringList &saidWords)
+{
+    const QString label = o.label.toLower().simplified();
+    if (!label.isEmpty() && saidLower.contains(label))
+        return 1.0;
+    QStringList lw;
+    for (const QString &w : words(label))
+        if (!isFiller(w))
+            lw << w;
+    if (lw.isEmpty())
+        return 0.0;
+    int hit = 0;
+    for (const QString &w : std::as_const(lw))
+        if (saidWords.contains(w))
+            ++hit;
+    const double share = double(hit) / double(lw.size());
+    // "word" for "Word document": everything they said that matters is part of the label.
+    QStringList sw;
+    for (const QString &w : saidWords)
+        if (!isFiller(w))
+            sw << w;
+    bool allInLabel = !sw.isEmpty();
+    for (const QString &w : std::as_const(sw))
+        if (!lw.contains(w))
+            allInLabel = false;
+    return allInLabel ? std::max(share, 0.75) : share;
+}
+
+} // namespace
+
+Answer matchSpoken(const Question &q, const QString &said)
+{
+    Answer a;
+    const QString lower = AgentPolicy::stripInvisible(said).simplified().toLower();
+    if (lower.isEmpty() || q.options.isEmpty())
+        return a;
+    const QStringList w = words(lower);
+
+    // An ordinal or number first: "the second one".
+    const int pos = spokenIndex(w);
+    if (pos > 0) {
+        const int idx = pos == 99 ? int(q.options.size()) - 1 : pos - 1;
+        if (idx >= 0 && idx < q.options.size()) {
+            a.selected << idx;
+            return a;
+        }
+    }
+    // Then words from the labels.
+    QList<QPair<int, double>> scored;
+    for (int i = 0; i < q.options.size(); ++i) {
+        const double sc = labelScore(q.options.at(i), lower, w);
+        if (sc >= 0.6)
+            scored.append({ i, sc });
+    }
+    if (!scored.isEmpty()) {
+        if (q.multiSelect) {
+            for (const auto &p : std::as_const(scored))
+                a.selected << p.first;
+            return a;
+        }
+        std::sort(scored.begin(), scored.end(), [](const auto &x, const auto &y) { return x.second > y.second; });
+        // Two options named equally well is not an answer: the words go back as the user's own.
+        if (scored.size() == 1 || scored.at(0).second > scored.at(1).second + 0.01) {
+            a.selected << scored.first().first;
+            return a;
+        }
+    }
+    a.other = clean(said, kMaxOtherChars);
+    return a;
+}
+
+QList<Answer> matchSpokenAll(const QList<Question> &questions, const QString &said)
+{
+    QStringList parts;
+    for (const QString &p : said.split(QRegularExpression(QStringLiteral("[;\\n]")), Qt::SkipEmptyParts))
+        if (!p.trimmed().isEmpty())
+            parts << p.trimmed();
+    QList<Answer> out;
+    for (int i = 0; i < questions.size(); ++i) {
+        const QString part = parts.size() == questions.size() ? parts.at(i) : said;
+        out << matchSpoken(questions.at(i), part);
+    }
+    return out;
+}
+
+Decision spokenDecision(const QString &said)
+{
+    static const QSet<QString> yes = {
+        QStringLiteral("yes"), QStringLiteral("yeah"), QStringLiteral("yep"), QStringLiteral("yup"), QStringLiteral("sure"),
+        QStringLiteral("ok"), QStringLiteral("okay"), QStringLiteral("approve"), QStringLiteral("approved"), QStringLiteral("allow"),
+        QStringLiteral("proceed"), QStringLiteral("confirm"), QStringLiteral("fine"), QStringLiteral("granted"),
+        QStringLiteral("absolutely"), QStringLiteral("definitely"), QStringLiteral("correct"), QStringLiteral("affirmative") };
+    static const QSet<QString> no = {
+        QStringLiteral("no"), QStringLiteral("nope"), QStringLiteral("nah"), QStringLiteral("deny"), QStringLiteral("denied"),
+        QStringLiteral("dont"), QStringLiteral("stop"), QStringLiteral("cancel"), QStringLiteral("decline"), QStringLiteral("reject"),
+        QStringLiteral("never"), QStringLiteral("refuse"), QStringLiteral("negative"), QStringLiteral("abort") };
+    const QString lower = AgentPolicy::stripInvisible(said).simplified().toLower();
+    const QStringList w = words(lower);
+    int firstYes = -1, firstNo = -1;
+    for (int i = 0; i < w.size(); ++i) {
+        const QString &x = w.at(i);
+        const bool next = i + 1 < w.size();
+        if (firstYes < 0 && (yes.contains(x) || (x == QLatin1String("go") && next && w.at(i + 1) == QLatin1String("ahead"))
+                             || (x == QLatin1String("do") && next && w.at(i + 1) == QLatin1String("it"))))
+            firstYes = i;
+        // "do not", "dont", "no" all refuse; a bare "not" too ("not now").
+        if (firstNo < 0 && (no.contains(x) || x == QLatin1String("not")))
+            firstNo = i;
+    }
+    if (firstYes < 0 && firstNo < 0)
+        return Decision::Unclear;
+    // The first verdict stated wins: "no, stop" refuses, "yes but not the second one" approves.
+    if (firstNo >= 0 && (firstYes < 0 || firstNo < firstYes))
+        return Decision::Deny;
+    const bool always = lower.contains(QLatin1String("always")) || lower.contains(QLatin1String("every time"))
+                        || lower.contains(QLatin1String("from now on"));
+    return always ? Decision::ApproveAlways : Decision::Approve;
+}
+
+QString spokenForm(const QList<Question> &questions)
+{
+    QStringList out;
+    for (int i = 0; i < questions.size(); ++i) {
+        const Question &q = questions.at(i);
+        QStringList labels;
+        for (const Option &o : q.options)
+            labels << o.label;
+        QString opts;
+        if (labels.size() == 1)
+            opts = labels.first();
+        else if (!labels.isEmpty())
+            opts = labels.mid(0, labels.size() - 1).join(QStringLiteral(", ")) + QStringLiteral(", or ") + labels.last();
+        out << (questions.size() > 1 ? QStringLiteral("Question %1: ").arg(i + 1) : QString())
+                   + q.question + (opts.isEmpty() ? QString() : QStringLiteral(" Options: %1.").arg(opts))
+                   + (q.multiSelect ? QStringLiteral(" (they may pick more than one)") : QString());
+    }
+    return out.join(QLatin1Char(' '));
+}
+
+int defaultOption(const Question &q)
+{
+    for (int i = 0; i < q.options.size(); ++i)
+        if (q.options.at(i).label.contains(QLatin1String("recommended"), Qt::CaseInsensitive))
+            return i;
+    return 0;
 }
 
 } // namespace uq

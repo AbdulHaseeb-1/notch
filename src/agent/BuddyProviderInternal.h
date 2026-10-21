@@ -450,6 +450,10 @@ const QMap<QString, ToolArgSpec> &toolArgSpecs()
         { QStringLiteral("share_screenshot"),
           { {},
             { QStringLiteral("caption"), QStringLiteral("display") } } },
+        { QStringLiteral("music"),
+          { { QStringLiteral("action") },
+            { QStringLiteral("action"), QStringLiteral("query"), QStringLiteral("path"),
+              QStringLiteral("volume") } } },
     };
     return specs;
 }

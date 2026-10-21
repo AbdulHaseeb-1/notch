@@ -9,8 +9,6 @@ Window {
     // Handles for the flyouts, which used to reach these ids through the
     // parent context. Qualified access keeps qmllint (and readers) happy.
     readonly property var settingsStore: cfg
-    readonly property var addAppDialog: fileDialog
-    readonly property var addMusicDialog: musicDialog
     readonly property var hubTimer: sessionTimer
 
     visible: true
@@ -31,8 +29,6 @@ Window {
         property real sizeScale: 1.0
         property bool autoHide: true
         property int hideDelay: 1200
-        property bool monoIcons: true
-        property bool showClock: true
         property int focusMinutes: 25
         property bool hotkeyPalette: true
         property bool suppressInFullscreen: true
@@ -92,6 +88,7 @@ Window {
         property int buddyMaxSteps: 40
         property bool buddyAllowAskUser: true
         property bool buddyAllowScreenshots: true
+        property bool buddyAllowMusic: true
         // ---- Push-to-talk voice (off until the user adds a speech service) --
         property bool buddyVoiceEnabled: false
         property bool buddyVoiceHotkey: true
@@ -107,11 +104,40 @@ Window {
         // ---- Spoken answers: "system" | "google" | "kokoro" -------------------
         property string buddyTtsEngine: "system"
         property string buddyTtsGoogleKey: ""
-        property string buddyTtsGoogleVoice: "en-US-Neural2-F"
+        property string buddyTtsGoogleVoice: "Kore"
         property string buddyTtsKokoroBase: "http://127.0.0.1:8880"
         property string buddyTtsKokoroVoice: "af_heart"
         property real buddyTtsSpeed: 1.0
         property bool buddyTtsSpeakAll: false
+        // ---- Deepgram: one API key for the live conversation, speech to text and the voice ----
+        property string buddyDgKey: ""
+        // Speech to text for push-to-talk and the wake word: "local" (on this computer) or "deepgram".
+        property string buddySttEngine: "local"
+        // Live conversation (Deepgram Voice Agent): listen / think / speak, all adjustable.
+        // Where yt-dlp is (for songs from YouTube); "" = look in the usual places.
+        property string buddyYtDlpPath: ""
+        property bool buddyLiveEnabled: false
+        property string buddyLiveListenModel: "nova-3"
+        property string buddyLiveLanguage: "en"
+        // Names the recognizer cannot know; add the apps you open most.
+        property string buddyLiveKeyterms: "Buddy, Noch, Notepad"
+        property real buddyLiveEot: 0.7
+        property string buddyLiveProvider: "anthropic"
+        property string buddyLiveModel: "claude-haiku-5-5"
+        // -1 = the model's own default (newer models refuse the setting).
+        property real buddyLiveTemperature: -1
+        property string buddyLivePrompt: ""
+        property string buddyLiveEndpoint: ""
+        property string buddyLiveEndpointKey: ""
+        property bool buddyLiveAskBuddy: true
+        property string buddyLiveVoice: "aura-2-thalia-en"
+        property real buddyLiveSpeed: 1.0
+        property real buddyLiveVolume: 1.0
+        property string buddyLiveGreeting: ""
+        property string buddyLiveAudioMode: "speakers"
+        // After Buddy answers: keep listening for a follow-up this many seconds; 0 = not at all
+        // (the wake word starts the next conversation).
+        property int buddyLiveFollowUp: 30
         // ---- Agent safety (see docs/agent-safety.md) -------------------------
         // "default" asks before side effects, "acceptEdits" auto-approves file
         // edits inside the workspace, "plan" is read-only, "bypass" trusts all
@@ -124,6 +150,15 @@ Window {
         // Show what Buddy is doing while it works (steps, draft, reasoning).
         property bool buddyShowThinking: true
         property bool buddyHandoffs: true
+        // JEV: a small decision model labels each request (intent, risk, effort,
+        // specialist) before the agent starts. Off by default: the request text goes
+        // to this endpoint, which is separate from the chat provider. An address
+        // ending in /systemone or /decisions is a decision model (yes/no questions);
+        // any other address is treated as a chat endpoint.
+        property bool buddyClassifierEnabled: false
+        property string buddyClassifierBase: "https://openrouter.ai/api/v1/systemone"
+        property string buddyClassifierKey: ""
+        property string buddyClassifierModel: "inception/mercury-decide:free"
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
         property real buddySfxVolume: 0.75
@@ -131,7 +166,7 @@ Window {
     }
 
     readonly property string snapshotKey: [
-        cfg.sizeScale, cfg.autoHide, cfg.hideDelay, cfg.monoIcons, cfg.showClock,
+        cfg.sizeScale, cfg.autoHide, cfg.hideDelay,
         cfg.focusMinutes, cfg.hotkeyPalette, cfg.suppressInFullscreen,
         cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
         cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
@@ -139,11 +174,14 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyCuGlowStyle, cfg.buddyRingStyle, cfg.buddyRingThickness, cfg.buddyRingSpeed, cfg.buddyGlowStrength, cfg.buddyGlowMode, cfg.buddyGlowAlways, cfg.buddyVoiceFx, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
-        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots,
+        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots, cfg.buddyAllowMusic,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceAutoSend,
         cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddySpeakReports,
+        cfg.buddyLiveEnabled, cfg.buddySttEngine, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel,
+        cfg.buddyLiveVoice, cfg.buddyLiveSpeed, cfg.buddyLiveVolume, cfg.buddyLiveAudioMode, cfg.buddyLiveFollowUp, cfg.buddyLiveAskBuddy,
         cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsKokoroBase, cfg.buddyTtsKokoroVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking, cfg.buddyHandoffs,
+        cfg.buddyClassifierEnabled, cfg.buddyClassifierBase, cfg.buddyClassifierModel,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
@@ -162,19 +200,34 @@ Window {
     }
 
     readonly property real pillH: Math.round(50 * s)
-    readonly property real iconSize: Math.round(24 * s)
-    readonly property real cellW: Math.round(44 * s)
-    readonly property real padX: Math.round(12 * s)
     readonly property real musicGap: Math.round(8 * s)
     readonly property real topGap: 8
     readonly property real dashW: Math.round(44 * s)
     readonly property real dashH: Math.max(4, Math.round(4 * s))
-    readonly property real pillW: Math.max(Math.round(150 * s), dockRow.implicitWidth + 2 * padX)
-    property real animatedPillW: pillW
-    Behavior on animatedPillW {
-        enabled: !root.resizing
-        NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+    // The music pill is all that is left of the notch; it sits in the middle of the top edge.
+    readonly property real pillW: musicDock.width
+
+    // It is only there while music is: nothing to show, nothing on screen. After the music
+    // stops it stays a little while (so a pause can be undone), and it is always there while
+    // it is being used, a file is dragged over the top edge, or Buddy is switched off (then it
+    // is the only way into Settings).
+    property bool musicHold: false
+    readonly property bool musicPlaying: Media.playing
+    onMusicPlayingChanged: {
+        if (musicPlaying) {
+            musicHold = true
+            musicHoldTimer.stop()
+        } else {
+            musicHoldTimer.restart()
+        }
     }
+    Timer { id: musicHoldTimer; interval: 20000; onTriggered: root.musicHold = false }
+    readonly property bool musicShown: musicPlaying || musicHold || nowPlaying.barOpen
+                                       || musicPillHover.hovered || dragging || !cfg.buddyEnabled
+    property real musicFade: musicShown ? 1 : 0
+    Behavior on musicFade { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+    // Something at the top edge worth revealing at all.
+    readonly property bool notchHasContent: musicShown || timerPill.visible
     readonly property real shownY: topGap
     readonly property real hiddenY: -pillH - 4
 
@@ -185,13 +238,10 @@ Window {
 
     // ---------------------------------------------------------- reveal logic
     property bool panelOpen: false
-    property bool musicOpen: false
     property bool hubOpen: false
     property bool paletteOpen: false
     property int hubTab: 0
-    property int menuIndex: -1
     property bool resizing: false
-    property bool launchHold: false
     property bool introHold: true
     property bool revealed: true
 
@@ -202,19 +252,21 @@ Window {
     // When tucked away (!revealed), ONLY hovering the dash (peekZone) brings
     // the notch out — hovering around it does nothing.
     readonly property bool fullscreenGuard: cfg.suppressInFullscreen && Fullscreen.active && !paletteOpen
-    readonly property bool notchElementsHovered: pillHover.hovered || grip.containsMouse || panelItem.hovered
-                                                 || menu.hovered || musicFlyout.hovered
+    // The music pill stays out on a clear desktop and tucks itself away while an app
+    // window sits in its space (or a full-screen app owns the screen). Hovering the
+    // dash at the top edge still pulls it out over an app.
+    readonly property bool desktopClear: !fullscreenGuard && !Fullscreen.occupied
+    readonly property bool notchElementsHovered: grip.containsMouse || panelItem.hovered
                                                  || hubFlyout.hovered || musicPillHover.hovered
-                                                 || previewCard.hovered || timerPill.hovered
+                                                 || timerPill.hovered
                                                  || paletteFlyout.hovered
     readonly property bool pointerInside: !fullscreenGuard
                                           && (peekZone.containsMouse || (revealed && notchElementsHovered))
-    readonly property bool dragging: peekZone.containsDrag || pillDrop.containsDrag || musicDrop.containsDrag
-                                     || musicDrop.containsDrag
-    readonly property bool holdOpen: !cfg.autoHide || panelOpen || musicOpen || hubOpen || paletteOpen
-                                     || menuIndex >= 0 || resizing || launchHold || introHold
-                                     || dragging || fileDialog.visible || musicDialog.visible || timerAlert
-    readonly property bool wantVisible: pointerInside || holdOpen
+    readonly property bool dragging: peekZone.containsDrag || musicDrop.containsDrag
+    readonly property bool holdOpen: !cfg.autoHide || panelOpen || hubOpen || paletteOpen
+                                     || resizing || introHold
+                                     || dragging || timerAlert
+    readonly property bool wantVisible: pointerInside || holdOpen || desktopClear
 
     onWantVisibleChanged: syncReveal()
 
@@ -235,7 +287,6 @@ Window {
     }
     Timer { running: true; interval: 140; onTriggered: root.syncReveal() }         // drop-in on launch
     Timer { running: true; interval: 2200; onTriggered: root.introHold = false }    // stay a moment, then tuck away
-    Timer { id: launchHoldTimer; interval: 1400; onTriggered: root.launchHold = false }
 
     // 0 = tucked away, 1 = fully shown. Smooth quintic slide out from the dash
     // with zero overshoot.
@@ -249,100 +300,37 @@ Window {
     readonly property bool fullyHidden: !revealed && progress <= 0.001
 
     function clamp01(v) { return Math.max(0, Math.min(1, v)) }
-    function itemAppear(i) {
-        const delay = Math.min(0.24, i * 0.024)
-        return clamp01((progress - 0.15 - delay) / 0.55)
-    }
 
     // ------------------------------------------------------------ tooltip
-    property int hoverIndex: -1
     property real tipX: 0
     property bool tipReady: false
     property string toast: ""
     property string hoverHint: ""
-    readonly property string tipText: toast.length > 0 ? toast
-        : (hoverIndex >= 0 && hoverIndex < apps.length ? apps[hoverIndex].name : hoverHint)
-    readonly property bool tipVisible: revealed && !resizing && !panelOpen && !musicOpen
-                                       && !hubOpen && !paletteOpen && menuIndex < 0
+    readonly property string tipText: toast.length > 0 ? toast : hoverHint
+    readonly property bool tipVisible: revealed && !resizing && !panelOpen
+                                       && !hubOpen && !paletteOpen
                                        && tipText.length > 0
-                                       && (toast.length > 0 || (tipReady && !previewShown))
+                                       && (toast.length > 0 || tipReady)
 
     Timer { id: tipTimer; interval: 380; onTriggered: root.tipReady = true }
-    Timer { id: tipGrace; interval: 160; onTriggered: if (root.hoverIndex < 0) root.tipReady = false }
+    Timer { id: tipGrace; interval: 160; onTriggered: root.tipReady = false }
     Timer { id: toastTimer; interval: 1300; onTriggered: root.toast = "" }
     Timer { id: hudTimer; interval: 900 }
     readonly property bool hudVisible: resizing || hudTimer.running
 
-    // ------------------------------------------------------------ data
-    readonly property var apps: Dock.apps
-    readonly property var running: Dock.running
-    readonly property var openList: OpenApps.apps
-
-    function activateOrLaunchApp(i) {
-        if (i < 0 || i >= apps.length)
-            return
-        previewOpen = false
-        const app = apps[i]
-        if (app.exe && running.indexOf(app.exe) >= 0 && OpenApps.activateApp(app.exe)) {
-            closeAll()
-            return
-        }
-        launchApp(i)
-    }
-
-    function launchApp(i) {
-        if (i < 0 || i >= apps.length)
-            return
-        previewOpen = false
-        menuIndex = -1
-        panelOpen = false
-        musicOpen = false
-        hubOpen = false
-        paletteOpen = false
-        launchHold = true
-        launchHoldTimer.restart()
-        if (Dock.launch(i))
-            toast = qsTr("Opening %1").arg(apps[i].name)
-        else
-            toast = qsTr("Couldn't open %1").arg(apps[i].name)
-        toastTimer.restart()
-    }
-
-    function openMenu(i, centerX) {
-        panelOpen = false
-        musicOpen = false
-        hubOpen = false
-        paletteOpen = false
-        menuX = centerX
-        menuIndex = (menuIndex === i) ? -1 : i
-    }
-
-    // Closing the app's own surfaces. This is what empty-notch clicks, Esc and
-    // launching an app reach, so it tucks the buddy away instead of dismissing
-    // it: a reply still being made keeps running and pops back when ready.
+    // Closing the app's own surfaces. This is what empty-notch clicks and Esc
+    // reach, so it tucks the buddy away instead of dismissing it: a reply still being made keeps running and pops back when ready.
     function closeAll() {
         panelOpen = false
-        musicOpen = false
         hubOpen = false
         paletteOpen = false
-        menuIndex = -1
         buddy.stash()
-    }
-
-    function toggleMusic() {
-        menuIndex = -1
-        panelOpen = false
-        hubOpen = false
-        paletteOpen = false
-        musicOpen = !musicOpen
     }
 
     // Opens the hub on a page (or closes it if that page is already showing).
     // tab -1 means "wherever it was last".
     function toggleHub(tab) {
-        menuIndex = -1
         panelOpen = false
-        musicOpen = false
         paletteOpen = false
         const page = tab < 0 ? hubTab : tab
         if (hubOpen && hubTab === page) {
@@ -354,9 +342,7 @@ Window {
     }
 
     function openHub(tab) {
-        menuIndex = -1
         panelOpen = false
-        musicOpen = false
         paletteOpen = false
         if (!revealed)
             revealed = true
@@ -365,8 +351,6 @@ Window {
     }
 
     function toggleSettings() {
-        menuIndex = -1
-        musicOpen = false
         hubOpen = false
         paletteOpen = false
         if (!panelOpen && !revealed)
@@ -379,9 +363,7 @@ Window {
     // it, with the field ready for typing.
     function summonPalette() {
         console.log("noch qml: summonPalette")
-        menuIndex = -1
         panelOpen = false
-        musicOpen = false
         hubOpen = false
         if (!revealed)
             revealed = true
@@ -424,6 +406,12 @@ Window {
         case "winsettings":
             Qt.openUrlExternally("ms-settings:")
             break
+        case "timer":
+            openHub(0)
+            break
+        case "clipboard":
+            openHub(1)
+            break
         case "noch":
             toggleSettings()
             break
@@ -438,13 +426,16 @@ Window {
     // Clicking anywhere outside Noch must not cut a reply off: the flyouts
     // close, but the buddy only tucks its bubble away and keeps working — the
     // orb stays lit and pops the answer back up when it lands.
-    onActiveChanged: if (!active && !fileDialog.visible && !musicDialog.visible) {
+    onActiveChanged: if (!active) {
         panelOpen = false
-        musicOpen = false
         hubOpen = false
         paletteOpen = false
-        menuIndex = -1
-        buddy.stash()
+        // An approval or a question stays up: the agent is stopped on it, and the user
+        // may well be in another app (or not looking at all, in a voice conversation).
+        if (buddy.waitingOnUser)
+            buddy.closeMenu()
+        else
+            buddy.stash()
     }
 
     Shortcut { sequence: "Esc"; onActivated: root.closeAll() }
@@ -455,15 +446,12 @@ Window {
     // clicks through to the desktop.
     property real menuX: 0
     readonly property bool panelVisible: panelItem.shown
-    readonly property bool menuVisible: menu.shown
-    readonly property bool musicVisible: musicFlyout.shown
     readonly property bool hubVisible: hubFlyout.shown
     readonly property bool paletteVisible: paletteFlyout.shown
     // Flyout sizes for the mask are the sizes they are heading for, not the
     // animated ones, so the mask is not rebuilt on every frame of an animation.
     readonly property real panelTargetH: panelItem.targetHeight
     readonly property real hubTargetH: hubFlyout.targetHeight
-    readonly property real musicTargetH: musicFlyout.targetHeight
     readonly property real paletteTargetH: paletteFlyout.targetHeight
     // The mask key is a STRING, not an array: Qt compares property values with
     // strict equality, and a fresh JS array never equals the previous one, so
@@ -471,18 +459,15 @@ Window {
     // onMaskKeyChanged and queued a full Win32 region rebuild. Joined, the
     // comparison actually succeeds and identical states cost nothing.
     readonly property bool buddyInteracting: buddy.dragging || buddyPanel.interacting
-    readonly property string maskKey: [revealed, fullyHidden, Math.round(pillW), Math.round(pillH), width,
-                                    Math.round(musicDock.width), Math.round(timerPill.width),
-                                    panelVisible, Math.round(panelTargetH), menuVisible,
-                                    Math.round(menu.x), Math.round(menu.height),
-                                    musicVisible, Math.round(musicFlyout.x), Math.round(musicTargetH),
+    readonly property string maskKey: [revealed, fullyHidden, Math.round(pillH), width,
+                                    Math.round(musicDock.x), Math.round(musicDock.width), Math.round(timerPill.width),
+                                    musicShown, Math.round(timerPill.x),
+                                    panelVisible, Math.round(panelTargetH),
                                     hubVisible, Math.round(hubTargetH),
                                     paletteVisible, Math.round(paletteFlyout.width),
                                     Math.round(paletteTargetH),
                                     tipVisible, hudVisible, tip.opacity > 0.01,
                                     Math.round(tip.targetX), Math.round(tip.targetWidth),
-                                    previewShown, Math.round(previewCard.x),
-                                    Math.round(previewCard.width), Math.round(previewCard.height),
                                     cfg.buddyEnabled, buddy.session, buddyInteracting,
                                     buddyInteracting ? 0 : Math.round(buddy.x),
                                     buddyInteracting ? 0 : Math.round(buddy.y),
@@ -522,14 +507,20 @@ Window {
             r.push({ x: peekZone.x, y: 0, width: peekZone.width, height: peekZone.height, radius: 0 })
         } else {
             const m = 8
-            const effPillW = Math.max(pillW, animatedPillW)
-            const left = (width - effPillW) / 2 - m
-            const rightEdge = timerPill.visible ? timerPill.x + timerPill.width
-                                                : (width + effPillW) / 2 + musicGap + musicDock.width
-            const right = Math.max(rightEdge, (width + effPillW) / 2 + musicGap + musicDock.width) + m
+            let left = 1e9
+            let right = -1e9
+            if (musicShown) {
+                left = musicDock.x - m
+                right = musicDock.x + musicDock.width + m
+            }
+            if (timerPill.visible) {
+                left = Math.min(left, timerPill.x - m)
+                right = Math.max(right, timerPill.x + timerPill.width + m)
+            }
             const tipActive = tipVisible || hudVisible || tip.opacity > 0.01
             const below = tipActive ? 52 : m
-            r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 26 })
+            if (right > left)
+                r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 26 })
             if (tipActive) {
                 const tx0 = Math.round(Math.min(tip.x, tip.targetX) - m)
                 const tx1 = Math.round(Math.max(tip.x + tip.width, tip.targetX + tip.targetWidth) + m)
@@ -539,14 +530,6 @@ Window {
                 r.push({ x: panelItem.x - m, y: panelItem.baseY - 8,
                          width: panelItem.width + 2 * m, height: panelTargetH + 2 * m + 8, radius: 24 })
             }
-            if (menuVisible) {
-                r.push({ x: menu.x - m, y: menu.baseY - 8,
-                         width: menu.width + 2 * m, height: menu.height + 2 * m + 8, radius: 20 })
-            }
-            if (musicVisible) {
-                r.push({ x: musicFlyout.x - m, y: musicFlyout.baseY - 8,
-                         width: musicFlyout.width + 2 * m, height: musicTargetH + 2 * m + 8, radius: 30 })
-            }
             if (hubVisible) {
                 r.push({ x: hubFlyout.x - m, y: hubFlyout.baseY - 8,
                          width: hubFlyout.width + 2 * m, height: hubTargetH + 2 * m + 8, radius: 24 })
@@ -555,16 +538,34 @@ Window {
                 r.push({ x: paletteFlyout.x - m, y: paletteFlyout.baseY - 8,
                          width: paletteFlyout.width + 2 * m, height: paletteTargetH + 2 * m + 8, radius: 24 })
             }
-            if (previewShown) {
-                r.push({ x: previewCard.x - m, y: previewCard.y - 8,
-                         width: previewCard.width + 2 * m, height: previewCard.height + 2 * m + 8, radius: 24 })
-            }
         }
         pushBuddyRegions(r)
         Overlay.setInteractiveRegions(r)
     }
 
-    Component.onCompleted: updateMask()
+    // The JEV classifier's key: its own if set, otherwise the chat provider's key, but
+    // only when both point at the same https host (so a key never goes to another host).
+    function classifierKeyFor(ownKey, classifierBase, provider, chatBase, chatKey) {
+        if (String(ownKey).length > 0)
+            return String(ownKey)
+        const host = (u) => {
+            const m = /^https:\/\/([^\/:?#]+)/i.exec(String(u).trim())
+            return m ? m[1].toLowerCase() : ""
+        }
+        const chatHost = host(chatBase) || (provider === "opencode" ? "opencode.ai" : "")
+        const classHost = host(classifierBase)
+        return classHost.length > 0 && classHost === chatHost ? String(chatKey) : ""
+    }
+
+    Component.onCompleted: {
+        // Cloud TTS names such as en-US-Neural2-F cannot be used by Gemini TTS.
+        // Move a saved setting to the Gemini default once, so Settings shows the
+        // voice that will actually be used.
+        if (cfg.buddyTtsGoogleVoice.length === 0
+                || /^[a-z]{2,3}(-[A-Za-z]{2,4})?-/.test(cfg.buddyTtsGoogleVoice))
+            cfg.buddyTtsGoogleVoice = "Kore"
+        updateMask()
+    }
 
     // ------------------------------------------------------------ peek dash
     // While tucked away, only this centered dash at the screen edge catches
@@ -574,290 +575,51 @@ Window {
         root: root
     }
 
-    // ------------------------------------------------------------ notch
+    function handleDrop(drop) {
+        const result = Player.ingestDrop(drop.urls)
+        const added = result.added || 0
+        if (added > 0) {
+            root.showToast(added === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(added))
+        } else if ((result.folders || 0) === 0 && drop.hasUrls) {
+            // Nothing anywhere knew how to use: say so instead of eating the drop.
+            root.showToast(qsTr("Nothing here to add"))
+        }
+        drop.accept(Qt.CopyAction)
+    }
+
+    // ------------------------------------------------------------ music pill
+    // Centred at the top edge: [♫] or [ |◀ ▶ ▶| ]. Buddy controls it too (the `music` tool).
     Item {
-        id: pill
-        width: root.animatedPillW
+        id: musicDock
+        width: nowPlaying.width
         height: root.pillH
-        x: (root.width - width) / 2
+        x: Math.round((root.width - width) / 2)
         y: root.hiddenY + (root.shownY - root.hiddenY) * root.progress
-        opacity: root.clamp01(root.progress * 4)
+        opacity: root.clamp01(root.progress * 4) * root.musicFade
         visible: opacity > 0.01
-        scale: 0.72 + 0.28 * root.clamp01(root.progress)
+        scale: 0.85 + 0.15 * root.clamp01(root.progress)
         transformOrigin: Item.Top
 
-        HoverHandler { id: pillHover }
+        HoverHandler { id: musicPillHover }
 
         WheelHandler {
             acceptedModifiers: Qt.ControlModifier
             target: null
             onWheel: (event) => root.setScale(cfg.sizeScale + (event.angleDelta.y / 120) * 0.05)
         }
-        Glass {
-            id: bg
-            anchors.fill: parent
-            radius: height / 2
-            edge: root.dragging ? Theme.accent : "transparent"
-        }
-
-        // Clicking empty notch space dismisses menus; right-click opens settings.
-        MouseArea {
-            anchors.fill: parent
-            acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onClicked: (mouse) => {
-                if (mouse.button === Qt.RightButton)
-                    root.toggleSettings()
-                else
-                    root.closeAll()
-            }
-        }
-
-        Item {
-            id: contentClip
-            anchors.fill: parent
-
-            Row {
-                id: dockRow
-                anchors.centerIn: parent
-                height: parent.height
-
-                // Apps (Left side of dock)
-                Item {
-                    id: appsArea
-                    width: appsRow.width
-                    height: parent.height
-
-                    HoverHandler {
-                        id: appsHover
-                        onHoveredChanged: {
-                            if (!hovered) {
-                                previewShowTimer.stop()
-                                previewHideTimer.restart()
-                            }
-                        }
-                    }
-
-                    Row {
-                        id: appsRow
-                        height: parent.height
-
-                        Repeater {
-                            model: root.apps
-                            delegate: DockItem {
-                                id: dockItem
-                                height: appsRow.height
-                                s: root.s
-                                cellW: root.cellW
-                                iconSize: root.iconSize
-                                mono: cfg.monoIcons
-                                pointerX: appsHover.hovered ? appsHover.point.position.x : -1
-                                appear: root.itemAppear(index + 1)
-                                running: root.running.indexOf(modelData.exe) >= 0
-                                menuActive: root.menuIndex === index
-
-                                onHoveredChanged: {
-                                    const centerX = dockItem.mapToItem(root.contentItem, width / 2, 0).x
-                                    if (hovered) {
-                                        root.hoverIndex = index
-                                        root.tipX = centerX
-                                        if (!root.tipReady)
-                                            tipTimer.restart()
-                                        if (dockItem.running && modelData.exe) {
-                                            root.requestPreview(modelData.exe, centerX)
-                                        } else {
-                                            previewShowTimer.stop()
-                                            root.previewOpen = false
-                                        }
-                                    } else if (root.hoverIndex === index) {
-                                        root.hoverIndex = -1
-                                        tipTimer.stop()
-                                        tipGrace.restart()
-                                    }
-                                }
-                                onActivated: (i) => root.activateOrLaunchApp(i)
-                                onContextRequested: (i) => {
-                                    root.previewOpen = false
-                                    root.openMenu(i, dockItem.mapToItem(root.contentItem, width / 2, 0).x)
-                                }
-                            }
-                        }
-
-                        // Drop target placeholder.
-                        Item {
-                            width: root.dragging ? root.cellW : 0
-                            height: parent.height
-                            clip: true
-                            Behavior on width { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: root.iconSize
-                                height: width
-                                radius: width * 0.28
-                                color: "transparent"
-                                border.width: 1.5
-                                border.color: Theme.accent
-                                Glyph {
-                                    anchors.centerIn: parent
-                                    name: "plus"
-                                    size: root.iconSize * 0.55
-                                    stroke: 2
-                                    color: Theme.accent
-                                }
-                            }
-                        }
-
-                        // Empty dock prompt — clicking opens Settings > Apps list.
-                        Item {
-                            visible: root.apps.length === 0 && !root.dragging
-                            width: emptyPromptRow.implicitWidth + Math.round(16 * root.s)
-                            height: parent.height
-
-                            Row {
-                                id: emptyPromptRow
-                                anchors.centerIn: parent
-                                spacing: Math.round(6 * root.s)
-
-                                Glyph {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    name: "plus"
-                                    size: Math.round(14 * root.s)
-                                    stroke: 2
-                                    color: emptyPromptHit.containsMouse ? Theme.ink : Theme.textDim
-                                }
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: qsTr("Add apps")
-                                    color: emptyPromptHit.containsMouse ? Theme.ink : Theme.textDim
-                                    font.family: Theme.font
-                                    font.pixelSize: Math.round(12.5 * root.s)
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-
-                            MouseArea {
-                                id: emptyPromptHit
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    panelItem.tab = 1
-                                    root.panelOpen = true
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Vertical divider between apps and status block
-                Item {
-                    visible: status.visible
-                    width: Math.round(16 * root.s)
-                    height: parent.height
-                    opacity: status.appear
-
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 1
-                        height: Math.round(20 * root.s)
-                        color: Theme.border
-                    }
-                }
-
-                // Clock (time over date, right side of the dock)
-                StatusBlock {
-                    id: status
-                    s: root.s
-                    showClock: cfg.showClock
-                    active: root.hubOpen
-                    appear: root.itemAppear(root.apps.length + 1)
-                    onClicked: root.toggleHub(-1)
-                    onSettingsRequested: root.toggleSettings()
-                    onHintRequested: (text) => {
-                        root.hoverHint = text
-                        root.hoverIndex = -1
-                        root.tipX = status.mapToItem(root.contentItem, status.width / 2, 0).x
-                        if (!root.tipReady)
-                            tipTimer.restart()
-                    }
-                    onHintCleared: {
-                        root.hoverHint = ""
-                        tipTimer.stop()
-                        tipGrace.restart()
-                    }
-                }
-            }
-        }
-
-        DropArea {
-            id: pillDrop
-            anchors.fill: parent
-            onDropped: (drop) => root.handleDrop(drop)
-        }
-    }
-
-    function handleDrop(drop) {
-        const result = Player.ingestDrop(drop.urls)
-        const added = result.added || 0
-        let pinned = 0
-        const others = result.other || []
-        for (let i = 0; i < others.length; ++i) {
-            if (Dock.pinUrl(others[i]))
-                ++pinned
-        }
-        if (added > 0) {
-            root.showToast(added === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(added))
-            root.panelOpen = false
-            root.hubOpen = false
-            root.menuIndex = -1
-            root.musicOpen = true
-        } else if (pinned > 0) {
-            root.showToast(pinned === 1 ? qsTr("Pinned") : qsTr("Pinned %1 apps").arg(pinned))
-        } else if (added === 0 && pinned === 0 && (result.folders || 0) === 0 && drop.hasUrls) {
-            // Nothing anywhere knew how to use: say so instead of eating the drop.
-            root.showToast(qsTr("Nothing here to add or pin"))
-        }
-        drop.accept(Qt.CopyAction)
-    }
-
-    // Resolve the row the app context menu was opened for, by identity. A
-    // list that changes while the menu is up must never make index 2 mean
-    // "whatever app currently sits at index 2".
-    function menuRowIndex() {
-        if (!menu || !menu.shownApp)
-            return -1
-        const key = menu.shownApp.path || ""
-        const name = menu.shownApp.name || ""
-        for (let i = 0; i < root.apps.length; ++i)
-            if ((root.apps[i].path || "") === key && (root.apps[i].name || "") === name)
-                return i
-        return -1
-    }
-
-    // ------------------------------------------------------------ music pill
-    // Separate pill to the right of the notch: [♫] or [ |◀ ▶ ▶| ].
-    Item {
-        id: musicDock
-        width: nowPlaying.width
-        height: root.pillH
-        x: pill.x + pill.width + root.musicGap
-        y: pill.y
-        scale: 0.85 + 0.15 * root.clamp01(root.progress)
-        transformOrigin: Item.Top
-
-        HoverHandler { id: musicPillHover }
 
         NowPlaying {
             id: nowPlaying
             s: root.s
-            active: root.musicOpen
             highlight: musicDrop.containsDrag
             appear: root.clamp01(root.progress * 1.4 - 0.2)
-            onOpenRequested: root.toggleMusic()
+            onEmptyClicked: root.showToast(qsTr("Drop songs here, or ask Buddy to play some music"))
+            // Right-click on the pill opens Settings only when Buddy is off; otherwise Buddy's own
+            // right-click menu is the way in.
+            onSettingsRequested: if (!cfg.buddyEnabled) root.toggleSettings()
             onVolumeNudged: (v) => root.showToast(qsTr("Volume %1%").arg(Math.round(v * 100)))
             onHintRequested: (text) => {
                 root.hoverHint = text
-                root.hoverIndex = -1
                 root.tipX = musicDock.mapToItem(root.contentItem, musicDock.width / 2, 0).x
                 if (!root.tipReady)
                     tipTimer.restart()
@@ -898,8 +660,9 @@ Window {
         timer: sessionTimer
         s: root.s
         appear: root.clamp01(root.progress * 1.4 - 0.2)
-        x: musicDock.x + musicDock.width + root.musicGap
-        y: pill.y
+        // Beside the music pill; in the middle of the top edge when there is none.
+        x: root.musicShown ? musicDock.x + musicDock.width + root.musicGap : Math.round((root.width - width) / 2)
+        y: musicDock.y
         transformOrigin: Item.Left
 
         onClicked: {
@@ -910,7 +673,6 @@ Window {
         }
         onHintRequested: (text) => {
             root.hoverHint = text
-            root.hoverIndex = -1
             root.tipX = timerPill.mapToItem(root.contentItem, timerPill.width / 2, 0).x
             if (!root.tipReady)
                 tipTimer.restart()
@@ -922,107 +684,13 @@ Window {
         }
     }
 
-    // ------------------------------------------------------------ open apps
-    // Programs with a window open: their own pill on the left of the notch,
-    // mirroring the music pill on the right. Pinned apps stay in the notch.
-    // Hovering a tile previews its windows; clicking one brings it forward.
-    property bool previewOpen: false
-    property string previewExe: ""
-    property string previewName: ""
-    property int previewCount: 0
-    property var previewWindows: []
-    property real previewCenterX: 0
-    property real previewStamp: 0
-    readonly property bool previewShown: revealed && previewOpen && previewWindows.length > 0
-                                         && !panelOpen && !musicOpen && !hubOpen
-                                         && !paletteOpen && menuIndex < 0
-
-    function requestPreview(exe, centerX) {
-        previewHideTimer.stop()
-        if (previewOpen) {
-            if (previewExe !== exe)
-                openPreview(exe, centerX)
-            else
-                previewCenterX = centerX
-        } else {
-            previewShowTimer.exe = exe
-            previewShowTimer.centerX = centerX
-            previewShowTimer.restart()
-        }
-    }
-
-    function openPreview(exe, centerX) {
-        const windows = OpenApps.windowsFor(exe)
-        if (windows.length === 0) {
-            previewOpen = false
-            return
-        }
-        const program = openList.filter(app => app.exe === exe)[0]
-        const pinned = apps.filter(app => app.exe === exe)[0]
-        previewExe = exe
-        previewName = (pinned && pinned.name) ? pinned.name : (program ? program.name : exe)
-        previewCount = windows.length
-        previewWindows = windows.slice(0, 3)
-        previewCenterX = centerX
-        previewStamp = Date.now()
-        previewOpen = true
-    }
-
-    // A tile opens its preview after a short pause, so sweeping across the row
-    // does not flash every preview. Leaving the row and the preview closes it.
-    Timer {
-        id: previewShowTimer
-        interval: 260
-        property string exe: ""
-        property real centerX: 0
-        onTriggered: root.openPreview(exe, centerX)
-    }
-    Timer {
-        id: previewHideTimer
-        interval: 260
-        onTriggered: {
-            if (!previewCard.hovered && !appsHover.hovered)
-                root.previewOpen = false
-        }
-    }
-
-    WindowPreview {
-        id: previewCard
-        programName: root.previewName
-        windowCount: root.previewCount
-        windows: root.previewWindows
-        stamp: root.previewStamp
-        anchorX: root.previewCenterX
-        containerWidth: root.width
-        cardTop: root.shownY + root.pillH + 12
-        opacity: root.previewShown ? 1 : 0
-        scale: root.previewShown ? 1 : 0.96
-        visible: opacity > 0.01
-        transformOrigin: Item.Top
-
-        Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-        Behavior on x { enabled: previewCard.opacity > 0.5; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-
-        onActivated: (windowId) => {
-            root.previewOpen = false
-            OpenApps.activateWindow(windowId)
-        }
-        onHoveredChanged: {
-            if (hovered)
-                previewHideTimer.stop()
-            else
-                previewHideTimer.restart()
-        }
-    }
-
     // ------------------------------------------------------------ resize grip
     ResizeGrip {
         id: grip
         root: root
         cfg: cfg
-        pillItem: pill
-        pillHovered: pillHover.hovered
+        pillItem: musicDock
+        pillHovered: musicPillHover.hovered
     }
 
     // ------------------------------------------------------------ tooltip / toast / size HUD
@@ -1032,30 +700,16 @@ Window {
         cfg: cfg
     }
 
-    // ------------------------------------------------------------ app context menu
-    AppContextMenu {
-        id: menu
-        root: root
-    }
-
     // ------------------------------------------------------------ settings panel
     SettingsFlyout {
         id: panelItem
         root: root
         cfg: cfg
-        fileDialog: fileDialog
-    }
-
-    // ------------------------------------------------------------ music player
-    MusicFlyout {
-        id: musicFlyout
-        objectName: "musicFlyout"
-        root: root
-        musicDialog: musicDialog
     }
 
     // ------------------------------------------------------------ hub
-    // Timer and Clipboard in one card, opened from the clock.
+    // Timer and Clipboard in one card, opened from the timer pill, the palette
+    // ("Focus timer", "Clipboard history") or the buddy.
     HubFlyout {
         id: hubFlyout
         objectName: "hubFlyout"
@@ -1174,16 +828,29 @@ Window {
     Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
     Binding { target: BuddyAgent; property: "showThinking"; value: cfg.buddyShowThinking }
     Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
+    Binding { target: BuddyAgent; property: "classifierBase"; value: cfg.buddyClassifierBase }
+    // Own key if set; otherwise the OpenCode chat key, but only for an OpenCode address,
+    // so a key is never sent to a host it was not made for.
+    Binding {
+        target: BuddyAgent; property: "classifierKey"
+        value: root.classifierKeyFor(cfg.buddyClassifierKey, cfg.buddyClassifierBase,
+                                     cfg.buddyProvider, cfg.buddyApiBase, cfg.buddyApiKey)
+    }
+    Binding { target: BuddyAgent; property: "classifierModel"; value: cfg.buddyClassifierModel }
+    Binding { target: BuddyAgent; property: "classifierEnabled"; value: cfg.buddyClassifierEnabled }
     Binding { target: BuddyAgent; property: "officialComputerTools"; value: cfg.buddyOfficialComputer }
     Binding { target: BuddyAgent; property: "computerDetail"; value: cfg.buddyComputerDetail }
     Binding { target: BuddyAgent; property: "maxSteps"; value: cfg.buddyMaxSteps }
     Binding { target: BuddyAgent; property: "allowAskUser"; value: cfg.buddyAllowAskUser }
     Binding { target: BuddyAgent; property: "allowScreenshots"; value: cfg.buddyAllowScreenshots }
+    Binding { target: BuddyAgent; property: "allowMusic"; value: cfg.buddyAllowMusic }
     Binding { target: Voice; property: "enabled"; value: cfg.buddyVoiceEnabled }
-    Binding { target: TalkKey; property: "enabled"; value: cfg.buddyVoiceEnabled && cfg.buddyVoiceHotkey }
+    Binding { target: TalkKey; property: "enabled"; value: (cfg.buddyVoiceEnabled || cfg.buddyLiveEnabled) && cfg.buddyVoiceHotkey }
     Binding { target: Wake; property: "enabled"; value: cfg.buddyWakeEnabled }
     Binding { target: Wake; property: "phrase"; value: cfg.buddyWakePhrase }
     Binding { target: Wake; property: "threshold"; value: cfg.buddyWakeThreshold }
+    // With a live conversation the wake phrase starts it, and needs no speech to text of its own.
+    Binding { target: Wake; property: "handsOff"; value: cfg.buddyLiveEnabled }
     Binding { target: Speech; property: "enabled"; value: cfg.buddySpeakReports }
     Binding { target: Speech; property: "engine"; value: cfg.buddyTtsEngine }
     Binding { target: Speech; property: "googleKey"; value: cfg.buddyTtsGoogleKey }
@@ -1192,6 +859,34 @@ Window {
     Binding { target: Speech; property: "kokoroVoice"; value: cfg.buddyTtsKokoroVoice }
     Binding { target: Speech; property: "speed"; value: cfg.buddyTtsSpeed }
     Binding { target: Speech; property: "speakAll"; value: cfg.buddyTtsSpeakAll }
+    // Deepgram: one key for the conversation, the listener and the voice.
+    Binding { target: Speech; property: "deepgramKey"; value: cfg.buddyDgKey }
+    Binding { target: Speech; property: "deepgramVoice"; value: cfg.buddyLiveVoice }
+    Binding { target: Voice; property: "deepgramKey"; value: cfg.buddyDgKey }
+    Binding { target: Voice; property: "deepgramModel"; value: cfg.buddyLiveListenModel }
+    Binding { target: Voice; property: "deepgramLanguage"; value: cfg.buddyLiveLanguage }
+    Binding { target: Voice; property: "deepgramKeyterms"; value: cfg.buddyLiveKeyterms }
+    Binding { target: Voice; property: "sttEngine"; value: cfg.buddySttEngine }
+    Binding { target: Youtube; property: "configuredPath"; value: cfg.buddyYtDlpPath }
+    Binding { target: Live; property: "enabled"; value: cfg.buddyLiveEnabled }
+    Binding { target: Live; property: "apiKey"; value: cfg.buddyDgKey }
+    Binding { target: Live; property: "listenModel"; value: cfg.buddyLiveListenModel }
+    Binding { target: Live; property: "listenLanguage"; value: cfg.buddyLiveLanguage }
+    Binding { target: Live; property: "keyterms"; value: cfg.buddyLiveKeyterms }
+    Binding { target: Live; property: "eotThreshold"; value: cfg.buddyLiveEot }
+    Binding { target: Live; property: "thinkProvider"; value: cfg.buddyLiveProvider }
+    Binding { target: Live; property: "thinkModel"; value: cfg.buddyLiveModel }
+    Binding { target: Live; property: "temperature"; value: cfg.buddyLiveTemperature }
+    Binding { target: Live; property: "prompt"; value: cfg.buddyLivePrompt }
+    Binding { target: Live; property: "endpointUrl"; value: cfg.buddyLiveEndpoint }
+    Binding { target: Live; property: "endpointKey"; value: cfg.buddyLiveEndpointKey }
+    Binding { target: Live; property: "askBuddy"; value: cfg.buddyLiveAskBuddy }
+    Binding { target: Live; property: "speakModel"; value: cfg.buddyLiveVoice }
+    Binding { target: Live; property: "speakSpeed"; value: cfg.buddyLiveSpeed }
+    Binding { target: Live; property: "volume"; value: cfg.buddyLiveVolume }
+    Binding { target: Live; property: "greeting"; value: cfg.buddyLiveGreeting }
+    Binding { target: Live; property: "audioMode"; value: cfg.buddyLiveAudioMode }
+    Binding { target: Live; property: "followUpSeconds"; value: cfg.buddyLiveFollowUp }
     Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
     // The wake word chimes the instant it hears its phrase: keep the device open for it.
     Binding { target: BuddySound; property: "keepOpen"; value: Wake.active }
@@ -1246,6 +941,23 @@ Window {
     }
     Binding { target: Hotkey; property: "enabled"; value: cfg.hotkeyPalette }
 
+    // Where the music pill (and the timer pill beside it) sits, so the watcher can tell
+    // when an app window occupies that space. The zone is the shown position, whether or
+    // not the pill is currently tucked away.
+    Binding { target: Fullscreen; property: "window"; value: root }
+    Connections {
+        target: Fullscreen
+        function onOccupiedChanged() {
+            console.log("noch qml: top space", Fullscreen.occupied ? "taken by " + Fullscreen.occupiedBy : "clear")
+        }
+    }
+    Binding {
+        target: Fullscreen; property: "zone"
+        value: Qt.rect(musicDock.x - 8, 0,
+                       (timerPill.visible ? timerPill.x + timerPill.width - musicDock.x : musicDock.width) + 16,
+                       root.shownY + root.pillH + 8)
+    }
+
     Connections {
         target: AppIndex
         function onCommandRequested(command) { root.runCommand(command) }
@@ -1260,34 +972,5 @@ Window {
     Connections {
         target: Night
         function onFailed() { root.showToast(qsTr("Night light could not be switched here")) }
-    }
-
-    FileDialog {
-        id: fileDialog
-        title: qsTr("Pin an app to Noch")
-        currentFolder: StandardPaths.writableLocation(StandardPaths.ApplicationsLocation)
-        nameFilters: [qsTr("Apps and shortcuts (*.exe *.lnk *.url *.bat *.cmd)"), qsTr("All files (*)")]
-        onAccepted: {
-            if (Dock.pinUrl(selectedFile))
-                root.showToast(qsTr("Pinned"))
-        }
-    }
-
-    FileDialog {
-        id: musicDialog
-        title: qsTr("Add music")
-        fileMode: FileDialog.OpenFiles
-        currentFolder: StandardPaths.writableLocation(StandardPaths.MusicLocation)
-        nameFilters: [qsTr("Audio (*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma *.aiff *.aif)")]
-        onAccepted: {
-            const n = Player.addUrls(selectedFiles)
-            if (n > 0) {
-                root.showToast(n === 1 ? qsTr("Added to player") : qsTr("Added %1 songs").arg(n))
-                root.panelOpen = false
-                root.hubOpen = false
-                root.menuIndex = -1
-                root.musicOpen = true
-            }
-        }
     }
 }

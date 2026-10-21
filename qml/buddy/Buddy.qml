@@ -100,11 +100,15 @@ Item {
             buddy.fxDemoLevel = 0.18 + 0.5 * Math.abs(Math.sin(t / 260)) * (0.55 + 0.45 * Math.sin(t / 95))
         }
     }
-    readonly property bool micLive: Voice.listening || Wake.state === "awaiting" || fxPreview === "listen"
+    // The live conversation keeps the microphone open: it lights the listening effect (and
+    // follows Deepgram's own mic level) only while it is really hearing, not while muted or
+    // while the agent talks.
+    readonly property bool liveListening: Live.active && Live.state === "listening" && !Live.muted
+    readonly property bool micLive: Voice.listening || Wake.state === "awaiting" || fxPreview === "listen" || liveListening
     // Being typed to: a quieter version of the same attentiveness.
     readonly property bool typingTo: session === "input" && !micLive
     readonly property bool listenFxOn: voiceFx !== "off" && (micLive || typingTo)
-    readonly property bool speakFxOn: voiceFx !== "off" && (Speech.speaking || mood === "speaking" || fxPreview === "speak")
+    readonly property bool speakFxOn: voiceFx !== "off" && (Speech.speaking || Live.speaking || mood === "speaking" || fxPreview === "speak")
     readonly property bool fxActive: listenFxOn || speakFxOn
     // How much is going on, for the light the orb throws.
     readonly property real glowActivity: Math.max(neon, micLive ? 0.9 : (typingTo ? 0.35 : 0),
@@ -114,6 +118,8 @@ Item {
     // How far from the orb's rim the mask has to leave room for light.
     readonly property real fxPad: glowMode !== "off" && (glowActivity > 0.05 || glowAlways) ? 36 * s : (fxActive ? 24 * s : 0)
     readonly property string maskSig: [glowing, Math.round(fxPad), emoteChip.visible, Math.round(emoteChip.width),
+                                       liveChip.visible, Math.round(liveChip.width),
+                                       ctxMenu.visible, Math.round(ctxMenu.height), Math.round(ctxMenu.x), Math.round(ctxMenu.y),
                                        thought.maskSig].join("|")
 
     signal buddyMoved(real x, real y)
@@ -546,6 +552,18 @@ Item {
                        width: Math.round(emoteChip.width + 8), height: Math.round(emoteChip.height + 8),
                        radius: 16 })
         }
+        if (ctxMenu.visible) {
+            const c = ctxMenu.mapToItem(item, 0, 0)
+            out.push({ x: Math.round(c.x - 4), y: Math.round(c.y - 4),
+                       width: Math.round(ctxMenu.width + 8), height: Math.round(ctxMenu.height + 8),
+                       radius: 20 })
+        }
+        if (liveChip.visible) {
+            const l = liveChip.mapToItem(item, 0, 0)
+            out.push({ x: Math.round(l.x - 4), y: Math.round(l.y - 4),
+                       width: Math.round(liveChip.width + 8), height: Math.round(liveChip.height + 8),
+                       radius: 16 })
+        }
         if (thought.visible) {
             const b = thought.maskBody
             const tl = thought.maskTail
@@ -640,9 +658,13 @@ Item {
         return sign * Math.min(1.0, nearPart * 0.72 + farPart * 0.28)
     }
 
+    // Aims the eyes at the cursor. Returns whether the aim moved by an amount that can be
+    // seen: on a 52 px orb half a degree is a quarter of a pixel, and every change wakes the
+    // spring loop, which repaints the whole screen-sized window each frame. A cursor far away,
+    // or wobbling a little, therefore costs nothing.
     function updateGaze() {
         if (!desktop)
-            return
+            return false
         const bx = buddy.x + buddy.width / 2
         const by = buddy.y + buddy.height / 2
         const dx = lx - bx
@@ -660,10 +682,15 @@ Item {
             ny = (ny / m) * 1.08
         }
 
-        buddy.targetYaw = nx * buddy.yawMax * mo
+        const yaw = nx * buddy.yawMax * mo
         // Negative pitch in spin(down, f, pitch) points downward (+y on screen).
-        buddy.targetPitch = -ny * buddy.pitchMax * mo
+        const pitch = -ny * buddy.pitchMax * mo
+        if (Math.abs(yaw - buddy.targetYaw) < 0.6 && Math.abs(pitch - buddy.targetPitch) < 0.6)
+            return false
+        buddy.targetYaw = yaw
+        buddy.targetPitch = pitch
         buddy.targetRoll = -nx * buddy.rollMax * 0.65 * mo
+        return true
     }
 
     // ---- VSync spring animation + high-rate cursor poll ---------------------
@@ -703,7 +730,10 @@ Item {
             buddy.glanceAt = t + 1.4 + Math.random() * 1.6
             return
         }
-        // Natural idle curiosity: mix wide glances with tiny micro-saccades
+        // Natural idle curiosity: mix wide glances with tiny micro-saccades. Each glance wakes
+        // the spring loop (a full-screen repaint per frame), so the longer nothing has happened
+        // the rarer they get: lively for the first half minute, then calm.
+        const lull = buddy.cursorStill > 1500 ? 4 : (buddy.cursorStill > 600 ? 2 : 1)
         const wideGlance = Math.random() < 0.45
         const amp = wideGlance ? 1.0 : 0.35
         buddy.targetYaw   = buddy.restYaw + (24 * Math.sin(t * 0.55) + 14 * Math.cos(t * 0.9)) * amp * mo
@@ -711,18 +741,21 @@ Item {
         buddy.targetRoll  = buddy.restRoll + 6.0 * Math.sin(t * 0.35) * amp * mo
         if (wideGlance && buddy.mood === "neutral" && Math.random() < 0.35)
             buddy.setMood("curious", 1400)
-        buddy.glanceAt = t + (wideGlance ? (1.6 + Math.random() * 2.0) : (0.6 + Math.random() * 0.9))
+        buddy.glanceAt = t + (wideGlance ? (1.6 + Math.random() * 2.0) : (0.6 + Math.random() * 0.9)) * lull
     }
 
-    // Fast 20ms poll checks cursor movement so tracking wakes up with zero lag.
+    // A fast poll checks cursor movement so tracking wakes up with little lag; once the cursor
+    // has been still for a while it relaxes to a fifth of that (the app is otherwise idle, and
+    // fifty wake-ups a second for nothing add up). `tick` keeps every counter in 20 ms units.
     Timer {
         id: cursorPollTimer
         repeat: true
         running: buddy.visible && !buddy.motionPaused
-        interval: 20
+        interval: buddy.cursorStill > 40 ? 100 : 20
         onTriggered: {
-            buddy.wanderT += 0.020
-            buddy.petAccum = Math.max(0, buddy.petAccum - 3.5)
+            const tick = interval / 20
+            buddy.wanderT += 0.020 * tick
+            buddy.petAccum = Math.max(0, buddy.petAccum - 3.5 * tick)
 
             const c = Overlay.cursorPos()
             // Dead-man's release for the hover halo: if the exit event was
@@ -741,14 +774,14 @@ Item {
                 }
             }
             const moved = Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 1.2
-            if (moved && !buddy.gazeLock) {
+            if (moved && !buddy.gazeLock && !buddy.dragging) {
                 buddy.lx = c.x
                 buddy.ly = c.y
                 buddy.cursorStill = 0
-                buddy.updateGaze()
-                buddy.springing = true
+                if (buddy.updateGaze())
+                    buddy.springing = true
             } else {
-                buddy.cursorStill = Math.min(1000, buddy.cursorStill + 1)
+                buddy.cursorStill = Math.min(20000, buddy.cursorStill + tick)
                 if ((buddy.cursorStill >= 35 || buddy.session === "thinking")
                         && !thought.revealing && buddy.wanderT >= buddy.glanceAt) {
                     buddy.scheduleGlance()
@@ -763,91 +796,118 @@ Item {
     // cursor movement, hover) and dropped once the spring settles. A resting
     // mood such as "sleepy" must NOT keep the loop alive: the notch window is
     // as large as the screen, so every frame repaints all of it.
+    // Quiet motion (the eyes following the cursor, an idle glance, the settle after one) runs
+    // from a 30 Hz Timer; anything livelier (a drag, a hover, a hop, a reply being made) from a
+    // vsync-locked FrameAnimation. The difference matters more than it looks: while ANY
+    // animation is running Qt Quick's threaded render loop draws a frame on every vsync, even
+    // when nothing changed, and this window is as big as the screen. A Timer only costs a frame
+    // when a property actually moved, and at half the rate.
+    readonly property bool calmMotion: !buddy.dragging && !buddy.hovering && buddy.session !== "thinking"
+                                       && !buddy.busy && Math.abs(buddy.hopOffsetY) < 0.5
+                                       && buddy.squashX > 0.995 && buddy.squashX < 1.005
+    property real lastStepMs: 0
+
+    // One step of the face's physics, `step` seconds long.
+    function springStep(step) {
+        const dt = Math.min(0.05, Math.max(0.004, step))
+        buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
+
+        // Live per-frame cursor tracking while cursor is moving
+        if (buddy.cursorStill < 20 && !buddy.gazeLock && !buddy.dragging) {
+            const c = Overlay.cursorPos()
+            if (Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 0.4) {
+                buddy.lx = c.x
+                buddy.ly = c.y
+                buddy.cursorStill = 0
+                buddy.updateGaze()
+            }
+        }
+
+        // Target expression morphs based on current mood & interaction
+        const wantHappy = (buddy.mood === "happy" || buddy.mood === "love"
+                           || (buddy.hovering && !buddy.dragging && buddy.session === "idle")) ? 1.0 : 0.0
+        const wantWide = buddy.dragging ? 0.30
+                       : (buddy.mood === "surprised" ? 0.34
+                       : (buddy.mood === "listening" ? 0.14
+                       : (buddy.mood === "thinking" ? -0.06
+                       : (buddy.mood === "error" ? -0.22
+                       : (buddy.mood === "sleepy" ? -0.5 : 0.0)))))
+        // Curious: one eye a touch bigger. Pondering: a slight one-eyed squint.
+        const wantAsymL = buddy.mood === "curious" ? 0.18 : (buddy.mood === "thinking" ? 0.05 : 0.0)
+        const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
+        const wantNeon = buddy.busy ? 1.0
+                       : (buddy.mood === "happy" || buddy.mood === "love") ? 1.0
+                       : (buddy.hovering && !buddy.dragging && buddy.session === "idle" ? 0.55 : 0.0)
+
+        const expRate = Math.min(1.0, dt * 14.0)
+        buddy.happyArc  += (wantHappy - buddy.happyArc) * expRate
+        buddy.eyeWide   += (wantWide  - buddy.eyeWide)  * expRate
+        buddy.asymLeft  += (wantAsymL - buddy.asymLeft) * expRate
+        buddy.asymRight += (wantAsymR - buddy.asymRight)* expRate
+        buddy.speakBounce = Math.max(0, buddy.speakBounce - dt * 4.2)
+        buddy.neon += (wantNeon - buddy.neon) * Math.min(1.0, dt * (wantNeon > buddy.neon ? 9.0 : 4.5))
+        if (Math.abs(wantNeon - buddy.neon) < 0.004)
+            buddy.neon = wantNeon
+
+        // Hop & squash-and-stretch spring physics
+        const hopK = 280, hopD = 20
+        buddy.hopVelY += (-buddy.hopOffsetY * hopK - buddy.hopVelY * hopD) * dt
+        buddy.hopOffsetY += buddy.hopVelY * dt
+        buddy.squashX += (1.0 - buddy.squashX) * Math.min(1.0, dt * 16.0)
+        buddy.squashY += (1.0 - buddy.squashY) * Math.min(1.0, dt * 16.0)
+        buddy.dragVelX *= Math.pow(0.08, dt)
+        buddy.dragVelY *= Math.pow(0.08, dt)
+
+        // Eye gaze spring physics (snappy, responsive, critically damped)
+        const K = 260, D = 28
+        buddy.gazeVelYaw   += ((buddy.targetYaw   - buddy.gazeYaw)   * K - buddy.gazeVelYaw   * D) * dt
+        buddy.gazeVelPitch += ((buddy.targetPitch - buddy.gazePitch) * K - buddy.gazeVelPitch * D) * dt
+        buddy.gazeVelRoll  += ((buddy.targetRoll  - buddy.gazeRoll)  * K - buddy.gazeVelRoll  * D) * dt
+        buddy.gazeYaw   += buddy.gazeVelYaw   * dt
+        buddy.gazePitch += buddy.gazeVelPitch * dt
+        buddy.gazeRoll  += buddy.gazeVelRoll  * dt
+
+        const settled = Math.abs(buddy.gazeVelYaw) + Math.abs(buddy.gazeVelPitch) + Math.abs(buddy.gazeVelRoll) < 0.04
+            && Math.abs(buddy.targetYaw - buddy.gazeYaw) < 0.04
+            && Math.abs(buddy.targetPitch - buddy.gazePitch) < 0.04
+            && Math.abs(buddy.hopOffsetY) < 0.08
+            && Math.abs(buddy.hopVelY) < 0.5
+            && Math.abs(wantHappy - buddy.happyArc) < 0.01
+            && Math.abs(wantWide - buddy.eyeWide) < 0.01
+            && buddy.neon === wantNeon
+            && buddy.speakBounce <= 0.01
+        if (settled) {
+            buddy.gazeVelYaw = 0
+            buddy.gazeVelPitch = 0
+            buddy.gazeVelRoll = 0
+            buddy.gazeYaw = buddy.targetYaw
+            buddy.gazePitch = buddy.targetPitch
+            buddy.gazeRoll = buddy.targetRoll
+            buddy.hopOffsetY = 0
+            buddy.hopVelY = 0
+        }
+        buddy.computeEyePoses()
+        if (settled)
+            buddy.springing = false
+    }
+
     FrameAnimation {
         id: gazeSpring
-        running: buddy.visible && !buddy.motionPaused
+        running: buddy.visible && !buddy.motionPaused && !buddy.calmMotion
                  && (buddy.springing || buddy.session !== "idle" || buddy.busy)
+        onTriggered: buddy.springStep(frameTime)
+    }
+    Timer {
+        id: calmSpring
+        interval: 33
+        repeat: true
+        running: buddy.visible && !buddy.motionPaused && buddy.calmMotion && buddy.springing
+        onRunningChanged: if (!running) buddy.lastStepMs = 0
         onTriggered: {
-            const dt = Math.min(0.033, Math.max(0.004, frameTime))
-            buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
-
-            // Live per-frame cursor tracking while cursor is moving
-            if (buddy.cursorStill < 20 && !buddy.gazeLock && !buddy.dragging) {
-                const c = Overlay.cursorPos()
-                if (Math.abs(c.x - buddy.lx) + Math.abs(c.y - buddy.ly) > 0.4) {
-                    buddy.lx = c.x
-                    buddy.ly = c.y
-                    buddy.cursorStill = 0
-                    buddy.updateGaze()
-                }
-            }
-
-            // Target expression morphs based on current mood & interaction
-            const wantHappy = (buddy.mood === "happy" || buddy.mood === "love"
-                               || (buddy.hovering && !buddy.dragging && buddy.session === "idle")) ? 1.0 : 0.0
-            const wantWide = buddy.dragging ? 0.30
-                           : (buddy.mood === "surprised" ? 0.34
-                           : (buddy.mood === "listening" ? 0.14
-                           : (buddy.mood === "thinking" ? -0.06
-                           : (buddy.mood === "error" ? -0.22
-                           : (buddy.mood === "sleepy" ? -0.5 : 0.0)))))
-            // Curious: one eye a touch bigger. Pondering: a slight one-eyed squint.
-            const wantAsymL = buddy.mood === "curious" ? 0.18 : (buddy.mood === "thinking" ? 0.05 : 0.0)
-            const wantAsymR = buddy.mood === "curious" ? -0.14 : (buddy.mood === "thinking" ? -0.13 : 0.0)
-            const wantNeon = buddy.busy ? 1.0
-                           : (buddy.mood === "happy" || buddy.mood === "love") ? 1.0
-                           : (buddy.hovering && !buddy.dragging && buddy.session === "idle" ? 0.55 : 0.0)
-
-            const expRate = Math.min(1.0, dt * 14.0)
-            buddy.happyArc  += (wantHappy - buddy.happyArc) * expRate
-            buddy.eyeWide   += (wantWide  - buddy.eyeWide)  * expRate
-            buddy.asymLeft  += (wantAsymL - buddy.asymLeft) * expRate
-            buddy.asymRight += (wantAsymR - buddy.asymRight)* expRate
-            buddy.speakBounce = Math.max(0, buddy.speakBounce - dt * 4.2)
-            buddy.neon += (wantNeon - buddy.neon) * Math.min(1.0, dt * (wantNeon > buddy.neon ? 9.0 : 4.5))
-            if (Math.abs(wantNeon - buddy.neon) < 0.004)
-                buddy.neon = wantNeon
-
-            // Hop & squash-and-stretch spring physics
-            const hopK = 280, hopD = 20
-            buddy.hopVelY += (-buddy.hopOffsetY * hopK - buddy.hopVelY * hopD) * dt
-            buddy.hopOffsetY += buddy.hopVelY * dt
-            buddy.squashX += (1.0 - buddy.squashX) * Math.min(1.0, dt * 16.0)
-            buddy.squashY += (1.0 - buddy.squashY) * Math.min(1.0, dt * 16.0)
-            buddy.dragVelX *= Math.pow(0.08, dt)
-            buddy.dragVelY *= Math.pow(0.08, dt)
-
-            // Eye gaze spring physics (snappy, responsive, critically damped)
-            const K = 260, D = 28
-            buddy.gazeVelYaw   += ((buddy.targetYaw   - buddy.gazeYaw)   * K - buddy.gazeVelYaw   * D) * dt
-            buddy.gazeVelPitch += ((buddy.targetPitch - buddy.gazePitch) * K - buddy.gazeVelPitch * D) * dt
-            buddy.gazeVelRoll  += ((buddy.targetRoll  - buddy.gazeRoll)  * K - buddy.gazeVelRoll  * D) * dt
-            buddy.gazeYaw   += buddy.gazeVelYaw   * dt
-            buddy.gazePitch += buddy.gazeVelPitch * dt
-            buddy.gazeRoll  += buddy.gazeVelRoll  * dt
-
-            const settled = Math.abs(buddy.gazeVelYaw) + Math.abs(buddy.gazeVelPitch) + Math.abs(buddy.gazeVelRoll) < 0.04
-                && Math.abs(buddy.targetYaw - buddy.gazeYaw) < 0.04
-                && Math.abs(buddy.targetPitch - buddy.gazePitch) < 0.04
-                && Math.abs(buddy.hopOffsetY) < 0.08
-                && Math.abs(buddy.hopVelY) < 0.5
-                && Math.abs(wantHappy - buddy.happyArc) < 0.01
-                && Math.abs(wantWide - buddy.eyeWide) < 0.01
-                && buddy.neon === wantNeon
-                && buddy.speakBounce <= 0.01
-            if (settled) {
-                buddy.gazeVelYaw = 0
-                buddy.gazeVelPitch = 0
-                buddy.gazeVelRoll = 0
-                buddy.gazeYaw = buddy.targetYaw
-                buddy.gazePitch = buddy.targetPitch
-                buddy.gazeRoll = buddy.targetRoll
-                buddy.hopOffsetY = 0
-                buddy.hopVelY = 0
-            }
-            buddy.computeEyePoses()
-            if (settled)
-                buddy.springing = false
+            const now = Date.now()
+            const dt = buddy.lastStepMs > 0 ? (now - buddy.lastStepMs) / 1000 : 0.033
+            buddy.lastStepMs = now
+            buddy.springStep(dt)
         }
     }
 
@@ -1056,7 +1116,7 @@ Item {
         stops: buddy.ringColors
         active: buddy.listenFxOn
         mic: buddy.micLive
-        level: buddy.fxPreview === "listen" ? buddy.fxDemoLevel : Voice.level
+        level: buddy.fxPreview === "listen" ? buddy.fxDemoLevel : (buddy.liveListening ? Live.level : Voice.level)
         showRings: buddy.voiceFx === "rings" || buddy.voiceFx === "full"
         showWave: buddy.voiceFx === "wave" || buddy.voiceFx === "full"
         calm: buddy.mo
@@ -1070,7 +1130,7 @@ Item {
         s: buddy.s
         stops: buddy.ringColors
         active: buddy.speakFxOn
-        energy: -1
+        energy: Live.speaking ? Live.outputLevel : -1
         showBars: buddy.voiceFx === "wave" || buddy.voiceFx === "full"
         showRings: buddy.voiceFx === "rings" || buddy.voiceFx === "full"
         calm: buddy.mo
@@ -1176,6 +1236,122 @@ Item {
         }
     }
 
+    // ---- right-click menu ---------------------------------------------------------------------
+    function menuRows() {
+        const r = [{ id: "ask", label: qsTr("Ask Buddy"), icon: "chat" }]
+        if (Live.enabled) {
+            r.push({ id: "live", label: Live.active ? qsTr("End conversation") : qsTr("Start conversation"), icon: "mic" })
+            if (Live.active)
+                r.push({ id: "mute", label: Live.muted ? qsTr("Unmute microphone") : qsTr("Mute microphone"),
+                         icon: Live.muted ? "mic" : "mic-off" })
+            if (Live.speaking)
+                r.push({ id: "interrupt", label: qsTr("Interrupt"), icon: "stop" })
+        }
+        r.push({ id: "settings", label: qsTr("Settings"), icon: "settings", hint: "Ctrl+," })
+        return r
+    }
+    function closeMenu() { ctxMenu.open = false }
+    function openMenu() {
+        activationRequested()          // so that clicking anywhere else (which deactivates Noch) closes it
+        ctxMenu.open = true
+    }
+    function menuPicked(id) {
+        ctxMenu.open = false
+        switch (id) {
+        case "ask": openInput(true); break
+        case "live": Live.toggle(); break
+        case "mute": Live.muted = !Live.muted; break
+        case "interrupt": Live.interrupt(); break
+        case "settings": settingsRequested(); break
+        }
+    }
+    BuddyMenu {
+        id: ctxMenu
+        z: 9
+        rows: buddy.menuRows()
+        // Under the orb, or over it near the bottom of the screen; always inside the screen.
+        readonly property bool below: !buddy.desktop || buddy.y + buddy.height + height + 20 < buddy.desktop.height
+        x: {
+            const want = buddy.x + (buddy.width - width) / 2
+            const maxX = buddy.desktop ? buddy.desktop.width - width - 8 : want
+            return Math.round(Math.max(8, Math.min(maxX, want)) - buddy.x)
+        }
+        y: below ? buddy.height + 8 : -height - 8
+        onPicked: (id) => buddy.menuPicked(id)
+    }
+
+    // ---- live conversation caption ----------------------------------------------------
+    // What is going on in a live conversation, in a line under (or over) the orb: what
+    // it is doing, what you just said, what it is saying. Click it to hang up.
+    Item {
+        id: liveChip
+        objectName: "liveChip"
+        readonly property bool shown: Live.active && !thought.visible && !ctxMenu.open
+        readonly property string caption: {
+            if (!Live.active)
+                return ""
+            if (Live.muted)
+                return qsTr("Muted")
+            switch (Live.state) {
+            case "connecting": return qsTr("Connecting…")
+            case "thinking": return Live.buddyBusy ? qsTr("Working on it…")
+                                  : (Live.userText.length > 0 ? Live.userText : qsTr("Thinking…"))
+            case "speaking": return Live.agentText.length > 0 ? Live.agentText : qsTr("Speaking…")
+            default: return Live.buddyBusy ? qsTr("Working on it…") : qsTr("Listening…")
+            }
+        }
+        visible: opacity > 0.01
+        opacity: shown ? 1 : 0
+        z: 4
+        x: Math.round((buddy.width - width) / 2)
+        y: buddy.y > height + 12 ? -height - 6 : buddy.height + 6
+        width: Math.min(Math.round(300 * buddy.s), liveText.implicitWidth + 44)
+        height: Math.round(26 * buddy.s)
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+        Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: height / 2
+            color: Theme.surface
+            border.width: 1
+            border.color: Live.state === "listening" && !Live.muted ? Theme.danger : Theme.borderStrong
+        }
+        Rectangle {
+            id: liveDot
+            x: 11
+            anchors.verticalCenter: parent.verticalCenter
+            width: 8
+            height: 8
+            radius: 4
+            color: Live.muted ? Theme.textFaint
+                 : Live.state === "listening" ? Theme.danger
+                 : Live.state === "speaking" ? buddy.ringColors[0] : Theme.accent
+            // Pulses with the voice: your microphone while it listens, the agent's while it speaks.
+            scale: 1 + 0.5 * (Live.state === "speaking" ? Live.outputLevel : (Live.muted ? 0 : Live.level))
+        }
+        Text {
+            id: liveText
+            x: 26
+            width: parent.width - 36
+            anchors.verticalCenter: parent.verticalCenter
+            text: liveChip.caption
+            color: Theme.ink
+            elide: Text.ElideRight
+            maximumLineCount: 1
+            font.family: Theme.font
+            font.pixelSize: Theme.fontSm
+            font.weight: Font.DemiBold
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            Accessible.role: Accessible.Button
+            Accessible.name: qsTr("End the conversation")
+            onClicked: Live.stop()
+        }
+    }
+
     // The microphone is open for the wake word: always shown while it is, never hidden.
     Rectangle {
         id: wakeBadge
@@ -1225,6 +1401,7 @@ Item {
     // surface took over. Everything is tucked away, but nothing in flight is
     // cancelled: the orb keeps glowing and the reply pops back up on arrival.
     function stash() {
+        ctxMenu.open = false
         const hadSomething = (thought.visible && !thought.closing)
                              || (!!resultPanel && resultPanel.open)
         rememberAnswer()
@@ -1627,7 +1804,8 @@ Item {
             resultPanel.phase = "loading"
         }
         awaitingReply = true
-        BuddyAgent.sendMessage(prompt, conversation)
+        // A spoken run (by voice, or "read every answer") is told to keep its reply to a sentence or two.
+        BuddyAgent.sendMessage(prompt, conversation, spokenRun)
         return true
     }
 
@@ -1643,7 +1821,7 @@ Item {
             }
         }
         // Spoken back when asked for by voice, or always when "read every answer" is on.
-        spokenRun = voiceStarted || Speech.speakAll
+        spokenRun = voiceStarted || liveCall.length > 0 || (Speech.enabled && Speech.speakAll)
         lastRequest = trimmed
         forgetAnswer()
         autoPopPending = true
@@ -1753,7 +1931,9 @@ Item {
     }
     function showError(message) {
         awaitingReply = false
-        if (spokenRun) {
+        if (liveCall.length > 0) {
+            finishLiveCall(qsTr("That did not work. %1").arg(String(message).slice(0, 200)))
+        } else if (spokenRun) {
             Speech.say(qsTr("That didn't work."))
             spokenRun = false
         }
@@ -1852,6 +2032,8 @@ Item {
         autoPopPending = true
         if (kind === "chat" && payload && payload.response)
             reportAloud(payload.response)
+        else if (liveCall.length > 0)
+            finishLiveCall(String(title || "").length > 0 ? qsTr("Done: %1").arg(title) : qsTr("Done."))
         else
             spokenRun = false
         recordHistory(kind, title, payload)
@@ -2045,6 +2227,7 @@ Item {
     MouseArea {
         id: buddyHit
         anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
         preventStealing: true
         cursorShape: pressed && dragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
@@ -2073,6 +2256,11 @@ Item {
             buddy.springing = true
         }
         onPressed: (mouse) => {
+            if (mouse.button === Qt.RightButton) {
+                buddy.openMenu()
+                return
+            }
+            ctxMenu.open = false
             buddy.wake()
             dozeTimer.restart()
             const g = buddy.desktop
@@ -2091,7 +2279,7 @@ Item {
             buddy.springing = true
         }
         onPositionChanged: (mouse) => {
-            if (!pressed) {
+            if (!(pressedButtons & Qt.LeftButton)) {
                 // Detect gentle petting / rubbing across the orb when hovering
                 const step = Math.hypot(mouse.x - buddy.lastHoverX, mouse.y - buddy.lastHoverY)
                 buddy.lastHoverX = mouse.x
@@ -2133,7 +2321,9 @@ Item {
                 buddy.springing = true
             }
         }
-        onReleased: () => {
+        onReleased: (mouse) => {
+            if (mouse.button === Qt.RightButton)
+                return
             if (dragged) {
                 const newAnchorX = Math.round(buddy.x + buddy.width / 2)
                 const newAnchorY = Math.round(buddy.y)
@@ -2202,10 +2392,20 @@ Item {
     // also said out loud when that is switched on in Settings.
     property bool voiceStarted: false     // the next submit() comes from the wake word
     property bool spokenRun: false        // the run in flight does
+    // With live conversation on, the wake phrase starts one (or, if one is open, just gets
+    // Buddy's attention) instead of recording a request of its own.
+    readonly property bool liveByWake: Live.enabled && Live.problem.length === 0
     function wakeHeard() {
         wake()
         react("curious", 1400, 4, 70)
         lookAtBubble(24, 4)
+        if (liveByWake) {
+            if (BuddySound && !Live.active)
+                BuddySound.play("wake")
+            if (!Live.active)
+                Live.start()
+            return
+        }
         if (BuddySound)
             BuddySound.play("wake")
         // A note would cut a running request's reply off; only show one when idle.
@@ -2216,6 +2416,13 @@ Item {
         const said = String(text || "").trim()
         if (said.length === 0)
             return
+        if (liveByWake) {
+            // "Hey buddy, open notepad": the call is being made; the words go in as soon as it is up.
+            if (!Live.active)
+                Live.start()
+            Live.queueText(said)
+            return
+        }
         if (busy || session === "thinking") {
             if (BuddySound)
                 BuddySound.play("dismiss")
@@ -2227,9 +2434,132 @@ Item {
         voiceStarted = false
     }
     function reportAloud(reply) {
+        if (liveCall.length > 0) {
+            finishLiveCall(reply)      // the live voice says it, in its own words
+            return
+        }
+        if (liveAwaitingInput && Live.active) {
+            // The user answered by clicking the card, so no call is waiting: say the outcome.
+            liveAwaitingInput = false
+            Live.say(Speech.summary(reply))
+            spokenRun = false
+            return
+        }
         if (spokenRun)
             Speech.speakReport(reply)
         spokenRun = false
+    }
+
+    // ---- live conversation (Deepgram Voice Agent) ----------------------------------------
+    // The agent on the line hands a task over by calling ask_buddy. It runs like any
+    // spoken request (same tools, same approvals); the outcome goes back to the call.
+    property string liveCall: ""           // the call waiting for the run in flight
+    function finishLiveCall(outcome) {
+        const id = liveCall
+        liveCall = ""
+        spokenRun = false
+        if (id.length > 0)
+            Live.answerBuddy(id, String(outcome || ""))
+    }
+    // The run is stopped on a question or an approval and the user is on the line: hand the
+    // question to the voice agent, which asks it out loud and passes the answer back with
+    // answer_buddy. The call that was waiting for the run is answered with the question, the
+    // run itself stays stopped until the user answers (by voice, or by clicking the card).
+    property bool liveAwaitingInput: false
+    function liveNeedsInput() {
+        if (!Live.active || liveCall.length === 0)
+            return
+        const prompt = BuddyAgent.pendingSpokenPrompt()
+        if (prompt.length === 0)
+            return
+        liveAwaitingInput = true
+        finishLiveCall(prompt)
+    }
+    // The user's spoken answer, relayed by the voice agent.
+    function liveAnswered(id, answer) {
+        const r = BuddyAgent.answerPendingSpoken(answer)
+        if (r.kind === "none") {
+            Live.answerBuddy(id, r.message + " If Buddy has finished, tell the user the last result.")
+            return
+        }
+        if (!r.ok) {                    // not clear enough: it stays pending, so ask them again
+            Live.answerBuddy(id, r.message + " " + BuddyAgent.pendingSpokenPrompt())
+            return
+        }
+        liveAwaitingInput = false
+        liveCall = id                   // the run goes on; its outcome (or its next question) answers this call
+        spokenRun = true
+    }
+    function liveAsk(id, request) {
+        if (waitingOnUser) {
+            Live.answerBuddy(id, qsTr("Buddy is still waiting for the user. ") + BuddyAgent.pendingSpokenPrompt())
+            return
+        }
+        if (busy || session === "thinking") {
+            Live.answerBuddy(id, qsTr("Buddy is still busy with the last request. Ask again in a moment."))
+            return
+        }
+        liveAwaitingInput = false
+        liveCall = id
+        submit(request, true)
+        Qt.callLater(function () {
+            // submit() refused it (nothing to do) or finished on the spot: never leave the call hanging.
+            if (buddy.liveCall === id && !buddy.awaitingReply && buddy.session !== "thinking")
+                buddy.finishLiveCall(qsTr("Done."))
+        })
+    }
+    function sayAloud(line) {
+        if (Live.active)
+            Live.say(line)
+        else
+            Speech.say(line)
+    }
+    Connections {
+        target: Live
+        function onBuddyRequested(id, request) { buddy.liveAsk(id, request) }
+        function onBuddyAnswered(id, answer) { buddy.liveAnswered(id, answer) }
+        function onBuddyCancelled(id) {
+            // The user talked over the call; the run carries on, its outcome just has nowhere to go.
+            if (buddy.liveCall === id)
+                buddy.liveCall = ""
+        }
+        function onStarted() {
+            buddy.wake()
+            buddy.react("curious", 1200, 4, 70)
+            buddy.lookAtBubble(24, 4)
+            if (BuddySound)
+                BuddySound.play("wake")
+        }
+        function onEnded() {
+            buddy.liveCall = ""
+            buddy.liveAwaitingInput = false
+            if (BuddySound)
+                BuddySound.play("dismiss")
+            if (Live.error.length > 0 && !buddy.busy)
+                buddy.note(Live.error, "mic-off")
+            else if (Live.notice.length > 0 && !buddy.busy)
+                buddy.note(Live.notice, "mic")
+            buddy.setMood("neutral", 0)
+            buddy.springing = true
+        }
+        function onErrorChanged() {
+            // A conversation that could not even start (no key, no microphone...) says why here;
+            // one that failed while running says so when it ends.
+            if (Live.error.length > 0 && !Live.active && !buddy.busy)
+                buddy.note(Live.error, "mic-off")
+        }
+        function onStateChanged() {
+            if (!Live.active)
+                return
+            // The face follows the call.
+            if (Live.state === "speaking")
+                buddy.setMood("speaking", 0)
+            else if (Live.state === "thinking")
+                buddy.setMood("thinking", 0)
+            else if (Live.state === "listening")
+                buddy.setMood("listening", 0)
+            buddy.springing = true
+        }
     }
     Connections {
         target: Wake
@@ -2276,9 +2606,13 @@ Item {
         function onPendingApprovalChanged() {
             const p = BuddyAgent.pendingApproval
             const waiting = p && p.id !== undefined
+            if (waiting) {
+                buddy.showPending()
+                buddy.liveNeedsInput()
+            }
             if (waiting && !approvalNudge.running) {
-                if (buddy.spokenRun)
-                    Speech.say(qsTr("I need your approval to continue."))
+                if (buddy.spokenRun && !Live.active)
+                    buddy.sayAloud(qsTr("I need your approval to continue. Please look at the screen."))
                 buddy.wake()
                 buddy.react("surprised", 900, 4, 80)
                 buddy.lookAtBubble(24, 4)
@@ -2295,8 +2629,10 @@ Item {
             const asking = !!(p && p.id !== undefined)
             if (asking && !buddy.questionShown) {
                 buddy.questionShown = true
-                if (buddy.spokenRun)
-                    Speech.say(qsTr("I have a question for you."))
+                buddy.showPending()
+                buddy.liveNeedsInput()
+                if (buddy.spokenRun && !Live.active)
+                    buddy.sayAloud(qsTr("I have a question for you. Please look at the screen."))
                 buddy.wake()
                 buddy.react("curious", 1100, 4, 70)
                 buddy.lookAtBubble(24, 4)
@@ -2330,6 +2666,34 @@ Item {
 
     property string lastErrorStep: ""
     property bool questionShown: false
+
+    // The agent is stopped on an approval or a question. It has to be seen: the bubble that
+    // carries the card may have been tucked away (clicking another app does that), and in a
+    // hands-free conversation nobody is looking at Noch at all.
+    readonly property bool waitingOnUser: {
+        const a = BuddyAgent ? BuddyAgent.pendingApproval : null
+        const q = BuddyAgent ? BuddyAgent.pendingQuestion : null
+        return !!((a && a.id !== undefined) || (q && q.id !== undefined))
+    }
+    // Brings the card back if it is hidden, without taking the focus from the app being worked in.
+    function showPending() {
+        const shown = (thought.visible && !thought.closing) || (!!resultPanel && resultPanel.open)
+        if (shown)
+            return
+        autoPopPending = true
+        if (resultPanel && replyToPanel) {
+            resultPanel.open = true
+            resultPanel.clampIntoView()
+            session = "result"
+            setMood("thinking", 0)
+            return
+        }
+        session = "thinking"
+        setMood("thinking", 0)
+        hop(55)
+        thought.think()
+        lookAtBubble(18, 22)
+    }
     // Nudge every few seconds while something waits on the user.
     function refreshNudge() {
         const a = BuddyAgent ? BuddyAgent.pendingApproval : null

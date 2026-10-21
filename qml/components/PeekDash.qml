@@ -23,6 +23,9 @@ MouseArea {
         height: self.root.dashH
         radius: height / 2
         color: self.containsMouse ? Theme.ink : Theme.textDim
+        // Nothing at the top edge to pull out (no music, no timer): no dash drawn. The strip
+        // itself still takes a file dragged onto it, which brings the music pill out for the drop.
+        visible: self.root.notchHasContent
         opacity: self.root.clamp01(1 - self.root.progress * 3.5)
         Behavior on color { ColorAnimation { duration: 150 } }
     }

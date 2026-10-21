@@ -23,6 +23,7 @@
 #include "BuddySfx.h"
 #include "ChatSessions.h"
 #include "ClipboardHistory.h"
+#include "DeepgramAgent.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
 #include "GlassBackdrop.h"
@@ -30,6 +31,7 @@
 #include "IconSet.h"
 #include "QmlSingletons.h"
 #include "MediaHub.h"
+#include "MusicAgentBackend.h"
 #include "MusicPlayer.h"
 #include "NightLight.h"
 #include "OverlayController.h"
@@ -42,6 +44,7 @@
 #include "SpeechOut.h"
 #include "VoiceInput.h"
 #include "WakeWord.h"
+#include "YtDlp.h"
 
 namespace {
 
@@ -143,21 +146,37 @@ int main(int argc, char *argv[])
     new SessionLink(chatSessions, buddyProvider, &app);     // long chats get a rolling summary
     auto *voiceInput = new VoiceInput(&app);
     auto *talkKey = new PushToTalkKey(&app);
-    // Hold the key: the microphone is open; let go: what was said is transcribed.
-    QObject::connect(talkKey, &PushToTalkKey::pressed, voiceInput, [voiceInput] { voiceInput->beginListening(); });
-    QObject::connect(talkKey, &PushToTalkKey::released, voiceInput, &VoiceInput::endListening);
     // "Hey buddy": listens for the phrase through the same speech service, and
     // stays quiet while Buddy talks (so it never wakes itself up).
     auto *wakeWord = new WakeWord(voiceInput, &app);
     auto *speechOut = new SpeechOut(&app);
-    QObject::connect(speechOut, &SpeechOut::speakingChanged, wakeWord,
-                     [wakeWord, speechOut] { wakeWord->setPaused(speechOut->speaking()); });
+    // The live conversation (Deepgram Voice Agent). While it is open it owns the
+    // microphone: push-to-talk and the wake word step aside so nothing else listens.
+    auto *live = new DeepgramAgent(&app);
+    const auto syncWakePause = [wakeWord, live, speechOut] {
+        wakeWord->setPaused(live->active() || speechOut->speaking());
+    };
+    QObject::connect(speechOut, &SpeechOut::speakingChanged, wakeWord, syncWakePause);
+    QObject::connect(live, &DeepgramAgent::stateChanged, wakeWord, syncWakePause);
+    // Hold the key: the microphone is open; let go: what was said is transcribed.
+    // With live conversation on, the same key starts and ends a conversation instead.
+    QObject::connect(talkKey, &PushToTalkKey::pressed, voiceInput, [voiceInput, live] {
+        if (live->enabled())
+            live->toggle();
+        else
+            voiceInput->beginListening();
+    });
+    QObject::connect(talkKey, &PushToTalkKey::released, voiceInput, &VoiceInput::endListening);
     auto *glass = new GlassBackdrop(&app);
     auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
     auto *audio = new AudioDevices(&app);
     auto *smtc = new SmtcMedia(&app);
     auto *media = new MediaHub(player, smtc, audio, openApps, &app);
+    // Buddy drives the music pill through this: play, pause, skip, volume, Noch's queue.
+    // Songs from YouTube, found and streamed without a browser (yt-dlp): Buddy plays them in the pill.
+    auto *youtube = new YtDlp(&app);
+    buddyProvider->setMusicBackend(new MusicAgentBackend(media, player, youtube));
     auto *radios = new Radios(&app);
     auto *nightLight = new NightLight(&app);
     auto *power = new PowerActions(&app);
@@ -182,6 +201,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("chatSessions"), chatSessions);
     engine.rootContext()->setContextProperty(QStringLiteral("voiceInput"), voiceInput);
     engine.rootContext()->setContextProperty(QStringLiteral("talkKey"), talkKey);
+    engine.rootContext()->setContextProperty(QStringLiteral("liveAgent"), live);
+    engine.rootContext()->setContextProperty(QStringLiteral("youtube"), youtube);
     engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
     engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
@@ -207,6 +228,8 @@ int main(int argc, char *argv[])
     VoiceSingleton::s_singletonInstance = voiceInput;
     TalkKeySingleton::s_singletonInstance = talkKey;
     WakeSingleton::s_singletonInstance = wakeWord;
+    LiveSingleton::s_singletonInstance = live;
+    YoutubeSingleton::s_singletonInstance = youtube;
     SpeechSingleton::s_singletonInstance = speechOut;
     BackdropSingleton::s_singletonInstance = glass;
     OpenAppsSingleton::s_singletonInstance = openApps;

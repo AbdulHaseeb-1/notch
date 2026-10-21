@@ -23,6 +23,7 @@
 #include "ChatSessions.h"
 #include "ClipboardHistory.h"
 #include "ComputerUse.h"
+#include "DeepgramAgent.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
 #include "GlassBackdrop.h"
@@ -39,6 +40,7 @@
 #include "SpeechOut.h"
 #include "VoiceInput.h"
 #include "WakeWord.h"
+#include "YtDlp.h"
 
 // Shared create(): hands QML the instance main.cpp made (C++ keeps ownership).
 template <typename T>
@@ -185,6 +187,30 @@ struct SpeechSingleton
 public:
     inline static SpeechOut *s_singletonInstance = nullptr;
     static SpeechOut *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+// The live Deepgram voice conversation (see DeepgramAgent.h).
+struct LiveSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(DeepgramAgent)
+    QML_NAMED_ELEMENT(Live)
+    QML_SINGLETON
+public:
+    inline static DeepgramAgent *s_singletonInstance = nullptr;
+    static DeepgramAgent *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+// Finding songs on YouTube without a browser (yt-dlp): status and install for Settings.
+struct YoutubeSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(YtDlp)
+    QML_NAMED_ELEMENT(Youtube)
+    QML_SINGLETON
+public:
+    inline static YtDlp *s_singletonInstance = nullptr;
+    static YtDlp *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
 struct BuddySoundSingleton

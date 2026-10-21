@@ -121,7 +121,7 @@ void BuddyProvider::probe()
     m_probeReply = m_nam.get(buildRequest(url));
 }
 
-void BuddyProvider::sendMessage(const QString &text, const QVariantList &context)
+void BuddyProvider::sendMessage(const QString &text, const QVariantList &context, bool spoken)
 {
     if (m_provider == QLatin1String("none") || !m_enabled) {
         emit errorOccurred(QStringLiteral("No chat provider configured. Open Settings > Buddy to add one."));
@@ -141,6 +141,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     }
 
     cancel();
+    m_spokenRun = spoken;   // after cancel(): a new run decides, a stale one must not leak in
     clearToolSteps();
     m_policy.setTainted(false);
     m_policy.setScreenTainted(false);
@@ -161,6 +162,11 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_continuations = 0;
     m_truncated = false;
     m_handoffCount = 0;
+    if (m_classification.valid) {
+        m_classification = turnclass::Classification();
+        emit lastClassificationChanged();
+    }
+    m_classifyPending = false;
     m_computerBatchFailed = false;
     m_lastCacheMark = -1;
     // One memory listing per run: a stable system prompt keeps the prompt
@@ -266,7 +272,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     });
 
     emit statusChanged(QStringLiteral("thinking"));
-    dispatchAgentTurn();
+    dispatchAfterClassify(text);
 }
 
 void BuddyProvider::dispatchAgentTurn()
@@ -479,6 +485,12 @@ void BuddyProvider::runDirectAdvisor(const QString &question)
 void BuddyProvider::cancel()
 {
     ++m_runGeneration;
+    m_classifyPending = false;
+    m_classifier->cancel();
+    if (m_classification.valid) {
+        m_classification = turnclass::Classification();
+        emit lastClassificationChanged();
+    }
     m_pendingTools.clear();
     m_completedTools.clear();
     m_retryTimer.stop();

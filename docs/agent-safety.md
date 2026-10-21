@@ -400,10 +400,13 @@ answer*. Three voices can be chosen:
   elsewhere. The text goes to the speech program on its standard input, never into a
   command line, so nothing in a reply can run as a command. Nothing leaves the
   computer.
-- **Google Cloud**: Cloud Text-to-Speech (`texttospeech.googleapis.com`). You provide
-  an API key (with the Text-to-Speech API enabled) and a voice name such as
-  `en-US-Neural2-F`. **The spoken summary is sent to Google**; the key goes in a request
-  header, never in the address, and is stored in Noch's settings like your chat key.
+- **Google AI Studio**: Gemini TTS through the Google AI Studio API
+  (`generativelanguage.googleapis.com`). You provide a key from
+  <https://aistudio.google.com/apikey> and a Gemini voice name such as `Kore`,
+  `Puck` or `Zephyr`. **The spoken summary is sent to Google**; the key goes in a
+  request header, never in the address, and is stored in Noch's settings like your
+  chat key. Requests are sent with `store=false` so the interaction is not kept for
+  server-side conversation state.
 - **Kokoro**: a [Kokoro](https://github.com/hexgrad/Kokoro-82M) TTS server that you run,
   for example Kokoro-FastAPI, reached through its OpenAI-style
   `/v1/audio/speech`. It is meant to run on this computer, so the text stays here;
@@ -414,6 +417,24 @@ running, unplayable audio) the system voice reads the text instead and Settings
 shows why, so a reply is never lost silently. A new reading replaces the old one,
 *Test voice* works even while reading aloud is off, and the wake word stays paused
 while Buddy talks so it cannot wake itself.
+
+## Music
+
+With *Control the music pill* on (Settings, Buddy, Agent tools; on by default), Buddy has a
+`music` tool for the music pill: play, pause, skip, volume, mute, what is playing, Noch's
+own queue (`queue`, `play_track`), and `add` for a music file or folder. It drives whatever
+the pill shows: Noch's own player, or the app Windows reports as playing (Spotify, a
+browser ...); the queue actions only apply to Noch's own player.
+
+- **Playing needs no approval.** Transport and volume change nothing on disk, so they run
+  without asking. Plan mode only allows looking (`status`, `queue`); it will not start sound.
+- **Queueing reads files, so it is gated.** `add` runs without asking only for a path inside
+  your own Music folder, and only while the run has not seen a prompt injection. Any other
+  path asks first (rule `ask:music-add`), and Noch's own data folder is refused.
+- **Track names are untrusted.** Titles and artists come from file metadata. They are cleaned
+  (invisible characters removed, length capped) and labelled as file metadata, never
+  instructions, before the model sees them.
+- Switch the setting off to remove the tool.
 
 ## Screenshots in chat
 

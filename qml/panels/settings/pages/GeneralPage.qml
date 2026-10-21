@@ -5,7 +5,7 @@ SettingsPage {
     id: page
     required property var panel
     title: qsTr("General")
-    subtitle: qsTr("Size, notch and system behaviour.")
+    subtitle: qsTr("Size, music pill and system behaviour.")
 
     SettingsSectionHeader {
         title: qsTr("Size & scale")
@@ -46,7 +46,7 @@ SettingsPage {
 
         Text {
             width: parent.width
-            text: qsTr("Drag the handle below the notch, or Ctrl + scroll on it, to resize live.")
+            text: qsTr("Drag the handle below the music pill, or Ctrl + scroll on it, to resize live.")
             color: Theme.textFaint
             font.family: Theme.font
             font.pixelSize: Theme.fontSm
@@ -54,30 +54,12 @@ SettingsPage {
         }
     }
 
-    SettingsSectionHeader { title: qsTr("Notch") }
-
-    SettingsGroupCard {
-        SettingsToggleRow {
-            label: qsTr("Monochrome app icons")
-            sub: qsTr("Render dock icons in quiet monochrome that sits well on dark stone.")
-            checked: panel.prefs.monoIcons
-            onToggled: (c) => panel.prefs.monoIcons = c
-        }
-        SettingsCardDivider {}
-        SettingsToggleRow {
-            label: qsTr("Show clock")
-            sub: qsTr("Time and date on the right of the notch. Click it for the timer and clipboard.")
-            checked: panel.prefs.showClock
-            onToggled: (c) => panel.prefs.showClock = c
-        }
-    }
-
     SettingsSectionHeader { title: qsTr("Behavior & system") }
 
     SettingsGroupCard {
         SettingsToggleRow {
-            label: qsTr("Auto-hide notch")
-            sub: qsTr("Tucks into the top edge; hover the top dash to reveal.")
+            label: qsTr("Auto-hide music pill")
+            sub: qsTr("Stays out on a clear desktop and tucks into the top edge while an app window covers its space. Hover the top dash to bring it back.")
             checked: panel.prefs.autoHide
             onToggled: (c) => panel.prefs.autoHide = c
         }

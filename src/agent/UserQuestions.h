@@ -76,4 +76,28 @@ QString formatAnswers(const QList<Question> &questions, const QList<Answer> &ans
 // One line for the trace row / approval-style title.
 QString summary(const QList<Question> &questions);
 
+// ---- answers given out loud ------------------------------------------------------
+// In a voice conversation the user answers in words: "the second one", "PDF please",
+// "yes, go ahead". These turn what they said into the same Answer / decision the cards
+// produce. They only ever pick among the options on offer or pass the user's own words
+// along as text; a spoken sentence can never select something that was not offered.
+
+// The best option(s) for `said` (an ordinal, a number, or words from a label); when no
+// option fits, the words themselves become the user's own answer.
+Answer matchSpoken(const Question &q, const QString &said);
+// Several questions answered in one go: parts split by ";" or new lines go to the
+// questions in order; one part answers every question.
+QList<Answer> matchSpokenAll(const QList<Question> &questions, const QString &said);
+
+enum class Decision { Unclear, Approve, Deny, ApproveAlways };
+// "yes", "go ahead" -> Approve; "no", "don't" -> Deny; "yes, always" -> ApproveAlways.
+Decision spokenDecision(const QString &said);
+
+// The questions as a person would read them out: "Which format? Options: PDF, Word, or text."
+QString spokenForm(const QList<Question> &questions);
+
+// The option to pick when nobody can be asked (auto-approve): the one labelled
+// "(Recommended)", else the first.
+int defaultOption(const Question &q);
+
 } // namespace uq

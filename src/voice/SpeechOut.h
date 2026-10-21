@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include "SpeechPlayer.h"
+#include "StreamingPlayer.h"
 
 class QNetworkReply;
 
@@ -20,9 +21,13 @@ class QNetworkReply;
 //    through PowerShell, elsewhere espeak-ng/espeak when installed. The text goes
 //    to the speech program on its standard input, never into a command line, so
 //    nothing in a reply can be run as a command. Nothing leaves the computer.
-//  * "google": Google Cloud Text-to-Speech (https://texttospeech.googleapis.com).
-//    The spoken text is sent to Google with the user's API key; the audio comes
-//    back as WAV and is played here.
+//  * "google": Gemini TTS through Google AI Studio
+//    (https://generativelanguage.googleapis.com). The spoken text is sent to
+//    Google with the user's AI Studio API key; the audio comes back as WAV and
+//    is played here.
+//  * "deepgram": Deepgram Aura-2 voices through the Deepgram text-to-speech API
+//    (https://api.deepgram.com). The spoken text is sent to Deepgram with the user's
+//    API key; the audio comes back as WAV and is played here.
 //  * "kokoro": a Kokoro TTS server (Kokoro-FastAPI or any server with an
 //    OpenAI-style /v1/audio/speech), normally on this computer, so the text stays
 //    here. https is required for anything that is not this computer.
@@ -37,13 +42,20 @@ class SpeechOut : public QObject
     Q_PROPERTY(bool available READ available NOTIFY configChanged)
     Q_PROPERTY(QString problem READ problem NOTIFY configChanged)
     Q_PROPERTY(bool speaking READ speaking NOTIFY speakingChanged)
-    // "system" | "google" | "kokoro"
+    // "system" | "google" | "deepgram" | "kokoro"
     Q_PROPERTY(QString engine READ engine WRITE setEngine NOTIFY configChanged)
     Q_PROPERTY(QString googleKey READ googleKey WRITE setGoogleKey NOTIFY configChanged)
     Q_PROPERTY(QString googleVoice READ googleVoice WRITE setGoogleVoice NOTIFY configChanged)
+    Q_PROPERTY(QString deepgramKey READ deepgramKey WRITE setDeepgramKey NOTIFY configChanged)
+    Q_PROPERTY(QString deepgramVoice READ deepgramVoice WRITE setDeepgramVoice NOTIFY configChanged)
     Q_PROPERTY(QString kokoroBase READ kokoroBase WRITE setKokoroBase NOTIFY configChanged)
     Q_PROPERTY(QString kokoroVoice READ kokoroVoice WRITE setKokoroVoice NOTIFY configChanged)
+    // Voices the Kokoro server advertises (GET /v1/audio/voices), for Settings.
+    Q_PROPERTY(QStringList kokoroVoices READ kokoroVoices NOTIFY kokoroVoicesChanged)
+    Q_PROPERTY(bool kokoroVoicesLoading READ kokoroVoicesLoading NOTIFY kokoroVoicesChanged)
+    Q_PROPERTY(QString kokoroVoicesProblem READ kokoroVoicesProblem NOTIFY kokoroVoicesChanged)
     // 0.7 .. 1.5, for Google, Kokoro and (through SSML prosody) the system voice.
+    // Gemini TTS has no rate parameter, so this is sent as a speaking-style hint.
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY configChanged)
     // How much of a reply is read (characters, 120 .. 2000).
     Q_PROPERTY(int maxChars READ maxChars WRITE setMaxChars NOTIFY configChanged)
@@ -70,6 +82,10 @@ public:
     void setGoogleKey(const QString &key);
     QString googleVoice() const { return m_googleVoice; }
     void setGoogleVoice(const QString &voice);
+    QString deepgramKey() const { return m_deepgramKey; }
+    void setDeepgramKey(const QString &key);
+    QString deepgramVoice() const { return m_deepgramVoice; }
+    void setDeepgramVoice(const QString &voice);
     QString kokoroBase() const { return m_kokoroBase; }
     void setKokoroBase(const QString &base);
     QString kokoroVoice() const { return m_kokoroVoice; }
@@ -87,7 +103,10 @@ public:
     static void defaultCommand(QString *program, QStringList *args);
     // Tests: where the Google request goes (the real one is fixed) and no real sound.
     void setGoogleEndpoint(const QString &url) { m_googleEndpoint = url; }
+    void setDeepgramApiBase(const QString &base) { m_deepgramBase = base; }
     SpeechPlayer *player() { return &m_player; }
+    // The Deepgram voice streams into this one, as the audio arrives.
+    StreamingPlayer *streamPlayer() { return &m_stream; }
 
     // Say a reply (summarised). Does nothing when off or unavailable. A new one replaces the old.
     Q_INVOKABLE void speakReport(const QString &reply);
@@ -95,17 +114,27 @@ public:
     Q_INVOKABLE void say(const QString &line);
     // Say it even when the setting is off (the Settings "Test voice" button).
     Q_INVOKABLE void test();
+    // The same, with the Deepgram voice whatever engine is chosen (Settings > Deepgram).
+    Q_INVOKABLE void previewDeepgram();
+    // What would be read aloud for this reply (the short summary, no code or links).
+    Q_INVOKABLE QString summary(const QString &reply) const;
     Q_INVOKABLE void stop();
-    // What the settings shows about the three voices: {id: {ready, detail}}.
+    // What the settings shows about the voices: {id: {ready, detail}}.
     Q_INVOKABLE QVariantMap engineStatuses() const;
+
+    // The voices the Kokoro server lists, fetched with GET /v1/audio/voices.
+    QStringList kokoroVoices() const { return m_kokoroVoices; }
+    bool kokoroVoicesLoading() const { return !m_voicesReply.isNull(); }
+    QString kokoroVoicesProblem() const { return m_kokoroVoicesProblem; }
+    Q_INVOKABLE void refreshKokoroVoices();
 
     // ---- pure helpers (unit tested) ----------------------------------------------
     // The URL of a Kokoro server's speech endpoint ("" if the address is unusable).
     static QString kokoroUrl(const QString &base);
+    // The URL of its voice list endpoint ("" if the address is unusable).
+    static QString kokoroVoicesUrl(const QString &base);
     // Why a Kokoro address cannot be used ("" if it can): https, or this computer.
     static QString kokoroAddressProblem(const QString &base);
-    // "en-US-Neural2-F" -> "en-US".
-    static QString googleLanguage(const QString &voice);
     // Splits spoken text at sentence boundaries for pipelined synthesis:
     // short fragments merge into the next chunk, and no chunk exceeds
     // ~320 characters, so the first sound starts after one sentence.
@@ -115,14 +144,22 @@ signals:
     void configChanged();
     void speakingChanged();
     void errorChanged();
+    void kokoroVoicesChanged();
 
 private:
-    void start(const QString &text, bool force = false);
+    void start(const QString &text, bool force = false, const QString &engineOverride = QString());
+    QString problemFor(const QString &engine) const;
     void startSystem(const QString &text);
     // Cloud voices speak in sentence chunks: chunk i+1 is synthesized while
     // chunk i plays, so time-to-first-sound is one sentence's synthesis.
     void beginPipeline(const QString &text);
     void synthesizeNext();
+    // Deepgram speaks sentence by sentence straight into a streaming player: the first
+    // sound starts when the first bytes arrive, not when the whole sentence is ready.
+    void beginDeepgramStream(const QString &text);
+    void streamNextChunk();
+    void onStreamFailure(const QString &why);
+    void stopStream();
     void onChunkAudio(const QByteArray &pcm, int rate, int channels);
     void onPlayerChunkFinished();
     QString remainingSpeech() const;   // current chunk + everything unsaid
@@ -136,6 +173,15 @@ private:
     QStringList m_args;
     QNetworkAccessManager m_nam;
     QPointer<QNetworkReply> m_reply;
+    QPointer<QNetworkReply> m_voicesReply;
+    StreamingPlayer m_stream;
+    QPointer<QNetworkReply> m_streamReply;
+    QStringList m_streamChunks;
+    QString m_streamCurrent;
+    QByteArray m_streamOdd;
+    bool m_streaming = false;
+    QStringList m_kokoroVoices;
+    QString m_kokoroVoicesProblem;
     SpeechPlayer m_player;
     quint64 m_generation = 0;
     bool m_synthesizing = false;
@@ -150,9 +196,13 @@ private:
     bool m_lastSpeaking = false;
     bool m_enabled = false;
     QString m_engine = QStringLiteral("system");
+    QString m_activeEngine = QStringLiteral("system");   // the engine the current utterance uses
     QString m_googleKey;
-    QString m_googleVoice = QStringLiteral("en-US-Neural2-F");
-    QString m_googleEndpoint = QStringLiteral("https://texttospeech.googleapis.com/v1/text:synthesize");
+    QString m_googleVoice = QStringLiteral("Kore");
+    QString m_deepgramKey;
+    QString m_deepgramVoice = QStringLiteral("aura-2-thalia-en");
+    QString m_deepgramBase = QStringLiteral("https://api.deepgram.com");
+    QString m_googleEndpoint = QStringLiteral("https://generativelanguage.googleapis.com/v1beta/interactions");
     QString m_kokoroBase = QStringLiteral("http://127.0.0.1:8880");
     QString m_kokoroVoice = QStringLiteral("af_heart");
     double m_speed = 1.0;

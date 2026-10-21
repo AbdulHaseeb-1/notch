@@ -9,13 +9,17 @@ SettingsPage {
     SettingsSectionHeader {
         title: qsTr("Voice input")
         rightText: Voice.enabled ? (Voice.configured ? qsTr("Ready") : qsTr("Needs setup")) : qsTr("Off")
-        description: qsTr("Hold a key or the microphone button and talk. Speech is turned into text on this computer by Moonshine.")
+        description: Voice.engineIsLocal
+                     ? qsTr("Hold a key or the microphone button and talk. Speech is turned into text on this computer by Moonshine.")
+                     : qsTr("Hold a key or the microphone button and talk. Each clip is turned into text by Deepgram.")
     }
 
     SettingsGroupCard {
         SettingsToggleRow {
             label: qsTr("Push-to-talk")
-            sub: qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold and turned into text by a model on this computer. It is kept in memory only, never sent anywhere and never stored.")
+            sub: Voice.engineIsLocal
+                 ? qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold and turned into text by a model on this computer. It is kept in memory only, never sent anywhere and never stored.")
+                 : qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold, sent to Deepgram to be transcribed, kept in memory only and never stored on this computer.")
             checked: panel.prefs.buddyVoiceEnabled
             onToggled: (c) => panel.prefs.buddyVoiceEnabled = c
         }
@@ -51,7 +55,8 @@ SettingsPage {
 
             Text {
                 width: parent.width
-                text: qsTr("Speech to text: %1, on this computer").arg(Voice.engine)
+                text: Voice.engineIsLocal ? qsTr("Speech to text: %1, on this computer").arg(Voice.engine)
+                                          : qsTr("Speech to text: %1 (cloud service)").arg(Voice.engine)
                 color: Theme.ink
                 font.family: Theme.font
                 font.pixelSize: Theme.fontBase
@@ -61,7 +66,8 @@ SettingsPage {
             Text {
                 width: parent.width
                 text: !Voice.configured ? Voice.problem
-                      : Voice.ready ? qsTr("Ready. English only. Nothing you say leaves this computer.")
+                      : Voice.ready ? (Voice.engineIsLocal ? qsTr("Ready. English only. Nothing you say leaves this computer.")
+                                                           : qsTr("Ready. Change the engine, model and language in the Deepgram page."))
                       : qsTr("Starting the speech model…")
                 color: Voice.configured ? Theme.textDim : Theme.warning
                 font.family: Theme.font
@@ -72,6 +78,7 @@ SettingsPage {
                 width: parent.width
                 spacing: 8
                 SettingsPillButton {
+                    visible: Voice.engineIsLocal
                     icon: "folder"
                     label: qsTr("Open models folder")
                     onClicked: Voice.openModelFolder()
@@ -216,7 +223,7 @@ SettingsPage {
             Repeater {
                 model: [
                     { id: "system", name: qsTr("This computer") },
-                    { id: "google", name: qsTr("Google Cloud") },
+                    { id: "google", name: qsTr("Google AI Studio") },
                     { id: "kokoro", name: qsTr("Kokoro") }
                 ]
                 delegate: Text {
@@ -251,18 +258,20 @@ SettingsPage {
     Component.onCompleted: page.refreshModels()
 
     SettingsSectionHeader {
-        visible: panel.prefs.buddyVoiceEnabled
+        visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled)
         title: qsTr("Wake word")
         rightText: !panel.prefs.buddyWakeEnabled ? qsTr("Off") : (Wake.state === "listening" ? qsTr("Listening") : (Wake.state === "awaiting" ? qsTr("Heard you") : qsTr("On")))
         description: qsTr("Say “Hey Buddy” instead of clicking. The phrase and your request are both recognised on this computer.")
     }
 
     SettingsGroupCard {
-        visible: panel.prefs.buddyVoiceEnabled
+        visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled)
         SettingsToggleRow {
-            visible: panel.prefs.buddyVoiceEnabled
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled)
             label: qsTr("Wake word")
-            sub: Wake.detector === "speech"
+            sub: panel.prefs.buddyLiveEnabled
+                 ? qsTr("Say “Hey Buddy” (or “Hey Buddy, open Notepad”) and a live conversation starts. Only the phrase is listened for on this computer; nothing goes to Deepgram until you have said it. After Buddy answers it keeps listening for the time you set in the Deepgram page, then closes the microphone and waits for the phrase again.")
+                 : Wake.detector === "speech"
                  ? qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is turned into text on this computer, compared with the phrase and forgotten.")
                  : qsTr("Say “Hey Buddy” and Buddy starts listening, then does what you ask and reports back. The phrase and your request are both recognised on this computer: nothing is sent anywhere. The microphone stays open while this is on (Windows shows its microphone icon).")
             checked: panel.prefs.buddyWakeEnabled
@@ -270,7 +279,7 @@ SettingsPage {
         }
 
         SettingsLabeledSlider {
-            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
             label: qsTr("Sensitivity")
             decimals: 2
             // Left: strict (fewer false wake-ups). Right: easy (wakes on a quieter or less clear “Hey Buddy”).
@@ -279,7 +288,7 @@ SettingsPage {
         }
 
         Flow {
-            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
             width: parent.width
             spacing: 8
             SettingsPillButton {
@@ -290,7 +299,7 @@ SettingsPage {
         }
 
         SettingsFieldBox {
-            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.detector === "speech"
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled && Wake.detector === "speech"
             width: parent.width
             label: qsTr("Wake phrase")
             placeholder: "hey buddy"
@@ -300,7 +309,7 @@ SettingsPage {
         }
 
         Text {
-            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled
             width: parent.width
             text: Wake.blocked.length > 0 ? Wake.blocked
                   : Wake.error.length > 0 ? Wake.error
@@ -318,7 +327,7 @@ SettingsPage {
 
         Text {
             // The local detector could not start: say why, and that the speech service is checking instead.
-            visible: panel.prefs.buddyVoiceEnabled && panel.prefs.buddyWakeEnabled && Wake.localProblem.length > 0
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled && Wake.localProblem.length > 0
             width: parent.width
             text: qsTr("Local detector unavailable: %1").arg(Wake.localProblem)
             color: Theme.warning
@@ -330,7 +339,7 @@ SettingsPage {
 
     SettingsSectionHeader {
         title: qsTr("Spoken answers")
-        rightText: !panel.prefs.buddySpeakReports ? qsTr("Off") : ({ system: qsTr("This computer"), google: qsTr("Google Cloud"), kokoro: qsTr("Kokoro") })[panel.prefs.buddyTtsEngine] || ""
+        rightText: !panel.prefs.buddySpeakReports ? qsTr("Off") : ({ system: qsTr("This computer"), google: qsTr("Google AI Studio"), kokoro: qsTr("Kokoro") })[panel.prefs.buddyTtsEngine] || ""
         description: qsTr("Buddy reads a short summary of each answer out loud: never code or links.")
     }
 
@@ -367,7 +376,8 @@ SettingsPage {
                 Repeater {
                     model: [
                         { id: "system", name: qsTr("This computer") },
-                        { id: "google", name: qsTr("Google Cloud") },
+                        { id: "google", name: qsTr("Google AI Studio") },
+                        { id: "deepgram", name: qsTr("Deepgram") },
                         { id: "kokoro", name: qsTr("Kokoro") }
                     ]
                     delegate: SettingsChip {
@@ -397,9 +407,9 @@ SettingsPage {
                 spacing: 10
                 SettingsFieldBox {
                     width: parent.width
-                    label: qsTr("Google Cloud API key")
+                    label: qsTr("Google AI Studio API key")
                     placeholder: qsTr("Paste your API key")
-                    hint: qsTr("Needs the Cloud Text-to-Speech API enabled. The spoken text is sent to Google. Stored locally in Noch settings.")
+                    hint: qsTr("Create a key at aistudio.google.com/apikey. Uses Gemini TTS; the spoken text is sent to Google. Stored locally in Noch settings.")
                     secret: true
                     mono: true
                     text: panel.prefs.buddyTtsGoogleKey
@@ -408,8 +418,8 @@ SettingsPage {
                 SettingsFieldBox {
                     width: parent.width
                     label: qsTr("Voice")
-                    placeholder: "en-US-Neural2-F"
-                    hint: qsTr("Any Google voice name, such as en-US-Studio-O or en-GB-Neural2-A.")
+                    placeholder: "Kore"
+                    hint: qsTr("A Gemini TTS voice name, such as Kore, Puck, Zephyr or Charon.")
                     mono: true
                     text: panel.prefs.buddyTtsGoogleVoice
                     onEdited: (v) => panel.prefs.buddyTtsGoogleVoice = v
@@ -417,9 +427,48 @@ SettingsPage {
             }
 
             Column {
+                visible: panel.prefs.buddyTtsEngine === "deepgram"
+                width: parent.width
+                spacing: 6
+                Text {
+                    width: parent.width
+                    text: Speech.available
+                          ? qsTr("Deepgram Aura voice %1. The key and the voice are set in the Deepgram page; the text is sent to Deepgram.").arg(panel.prefs.buddyLiveVoice)
+                          : Speech.problem
+                    color: Speech.available ? Theme.textDim : Theme.warning
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontSm
+                    wrapMode: Text.WordWrap
+                }
+                Flow {
+                    width: parent.width
+                    SettingsPillButton {
+                        icon: "settings"
+                        label: qsTr("Open Deepgram settings")
+                        onClicked: panel.page = "deepgram"
+                    }
+                }
+            }
+
+            Column {
+                id: kokoroSettings
                 visible: panel.prefs.buddyTtsEngine === "kokoro"
                 width: parent.width
                 spacing: 10
+
+                function loadVoices() {
+                    if (visible && Speech.kokoroVoices.length === 0 && !Speech.kokoroVoicesLoading)
+                        Speech.refreshKokoroVoices()
+                }
+                Component.onCompleted: loadVoices()
+                onVisibleChanged: loadVoices()
+
+                Timer {
+                    id: voicesRetry
+                    interval: 700
+                    onTriggered: Speech.refreshKokoroVoices()
+                }
+
                 SettingsFieldBox {
                     width: parent.width
                     label: qsTr("Kokoro server")
@@ -427,15 +476,63 @@ SettingsPage {
                     hint: qsTr("A Kokoro TTS server running on this computer (for example Kokoro-FastAPI). Speech is only sent to this computer or over https.")
                     mono: true
                     text: panel.prefs.buddyTtsKokoroBase
-                    onEdited: (v) => panel.prefs.buddyTtsKokoroBase = v
+                    onEdited: (v) => {
+                        panel.prefs.buddyTtsKokoroBase = v
+                        voicesRetry.restart()
+                    }
+                    onAccepted: Speech.refreshKokoroVoices()
                 }
                 SettingsFieldBox {
                     width: parent.width
                     label: qsTr("Voice")
                     placeholder: "af_heart"
+                    hint: qsTr("Type any voice name, or pick one from the server's list below.")
                     mono: true
                     text: panel.prefs.buddyTtsKokoroVoice
                     onEdited: (v) => panel.prefs.buddyTtsKokoroVoice = v
+                }
+
+                Row {
+                    width: parent.width
+                    spacing: 8
+
+                    Text {
+                        width: Math.max(0, parent.width - refreshVoices.width - parent.spacing)
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: Speech.kokoroVoicesLoading
+                              ? qsTr("Looking for voices on this server…")
+                              : Speech.kokoroVoicesProblem.length > 0
+                                ? Speech.kokoroVoicesProblem
+                                : Speech.kokoroVoices.length > 0
+                                  ? qsTr("%1 voices available. Pick one below, or type another name.").arg(Speech.kokoroVoices.length)
+                                  : qsTr("Load the voices this server offers.")
+                        color: Speech.kokoroVoicesProblem.length > 0 ? Theme.warning : Theme.textFaint
+                        font.family: Theme.font
+                        font.pixelSize: Theme.fontSm
+                        wrapMode: Text.WordWrap
+                    }
+                    SettingsPillButton {
+                        id: refreshVoices
+                        icon: "reset"
+                        label: Speech.kokoroVoicesLoading ? qsTr("Loading…") : qsTr("Refresh")
+                        enabled: !Speech.kokoroVoicesLoading
+                        onClicked: Speech.refreshKokoroVoices()
+                    }
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 8
+                    visible: Speech.kokoroVoices.length > 0
+                    Repeater {
+                        model: Speech.kokoroVoices
+                        delegate: SettingsChip {
+                            required property string modelData
+                            text: modelData
+                            selected: panel.prefs.buddyTtsKokoroVoice === modelData
+                            onPicked: panel.prefs.buddyTtsKokoroVoice = modelData
+                        }
+                    }
                 }
             }
 

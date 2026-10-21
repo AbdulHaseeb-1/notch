@@ -37,7 +37,7 @@ MouseArea {
     onCanceled: self.root.resizing = false
 
     readonly property bool showBar: containsMouse || pressed
-        || (pillHovered && !self.root.tipVisible && self.root.menuIndex < 0)
+        || (pillHovered && !self.root.tipVisible)
 
     // Expose hovered state name used by root? root references grip.containsMouse already via id.
     Rectangle {

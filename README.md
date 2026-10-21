@@ -1,13 +1,17 @@
 # Noch
 
-A dynamic notch for Windows: a black pill at the top of the screen that holds
-your apps, tucks itself away and drops back down when you need it.
+A music pill for the top edge of your Windows desktop, with a desktop buddy you
+can talk to. The pill sits in the middle of the top edge on a clear desktop,
+tucks itself away while an app window sits in its space, and drops back down when
+you push the pointer to the top of the screen.
 
 ## Using it
 
-- **Auto-hide** - after a moment the notch slides up and leaves a 5% sliver at
-  the top edge. Push the pointer to the top of the screen over that sliver and it
-  springs back down. Turn this off in Settings to keep it pinned.
+- **Auto-hide** - the pill stays out while the top of the desktop is clear. When
+  an app window (not a tool window or an overlay) covers its space, or a
+  full-screen app is in front, it slides up and leaves a small dash at the top
+  edge. Push the pointer onto that dash and it springs back down. Turn auto-hide
+  off in Settings to keep it out all the time.
 - **Palette** - Ctrl + Alt + Space (from anywhere) drops the notch with a search
   field: type to launch any installed app, switch to an open window, do quick
   maths (`1+2*3` is `7`; Enter copies the result), search the web, or run a
@@ -17,8 +21,9 @@ your apps, tucks itself away and drops back down when you need it.
   then Ctrl + Alt + P) and Settings says which shortcut is live.
 - **Resize** - drag the small handle under the notch, Ctrl + scroll on the
   notch, or use S / M / L / XL and the slider in Settings (70%-160%).
-- **Hub** - click the clock to open the hub: **Timer** and
-  **Clipboard** pages in one card.
+- **Hub** - the **Timer** and **Clipboard** pages in one card. Open it from the
+  palette (type "focus timer" or "clipboard"), by clicking the timer pill while a
+  session runs, or by asking Buddy.
   - *Timer*: a focus timer (5 / 15 / 25 / 45 / 60 min, `+` adds five). It keeps
     running with the panel closed; a live pill beside the music pill shows a
     progress ring and the time left, and pulses with a toast when the session
@@ -28,34 +33,28 @@ your apps, tucks itself away and drops back down when you need it.
     turn it on**, text only, kept in memory (nothing is written to disk), gone
     when Noch quits, and copies that password managers mark as private are
     skipped.
-- **Music** - the note beside the notch is Noch's own player. Click it to open
-  the transport bar (previous, play or pause, next, repeat, volume); the volume
-  icon opens a slider, and the note at the start of the bar opens the full
-  player. While music plays the pill shrinks to a small gradient level
-  indicator. Scroll on the pill to change volume.
-  Drop songs or a folder onto the notch, or use **Add music**. The queue, the
-  last track and the volume are remembered.
-  Noch also follows Windows itself: when Spotify, a browser or anything else
-  plays, the pill and the card show that song and the transport buttons drive
-  it (the header names the app; repeat and volume stay with Noch's own player).
-- **Apps** - icons are read from the real installed programs and shown in black
-  and white (switchable). On first run Noch looks for Claude, Cursor, VS Code,
-  Chrome, Notion, Figma, Spotify, Discord and a few others.
-  - Click to open, right-click for Open / Show in folder / Move / Unpin.
-  - Drag any app, shortcut or folder onto the notch to pin it, or use
-    **Add app** in Settings.
-  - A white dot under an icon means the app is running.
+- **Music** - the pill is Noch's own player. Click it to open the transport bar
+  (previous, play or pause, next, repeat, volume); the volume icon opens a
+  slider. While music plays the pill shrinks to a small gradient level
+  indicator. Scroll on the pill to change volume; right-click opens Settings.
+  There is no separate player panel: drop songs or a folder onto the pill, or
+  just ask Buddy ("play some music", "skip this", "turn it down", "play Blue
+  Train"). Buddy's `music` tool drives whatever the pill shows: Noch's own queue,
+  or the app Windows reports as playing (Spotify, a browser ...). It can queue
+  files and folders from your Music folder on its own and asks before queueing
+  anything outside it. The queue, the last track and the volume are remembered.
+  A switch in Settings > Agent & tools turns the tool off.
 - **Games and full-screen apps** - while a full-screen app (a game, a video, a
-  presentation) is in front, the notch stays tucked away even when the pointer
+  presentation) is in front, the pill stays tucked away even when the pointer
   touches the top edge, so it never drops over the action. Ctrl + Alt + Space
   still summons it. Turn **Keep quiet over games** off in Settings to ignore
   this.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
   focused). Esc or clicking elsewhere closes it. **Blur behind (beta)** blurs the desktop behind the
   glass (see below); it is off by default.
-  Settings has a sidebar of categories (General, Apps, Buddy, Look & glow,
-  Voice, AI model, Agent & tools, Safety) with a search box that narrows them
-  by what they contain (Ctrl + F), and Ctrl + Tab or Ctrl + 1..8 to move between them.
+  Settings has a sidebar of categories (General, Buddy, Look & glow, Voice, Deepgram,
+  AI model, Agent & tools, Safety) with a search box that narrows them by what
+  they contain (Ctrl + F), and Ctrl + Tab or Ctrl + 1..8 to move between them.
 - **Look & glow** - Buddy's ring comes in eight styles (Neon, Aurora, Comet, Orbit,
   Beads, Pulse, Prism, Halo) with thickness, speed and colour, plus a coloured
   glow or a pool of light under it. It shows when it is listening (a ribbon of
@@ -165,14 +164,14 @@ imports and type names stay unchanged. `CMakeLists.txt` sets this up with
 
 | Area | Key entry points |
 | --- | --- |
-| Notch shell | `qml/Main.qml`, `qml/components/{Glass,Flyout,DockItem,StatusBlock}.qml` |
+| Notch shell | `qml/Main.qml`, `qml/components/{Glass,Flyout}.qml`, `src/platform/FullscreenWatcher.*` (full-screen and "an app is in the pill's space") |
 | Settings | `qml/panels/SettingsPanel.qml` (sidebar shell), `qml/panels/settings/*` (controls), `qml/panels/settings/pages/*` (one file per page), `qml/flyouts/SettingsFlyout.qml` |
 | Buddy ring, glow, listening and speaking | `qml/buddy/fx/*` |
 | Hub | `qml/panels/{HubPanel,FocusTimer,TimerView,TimerPill,ClipboardView}.qml` |
-| Music | `qml/panels/{MusicPanel,NowPlaying}.qml`, `qml/flyouts/MusicFlyout.qml` |
+| Music | `qml/panels/NowPlaying.qml` (the pill), `src/media/{MusicPlayer,MediaHub,MusicAgentBackend}.*`, `src/agent/MusicBackend.h` (Buddy's `music` tool) |
 | Palette | `qml/panels/PaletteCard.qml`, `qml/flyouts/PaletteFlyout.qml` |
 | Buddy | `qml/buddy/*`, `src/agent/{BuddyProvider,AgentPolicy,ComputerUse}*` |
-| Voice | `src/voice/*` |
+| Voice (incl. Deepgram live conversation, see [docs/deepgram.md](docs/deepgram.md)) | `src/voice/*` |
 | Agent trace | `qml/agent/*` |
 | Platform | `src/platform/*` |
 
@@ -217,7 +216,7 @@ microphone and a fake speech engine), `tst_wakedetector` (the openWakeWord
 pipeline against the reference implementation's scores; needs ONNX Runtime, set
 `NOCH_ORT_LIBRARY` to its path, skipped otherwise) and `tst_moonshine` (the real Moonshine Tiny model on recorded speech; needs ONNX Runtime
 and the model files, set `NOCH_ORT_LIBRARY` and `NOCH_MOONSHINE_DIR`, skipped otherwise)
-and `tst_speechout` (system, Google Cloud and Kokoro voices against a fake server) cover the
+and `tst_speechout` (system, Google AI Studio Gemini TTS and Kokoro voices against a fake server) cover the
 wake word, transcription and spoken reports. `tst_userquestions`, `tst_runjournal`,
 `tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
 the question, undo, saved-rule, instruction/slash-command, chat-session and voice

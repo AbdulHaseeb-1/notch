@@ -468,6 +468,9 @@ QString WakeWord::blockedReason() const
 {
     if (!m_enabled)
         return QString();
+    // A live conversation takes over after the phrase, so only the detector has to work.
+    if (m_handsOff && usingLocal())
+        return QString();
     if (!m_voice || !m_voice->enabled())
         return tr("Turn on voice input first.");
     if (!m_voice->configured())
@@ -475,6 +478,10 @@ QString WakeWord::blockedReason() const
     // The local detector needs nothing more: the phrase is the model's.
     if (usingLocal())
         return QString();
+    // Without it the wake word would send everything the microphone hears to the speech
+    // service to check for the phrase. A cloud service never gets that.
+    if (!m_voice->engineIsLocal())
+        return tr("The wake word listens all the time, so it needs the on-device detector when speech to text is a cloud service.");
     return wake::phraseProblem(m_phrase);
 }
 
@@ -496,6 +503,15 @@ void WakeWord::setCapture(std::unique_ptr<AudioCapture> capture)
     closeMic();
     m_capture = std::move(capture);
     refresh();
+}
+
+void WakeWord::setHandsOff(bool on)
+{
+    if (on == m_handsOff)
+        return;
+    m_handsOff = on;
+    refresh();
+    emit configChanged();
 }
 
 void WakeWord::setPaused(bool paused)
@@ -529,8 +545,8 @@ bool WakeWord::shouldListen() const
 
 void WakeWord::refresh()
 {
-    if (m_enabled && m_local == Local::Untried && localWanted() && m_voice && m_voice->enabled()
-        && m_voice->configured())
+    if (m_enabled && m_local == Local::Untried && localWanted()
+        && (m_handsOff || (m_voice && m_voice->enabled() && m_voice->configured())))
         startLocal();
     if (shouldListen()) {
         if (!m_micOpen)
@@ -660,7 +676,7 @@ void WakeWord::onTranscript(const VoiceInput::Transcription &t, Mode mode)
     emit woke();
     if (!m.rest.isEmpty())
         deliver(m.rest);
-    else
+    else if (!m_handsOff)
         enterAwaiting();
 }
 
@@ -853,7 +869,8 @@ void WakeWord::onWorkerScore(float best, quint64 generation)
     m_lastWakeMs = now;
     resetLocalDetector();       // what it just heard must not wake it a second time
     emit woke();
-    enterAwaiting();            // the request that follows is what is transcribed by Moonshine
+    if (!m_handsOff)
+        enterAwaiting();        // the request that follows is what is transcribed by Moonshine
 }
 
 void WakeWord::fail(const QString &message)

@@ -1,9 +1,11 @@
 #include "AgentPolicyInternal.h"
 #include "ComputerUseKeys.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QStringList>
 
 using namespace noch::agentpolicy;
@@ -255,6 +257,33 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
                 return ask(QStringLiteral("ask:sensitive-read"), QStringLiteral("Searching %1.").arg(cred));
         }
         return allow(QStringLiteral("safe-tool"));
+    }
+
+    // The music pill. Transport and volume change nothing on disk. Queueing a file
+    // or folder reads it, so anything outside the user's own Music folder asks.
+    if (tool == QLatin1String("music")) {
+        const QString action = input.value(QStringLiteral("action")).toString().trimmed().toLower();
+        if (action == QLatin1String("status") || action == QLatin1String("queue"))
+            return allow(QStringLiteral("read-only"));
+        if (plan)
+            return deny(QStringLiteral("mode:plan"), QStringLiteral("Plan mode does not play music."));
+        if (action != QLatin1String("add"))
+            return allow(QStringLiteral("media"));
+        const QString path = input.value(QStringLiteral("path")).toString().trimmed();
+        if (path.isEmpty())
+            return allow(QStringLiteral("media"));   // the executor rejects an empty path
+        if (isPrivatePath(path))
+            return deny(QStringLiteral("deny:private-path"),
+                        QStringLiteral("Blocked: that is Noch's own settings or data."));
+        const QString music = QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::MusicLocation));
+        const QString abs = QDir::cleanPath(absolutePath(path));
+        const bool inMusic = !music.isEmpty()
+            && (abs.compare(music, Qt::CaseInsensitive) == 0
+                || abs.startsWith(music + QLatin1Char('/'), Qt::CaseInsensitive));
+        if (inMusic && !m_tainted)
+            return allow(QStringLiteral("music-folder"));
+        return ask(QStringLiteral("ask:music-add"),
+                   QStringLiteral("Adding %1 to the music queue.").arg(QFileInfo(abs).fileName().isEmpty() ? abs : QFileInfo(abs).fileName()));
     }
 
     // Shows the user their own screen in the chat; the image never goes to the model.

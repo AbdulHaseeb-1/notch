@@ -200,6 +200,90 @@ SettingsPage {
 
         SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
 
+        SettingsToggleRow {
+            visible: panel.prefs.buddyAgentMode
+            label: qsTr("Control the music pill")
+            sub: qsTr("Buddy can play, pause, skip and change the volume of the music pill when you ask, and queue songs from your Music folder. Files outside your Music folder are asked about first.")
+            checked: panel.prefs.buddyAllowMusic
+            onToggled: (c) => panel.prefs.buddyAllowMusic = c
+        }
+
+        Column {
+            visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowMusic
+            width: parent.width
+            spacing: 8
+
+            Text {
+                width: parent.width
+                text: qsTr("Songs from YouTube")
+                color: Theme.ink
+                font.family: Theme.font
+                font.pixelSize: Theme.fontMd
+                font.weight: Font.DemiBold
+            }
+            Text {
+                width: parent.width
+                text: Youtube.available
+                      ? qsTr("Ready%1. Ask Buddy to play any song or artist and it plays in the music pill: no browser opens. It uses yt-dlp, which fetches the audio from YouTube.")
+                            .arg(Youtube.version.length > 0 ? " (yt-dlp " + Youtube.version + ")" : "")
+                      : qsTr("Buddy can play any song from YouTube in the music pill with no browser, using the free yt-dlp program. It is not installed yet.")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            Flow {
+                width: parent.width
+                spacing: 8
+                SettingsPillButton {
+                    primary: !Youtube.available
+                    icon: "down"
+                    label: Youtube.state === "installing" ? qsTr("Installing…") : (Youtube.available ? qsTr("Reinstall") : qsTr("Install yt-dlp"))
+                    enabled: Youtube.state === "idle"
+                    onClicked: Youtube.install()
+                }
+                SettingsPillButton {
+                    visible: Youtube.available
+                    icon: "reset"
+                    label: Youtube.state === "updating" ? qsTr("Updating…") : qsTr("Update")
+                    enabled: Youtube.state === "idle"
+                    onClicked: Youtube.update()
+                }
+                SettingsPillButton {
+                    icon: "folder"
+                    label: qsTr("Open folder")
+                    onClicked: Youtube.openToolsFolder()
+                }
+            }
+            Text {
+                visible: Youtube.message.length > 0
+                width: parent.width
+                text: Youtube.message
+                color: Youtube.messageIsError ? Theme.warning : Theme.success
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                width: parent.width
+                text: qsTr("Install downloads the official yt-dlp release from github.com/yt-dlp and checks it against the checksum published with it before using it. Nothing is downloaded unless you press the button. yt-dlp needs to be kept up to date: YouTube changes often.")
+                color: Theme.textFaint
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            SettingsFieldBox {
+                width: parent.width
+                label: qsTr("Use a copy of yt-dlp from somewhere else")
+                placeholder: qsTr("Leave empty to use the installed one")
+                mono: true
+                text: panel.prefs.buddyYtDlpPath
+                onEdited: (v) => panel.prefs.buddyYtDlpPath = v.trim()
+            }
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
+
         Column {
             visible: panel.prefs.buddyAgentMode
             width: parent.width
@@ -259,6 +343,98 @@ SettingsPage {
             sub: qsTr("Let Buddy hand research to a web-only specialist and code work to a files-and-shell specialist, each with a smaller toolset.")
             checked: panel.prefs.buddyHandoffs
             onToggled: (c) => panel.prefs.buddyHandoffs = c
+        }
+    }
+
+    SettingsSectionHeader {
+        visible: panel.prefs.buddyAgentMode
+        title: qsTr("Request classifier (JEV)")
+        rightText: panel.prefs.buddyClassifierEnabled ? panel.prefs.buddyClassifierModel : qsTr("Off")
+    }
+
+    SettingsGroupCard {
+        visible: panel.prefs.buddyAgentMode
+
+        SettingsToggleRow {
+            label: qsTr("Classify each request first")
+            sub: qsTr("A small model labels what you asked (question, research, code, desktop) before Buddy starts, so it can pick the right specialist and ask before changing anything on a plain question. Your request text is sent to the address below, not to your chat provider. If it is slow or fails, Buddy just carries on without it.")
+            checked: panel.prefs.buddyClassifierEnabled
+            onToggled: (c) => { panel.prefs.buddyClassifierEnabled = c; panel.classifierEdited() }
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyClassifierEnabled }
+
+        Flow {
+            visible: panel.prefs.buddyClassifierEnabled
+            width: parent.width
+            spacing: 12
+
+            readonly property bool pair: width >= 520
+            readonly property real halfW: pair ? Math.floor((width - spacing) / 2) : width
+
+            SettingsFieldBox {
+                width: parent.halfW
+                label: qsTr("Base URL")
+                placeholder: "https://openrouter.ai/api/v1/systemone"
+                hint: qsTr("POST %1. An address ending in /systemone or /decisions is a decision model; any other is a chat endpoint.").arg(BuddyAgent.classifierUrl())
+                mono: true
+                text: panel.prefs.buddyClassifierBase
+                onEdited: (v) => { panel.prefs.buddyClassifierBase = v; panel.classifierEdited() }
+            }
+
+            SettingsFieldBox {
+                width: parent.halfW
+                label: qsTr("API key")
+                placeholder: qsTr("Uses your chat key")
+                hint: qsTr("Leave blank to reuse your chat provider's key when it is the same https host. Sent over https only.")
+                secret: true
+                mono: true
+                text: panel.prefs.buddyClassifierKey
+                onEdited: (v) => { panel.prefs.buddyClassifierKey = v; panel.classifierEdited() }
+            }
+
+            SettingsFieldBox {
+                width: parent.width
+                label: qsTr("Model")
+                placeholder: "inception/mercury-decide:free"
+                hint: qsTr("A decision model, e.g. inception/mercury-decide:free, respan/span-01-lite:free or jev-latest. Use Test JEV to check it answers.")
+                mono: true
+                text: panel.prefs.buddyClassifierModel
+                onEdited: (v) => { panel.prefs.buddyClassifierModel = v; panel.classifierEdited() }
+            }
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyClassifierEnabled }
+
+        Row {
+            visible: panel.prefs.buddyClassifierEnabled
+            width: parent.width
+            spacing: 12
+
+            SettingsPillButton {
+                id: classifierTestBtn
+                anchors.verticalCenter: parent.verticalCenter
+                icon: "wifi"
+                label: panel.classifierTestState === "testing" ? qsTr("Testing…") : qsTr("Test JEV")
+                primary: true
+                enabled: panel.classifierTestState !== "testing"
+                onClicked: panel.runClassifierTest()
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(0, parent.width - classifierTestBtn.width - 12)
+                text: panel.classifierTestMessage.length > 0
+                      ? panel.classifierTestMessage
+                      : qsTr("Sends a sample request and checks that the reply is a valid label.")
+                color: panel.classifierTestState === "ok" ? Theme.success
+                     : panel.classifierTestState === "failed" ? Theme.danger : Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+            }
         }
     }
 }

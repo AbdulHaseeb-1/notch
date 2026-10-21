@@ -1,5 +1,6 @@
 // Unit tests for the agent permission gate (src/AgentPolicy).
 #include <QtTest>
+#include <QStandardPaths>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -266,6 +267,45 @@ private slots:
         QCOMPARE(p.evaluate("str_replace_editor", edit("view", ws + "/id_rsa")).verdict, V::Ask);
         // Ordinary reads are still granted.
         QCOMPARE(p.evaluate("str_replace_editor", edit("view", ws + "/notes.txt")).verdict, V::Allow);
+    }
+
+    void musicTool()
+    {
+        AgentPolicy p;
+        const auto music = [](const QString &action, const QString &path = QString()) {
+            QJsonObject in{ { "action", action } };
+            if (!path.isEmpty())
+                in["path"] = path;
+            return in;
+        };
+        // transport, volume and reading the queue never ask
+        for (const char *a : { "status", "queue", "play", "pause", "next", "previous", "volume", "mute", "unmute", "play_track" })
+            QCOMPARE(p.evaluate("music", music(QString::fromLatin1(a))).verdict, V::Allow);
+
+        // queueing: the user's Music folder is fine, anything else asks, Noch's own data is refused
+        const QString musicDir = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+        if (!musicDir.isEmpty()) {
+            QCOMPARE(p.evaluate("music", music("add", musicDir)).verdict, V::Allow);
+            QCOMPARE(p.evaluate("music", music("add", musicDir + "/Album/song.mp3")).verdict, V::Allow);
+            // a sibling that merely starts with the same letters is not inside it
+            QCOMPARE(p.evaluate("music", music("add", musicDir + "-other/song.mp3")).verdict, V::Ask);
+        }
+        const AgentPolicy::Decision elsewhere = p.evaluate("music", music("add", QDir::homePath() + "/Downloads/stuff"));
+        QCOMPARE(elsewhere.verdict, V::Ask);
+        QCOMPARE(elsewhere.rule, QStringLiteral("ask:music-add"));
+
+        // plan mode: looking is fine, playing is not
+        p.setMode(AgentPolicy::Mode::Plan);
+        QCOMPARE(p.evaluate("music", music("status")).verdict, V::Allow);
+        QCOMPARE(p.evaluate("music", music("queue")).verdict, V::Allow);
+        QCOMPARE(p.evaluate("music", music("play")).verdict, V::Deny);
+        QCOMPARE(p.evaluate("music", music("add", QDir::homePath() + "/x")).verdict, V::Deny);
+
+        // once a prompt injection has been seen, even the Music folder asks
+        p.setMode(AgentPolicy::Mode::Default);
+        p.setTainted(true);
+        if (!musicDir.isEmpty())
+            QCOMPARE(p.evaluate("music", music("add", musicDir)).verdict, V::Ask);
     }
 
     void symlinkEscape()

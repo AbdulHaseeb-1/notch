@@ -121,6 +121,10 @@ class WakeWord : public QObject
     Q_OBJECT
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY configChanged)
     Q_PROPERTY(QString phrase READ phrase WRITE setPhrase NOTIFY configChanged)
+    // The request that follows the phrase is taken by something else (a live conversation
+    // starts on woke()): the wake word then does not wait for one, and needs no speech to
+    // text of its own, only the on-device detector.
+    Q_PROPERTY(bool handsOff READ handsOff WRITE setHandsOff NOTIFY configChanged)
     // "" when it can run (or is off), else why it cannot.
     Q_PROPERTY(QString blocked READ blockedReason NOTIFY configChanged)
     // "off" | "blocked" | "loading" | "paused" | "listening" | "awaiting" (the phrase was heard; what next?)
@@ -151,6 +155,8 @@ public:
 
     bool enabled() const { return m_enabled; }
     void setEnabled(bool on);
+    bool handsOff() const { return m_handsOff; }
+    void setHandsOff(bool on);
     QString phrase() const { return m_phrase; }
     void setPhrase(const QString &phrase);
     Q_INVOKABLE QString blockedReason() const;
@@ -256,6 +262,7 @@ private:
     std::atomic<int> m_inflight{0}; // audio batches handed to the worker and not scored yet
     qint64 m_lastWakeMs = 0;
     int m_wakeStreak = 0;      // consecutive above-threshold score callbacks
+    bool m_handsOff = false;
     mutable int m_localWantedCache = -1;   // -1: not looked yet
     int m_dropped = 0;
     int m_checked = 0;

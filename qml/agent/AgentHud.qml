@@ -46,13 +46,17 @@ Rectangle {
                 radius: 6
                 color: hud.paused ? Theme.warning : Theme.accent
                 visible: !hud.paused
+                // Only while the pill is really on screen: its window is hidden when Buddy is not
+                // driving the desktop, but the item itself stays "visible", and an animation that
+                // keeps running for a hidden pill keeps the whole app waking sixty times a second.
+                readonly property bool shown: hud.opacity > 0.01
                 SequentialAnimation on scale {
-                    running: !hud.paused && hud.visible
+                    running: !hud.paused && hud.visible && halo.shown
                     loops: Animation.Infinite
                     NumberAnimation { from: 1; to: 2.1; duration: 1300; easing.type: Easing.OutCubic }
                 }
                 SequentialAnimation on opacity {
-                    running: !hud.paused && hud.visible
+                    running: !hud.paused && hud.visible && halo.shown
                     loops: Animation.Infinite
                     NumberAnimation { from: 0.45; to: 0; duration: 1300; easing.type: Easing.OutCubic }
                 }

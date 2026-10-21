@@ -40,7 +40,7 @@ registered singletons and their signals.
 | `src/desktop/` | Dock controller, app discovery/search, icon extraction, clipboard history, running windows |
 | `src/media/` | Local music player, Windows media sessions, audio devices, radios |
 | `src/platform/` | Win32/Windows integration: overlay input regions, glass backdrop, global hotkeys, fullscreen watcher, night light, power actions, appearance |
-| `src/voice/` | Microphone capture, voice input, wake word, speech output and synthesised buddy cues |
+| `src/voice/` | Microphone capture, voice input, wake word, speech output, synthesised buddy cues, and Deepgram (live voice-agent conversation, speech to text, voice: see [deepgram.md](deepgram.md)) |
 
 `src/main.cpp` stays at the root because it is the process entry point.
 
@@ -114,8 +114,7 @@ Some feature files (`Buddy.qml`, `BuddyBubble.qml`, `BuddyPanel.qml`,
 animation timing share one coordinate system, and splitting them further would
 mean passing most of their state across a component boundary. The reusable
 pieces they expose were extracted instead:
-`qml/buddy/components/*`, `qml/panels/settings/*`, `qml/buddy/BuddyNeonRing.qml`
-and `qml/panels/MusicIconHit.qml`. Prefer adding another focused component there
+`qml/buddy/components/*`, `qml/panels/settings/*` and `qml/buddy/BuddyNeonRing.qml`. Prefer adding another focused component there
 over growing those files with more inline controls.
 
 ## Tests
@@ -183,3 +182,12 @@ animating, or keep writing a property that something paints, while it is idle.
   signal. Sharing a catch-all signal re-evaluates every binding on that object
   (`MediaHub::position` has `positionChanged`, separate from `changed`).
 - Run no more than one background snapshot at a time behind a timer.
+- Qt Quick's threaded render loop draws a frame on **every vsync while any
+  animation is running** (a `FrameAnimation`, a `NumberAnimation`, an animator),
+  even when nothing changed. So a looping animation on an item that is hidden or off
+  screen still costs a full-window frame sixty times a second. Bind `running` to
+  what is really on screen (an item's `visible` stays true inside a hidden window;
+  see `AgentHud.qml`), and drive quiet motion from a `Timer`, which only costs a
+  frame when a property actually changed (see `calmSpring` in `Buddy.qml`).
+- Aiming the eyes is cheap only if it stays quiet: `updateGaze()` ignores changes
+  under half a degree, and the cursor poll slows to 10 Hz once the cursor is still.

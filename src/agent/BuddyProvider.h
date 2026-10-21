@@ -24,7 +24,9 @@
 #include "RunJournal.h"
 #include "SessionFormat.h"
 #include "SavedRules.h"
+#include "MusicBackend.h"
 #include "StreamAccumulator.h"
+#include "TurnClassifier.h"
 #include "UserQuestions.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
@@ -86,6 +88,8 @@ class BuddyProvider : public QObject
     // Lets Buddy put a screenshot of the screen into the chat for the user to see
     // (share_screenshot). The image stays on this computer: the model is only told it was shown.
     Q_PROPERTY(bool allowScreenshots READ allowScreenshots WRITE setAllowScreenshots NOTIFY agentConfigChanged)
+    // Lets Buddy control the music pill (the `music` tool): play, pause, skip, volume, Noch's queue.
+    Q_PROPERTY(bool allowMusic READ allowMusic WRITE setAllowMusic NOTIFY agentConfigChanged)
 
     // Live tool-execution telemetry & Anthropic Agent SDK response metadata for the UI
     // Permission mode: "default" | "acceptEdits" | "plan" | "bypass".
@@ -123,6 +127,16 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool handoffs READ handoffs WRITE setHandoffs NOTIFY agentConfigChanged)
     Q_PROPERTY(QString activeAgent READ activeAgent NOTIFY activeAgentChanged)
     Q_PROPERTY(QString activeAgentTitle READ activeAgentTitle NOTIFY activeAgentChanged)
+    // JEV request classifier (see TurnClassifier.h): a small typed model that labels
+    // each request before the agent loop starts. It has its own endpoint, key and
+    // model, independent of the chat provider above. Off by default.
+    Q_PROPERTY(bool classifierEnabled READ classifierEnabled WRITE setClassifierEnabled NOTIFY classifierConfigChanged)
+    Q_PROPERTY(QString classifierBase READ classifierBase WRITE setClassifierBase NOTIFY classifierConfigChanged)
+    Q_PROPERTY(QString classifierKey READ classifierKey WRITE setClassifierKey NOTIFY classifierConfigChanged)
+    Q_PROPERTY(QString classifierModel READ classifierModel WRITE setClassifierModel NOTIFY classifierConfigChanged)
+    // The last valid result for the current run: { valid, intent, risk, effort,
+    // agent, tools, confidence, summary }; empty when the run was not classified.
+    Q_PROPERTY(QVariantMap lastClassification READ lastClassification NOTIFY lastClassificationChanged)
     // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
     // badge, icon, title, detail, reason, rule, secondsLeft }.
     Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
@@ -197,6 +211,11 @@ public:
     void setAllowAskUser(bool on);
     bool allowScreenshots() const { return m_allowScreenshots; }
     void setAllowScreenshots(bool on);
+    bool allowMusic() const { return m_allowMusic; }
+    void setAllowMusic(bool on);
+    // The music pill the `music` tool drives; not owned. Without one the tool is not offered.
+    void setMusicBackend(MusicBackend *backend);
+    bool musicAvailable() const { return m_allowMusic && m_musicBackend; }
 
     QString permissionMode() const { return m_permissionMode; }
     void setPermissionMode(const QString &m);
@@ -259,7 +278,10 @@ public:
     QVariantList agentTodos() const { return m_agentTodos; }
     QVariantList citations() const { return m_citations; }
 
-    Q_INVOKABLE void sendMessage(const QString &text, const QVariantList &context = QVariantList());
+    // `spoken`: the final reply will be read aloud (the request came by voice, or
+    // every answer is read out), so the model is told to keep it to a sentence or two.
+    Q_INVOKABLE void sendMessage(const QString &text, const QVariantList &context = QVariantList(),
+                                 bool spoken = false);
     Q_INVOKABLE void runDirectCommand(const QString &command);
     Q_INVOKABLE void runDirectWebSearch(const QString &query);
     Q_INVOKABLE void runDirectToolSearch(const QString &query);
@@ -276,6 +298,13 @@ public:
     Q_INVOKABLE void answerQuestion(const QVariantList &answers);
     // "Skip": the model is told to carry on with its best assumption.
     Q_INVOKABLE void skipQuestion();
+    // Answers whatever is waiting (an approval or a question) from words the user said,
+    // for a voice conversation: "yes, go ahead", "the second one". Only ever picks among
+    // what was offered; returns { kind: "approval" | "question" | "none", ok, message }.
+    // ok is false when the words were not clear enough (the thing stays pending).
+    Q_INVOKABLE QVariantMap answerPendingSpoken(const QString &said);
+    // What to read out to the user for the pending approval or question ("" when none).
+    Q_INVOKABLE QString pendingSpokenPrompt() const;
     // How long a question waits before it is skipped (tests shorten it).
     void setQuestionTimeoutSeconds(int seconds) { m_questionTimeoutSec = qMax(1, seconds); }
     // Undo a run's file changes. undoLastRun() takes the newest run that changed
@@ -318,6 +347,25 @@ public:
     Q_INVOKABLE QString modelsUrl() const;
     Q_INVOKABLE QString defaultBase() const;
 
+    bool classifierEnabled() const { return m_classifier->enabled(); }
+    void setClassifierEnabled(bool on);
+    QString classifierBase() const { return m_classifier->base(); }
+    void setClassifierBase(const QString &base);
+    QString classifierKey() const { return m_classifier->key(); }
+    void setClassifierKey(const QString &key);
+    QString classifierModel() const { return m_classifier->model(); }
+    void setClassifierModel(const QString &model);
+    QVariantMap lastClassification() const;
+    // The URL the classifier posts to (for the settings hint).
+    Q_INVOKABLE QString classifierUrl() const { return m_classifier->endpoint(); }
+    // Seconds the classifier is resting after repeated failures (0 = active).
+    Q_INVOKABLE int classifierRestSeconds() const { return m_classifier->restSecondsLeft(); }
+    // Send a sample request to the classifier endpoint; answers classifierTestFinished().
+    // Works whether or not the classifier is switched on.
+    Q_INVOKABLE void testClassifier() { m_classifier->test(); }
+    // Tests tune the classifier's timeouts and resting period.
+    TurnClassifier *classifierClient() const { return m_classifier; }
+
 signals:
     void providerChanged();
     void apiKeyChanged();
@@ -348,6 +396,9 @@ signals:
 
     void testFinished(bool ok, const QString &message);
     void modelsFetched(const QStringList &models);
+    void classifierConfigChanged();
+    void lastClassificationChanged();
+    void classifierTestFinished(bool ok, const QString &message);
 
 private slots:
     void onReplyFinished(QNetworkReply *reply);
@@ -394,6 +445,8 @@ private:
     bool m_allowTodoTask = true;
     bool m_allowAskUser = true;
     bool m_allowScreenshots = true;
+    bool m_allowMusic = true;
+    MusicBackend *m_musicBackend = nullptr;
     // P6 tool diet: when on, only core tools (bash, editor, glob_grep,
     // computer) plus tool_search are sent upfront; deferred tools are
     // advertised by one-liner and loaded via tool_search on demand.
@@ -530,6 +583,15 @@ private:
     QString m_activeAgent = QStringLiteral("buddy");
     QString m_memoryIndexSnapshot;   // memoryIndex() taken at run start
     int m_handoffCount = 0;
+    bool m_spokenRun = false;        // this run's reply is read aloud: short, plain prose
+    // JEV classifier: runs between "the user sent a request" and the first model
+    // turn. Fails open; a valid, confident result only narrows the run.
+    TurnClassifier *m_classifier = nullptr;
+    turnclass::Classification m_classification;   // this run's valid result (invalid = none)
+    bool m_classifyPending = false;               // the first model turn waits for the classifier
+    void dispatchAfterClassify(const QString &text);
+    void onClassified(quint64 token, const turnclass::Classification &result, int ms, const QString &error);
+    void applyClassification();
     void setActiveAgent(const QString &id);
     bool toolAllowedForActiveAgent(const QString &tool) const;
     void executeHandoff(const PendingToolCall &call);
@@ -580,6 +642,7 @@ private:
     void onQuestionTick();
     void executeAskUserTool(const PendingToolCall &call);
     void executeScreenshotTool(const PendingToolCall &call);
+    void executeMusicTool(const PendingToolCall &call);
     QString saveScreenshot(const QImage &image, QString *error) const;
     void addAttachment(const QVariantMap &attachment);
     int compactContext();

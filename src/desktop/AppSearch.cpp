@@ -38,6 +38,8 @@ const CommandDef kCommands[] = {
     {"lock", QT_TRANSLATE_NOOP("AppSearch", "Lock the computer"), "lock"},
     {"sleep", QT_TRANSLATE_NOOP("AppSearch", "Sleep"), "zzz"},
     {"mic", QT_TRANSLATE_NOOP("AppSearch", "Mute or unmute the microphone"), "mic"},
+    {"timer", QT_TRANSLATE_NOOP("AppSearch", "Focus timer"), "timer"},
+    {"clipboard", QT_TRANSLATE_NOOP("AppSearch", "Clipboard history"), "clipboard"},
     {"taskmgr", QT_TRANSLATE_NOOP("AppSearch", "Task Manager"), "activity"},
     {"winsettings", QT_TRANSLATE_NOOP("AppSearch", "Windows settings"), "sliders"},
     {"noch", QT_TRANSLATE_NOOP("AppSearch", "Noch settings"), "settings"},

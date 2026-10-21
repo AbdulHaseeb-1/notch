@@ -4,11 +4,14 @@
 
 #include <QAudioOutput>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QMediaMetaData>
 #include <QMediaPlayer>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QRandomGenerator>
 #include <QSettings>
 #include <QSet>
@@ -492,10 +495,11 @@ void MusicPlayer::saveNow()
 {
     if (m_loading || !m_player)
         return;
-    QStringList paths;
-    paths.reserve(m_tracks.size());
-    for (const Track &track : m_tracks)
-        paths.push_back(track.path);
+    // Songs from the internet are for this session only (their stream addresses expire): the
+    // saved queue and the position in it leave them out.
+    int savedIndex = 0;
+    const QStringList paths = persistentPaths(&savedIndex);
+    const bool currentSaved = hasTrack() && !m_tracks.at(m_index).online;
 
     QSettings settings;
     settings.beginGroup(QStringLiteral("player"));
@@ -504,8 +508,8 @@ void MusicPlayer::saveNow()
     settings.setValue(QStringLiteral("repeat"), m_repeatMode > 0);
     settings.setValue(QStringLiteral("repeatMode"), m_repeatMode);
     settings.setValue(QStringLiteral("shuffle"), m_shuffle);
-    settings.setValue(QStringLiteral("index"), qMax(0, m_index));
-    settings.setValue(QStringLiteral("position"), m_player->position());
+    settings.setValue(QStringLiteral("index"), savedIndex);
+    settings.setValue(QStringLiteral("position"), currentSaved ? m_player->position() : 0);
     settings.setValue(QStringLiteral("tracks"), paths);
     settings.endGroup();
 }
@@ -646,16 +650,129 @@ void MusicPlayer::playIndex(int index, bool start)
     m_index = index;
     m_pendingSeek = -1;
     setCover({});
-    m_player->setSource(QUrl::fromLocalFile(m_tracks.at(m_index).path));
+    const Track &t = m_tracks.at(m_index);
+    // A stream address from YouTube is good for some hours; a track replayed after that is renewed first.
+    constexpr qint64 kStreamLifeMs = 4LL * 60 * 60 * 1000;
+    if (t.online && m_resolver && QDateTime::currentMSecsSinceEpoch() - t.resolvedAtMs > kStreamLifeMs) {
+        emit trackChanged();
+        renewAndPlay(index, start);
+        return;
+    }
+    m_player->setSource(t.online ? QUrl(t.streamUrl) : QUrl::fromLocalFile(t.path));
+    if (t.online && !t.thumbnailUrl.isEmpty())
+        loadThumbnail(t.thumbnailUrl, t.path);
     emit trackChanged();
     if (start)
         m_player->play();
     scheduleSave();
 }
 
+void MusicPlayer::renewAndPlay(int index, bool start)
+{
+    const QString page = m_tracks.at(index).path;
+    m_resolver(page, [this, page, start](const OnlineTrack &fresh, const QString &error) {
+        // Still the track the user is on? (They may have skipped while it was being renewed.)
+        if (m_index < 0 || m_index >= m_tracks.size() || m_tracks.at(m_index).path != page)
+            return;
+        if (!fresh.valid()) {
+            emit playbackError(error.isEmpty() ? QStringLiteral("Couldn't play this track") : error);
+            return;
+        }
+        Track &t = m_tracks[m_index];
+        t.streamUrl = fresh.streamUrl;
+        t.resolvedAtMs = fresh.resolvedAtMs;
+        m_player->setSource(QUrl(t.streamUrl));
+        if (!t.thumbnailUrl.isEmpty())
+            loadThumbnail(t.thumbnailUrl, t.path);
+        if (start)
+            m_player->play();
+    });
+}
+
+QStringList MusicPlayer::persistentPaths(int *savedIndex) const
+{
+    QStringList paths;
+    paths.reserve(m_tracks.size());
+    int idx = 0;
+    for (int i = 0; i < m_tracks.size(); ++i) {
+        if (m_tracks.at(i).online)
+            continue;
+        if (i <= m_index)
+            idx = int(paths.size());
+        paths.push_back(m_tracks.at(i).path);
+    }
+    if (savedIndex)
+        *savedIndex = idx;
+    return paths;
+}
+
+bool MusicPlayer::currentIsOnline() const
+{
+    return hasTrack() && m_tracks.at(m_index).online;
+}
+
+void MusicPlayer::playOnline(const OnlineTrack &online)
+{
+    if (!online.valid())
+        return;
+    Track t;
+    t.path = online.webUrl.isEmpty() ? online.streamUrl : online.webUrl;
+    t.title = online.title;
+    t.artist = online.artist;
+    t.album = QStringLiteral("YouTube");
+    t.online = true;
+    t.streamUrl = online.streamUrl;
+    t.thumbnailUrl = online.thumbnailUrl;
+    t.resolvedAtMs = online.resolvedAtMs ? online.resolvedAtMs : QDateTime::currentMSecsSinceEpoch();
+    // Next in line, so what was queued carries on afterwards; asking for the same song again replaces it.
+    for (int i = m_tracks.size() - 1; i >= 0; --i)
+        if (m_tracks.at(i).online && m_tracks.at(i).path == t.path) {
+            m_tracks.removeAt(i);
+            if (i < m_index)
+                --m_index;
+        }
+    const int at = hasTrack() ? m_index + 1 : m_tracks.size();
+    m_tracks.insert(at, t);
+    emit playlistChanged();
+    playIndex(at, true);
+}
+
+void MusicPlayer::loadThumbnail(const QString &url, const QString &forPage)
+{
+    if (m_thumbReply) {
+        QNetworkReply *old = m_thumbReply;
+        m_thumbReply = nullptr;
+        old->disconnect(this);
+        old->abort();
+        old->deleteLater();
+    }
+    const QUrl u(url);
+    if (u.scheme() != QLatin1String("https") && !(u.scheme() == QLatin1String("http") && u.host() == QLatin1String("127.0.0.1")))
+        return;
+    QNetworkRequest req(u);
+    req.setTransferTimeout(15000);
+    m_thumbReply = m_nam.get(req);
+    QNetworkReply *reply = m_thumbReply;
+    connect(reply, &QNetworkReply::finished, this, [this, reply, forPage] {
+        if (m_thumbReply == reply)
+            m_thumbReply = nullptr;
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+        if (!hasTrack() || m_tracks.at(m_index).path != forPage)
+            return;                         // the track changed while it downloaded
+        const QImage image = QImage::fromData(reply->readAll());
+        if (!image.isNull())
+            setCover(image);
+    });
+}
+
 void MusicPlayer::readMetadata()
 {
     if (!hasTrack())
+        return;
+    // A song from the internet already came with its title, artist and picture.
+    if (m_tracks.at(m_index).online)
         return;
     const QMediaMetaData meta = m_player->metaData();
     Track &track = m_tracks[m_index];

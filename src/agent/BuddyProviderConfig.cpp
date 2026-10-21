@@ -84,6 +84,9 @@ bool BuddyProvider::toolSchemaVisible(const QString &toolName) const
         // three. Utility schemas (web, memory, advisor, todo) stay deferred.
         QStringLiteral("ask_user_question"),
         QStringLiteral("share_screenshot"),
+        // The music pill is a user-facing channel too ("play some music"): no
+        // tool_search round trip first.
+        QStringLiteral("music"),
     };
     if (coreTools.contains(toolName))
         return true;
@@ -186,6 +189,22 @@ void BuddyProvider::setAllowScreenshots(bool on)
     if (m_allowScreenshots == on)
         return;
     m_allowScreenshots = on;
+    emit agentConfigChanged();
+}
+
+void BuddyProvider::setAllowMusic(bool on)
+{
+    if (m_allowMusic == on)
+        return;
+    m_allowMusic = on;
+    emit agentConfigChanged();
+}
+
+void BuddyProvider::setMusicBackend(MusicBackend *backend)
+{
+    if (m_musicBackend == backend)
+        return;
+    m_musicBackend = backend;
     emit agentConfigChanged();
 }
 
@@ -333,6 +352,8 @@ void BuddyProvider::updateResponseMeta()
     meta[QStringLiteral("truncated")] = m_truncated;
     meta[QStringLiteral("maxSteps")] = m_maxSteps;
     meta[QStringLiteral("computerMode")] = computerToolMode();
+    if (m_classification.valid)
+        meta[QStringLiteral("classifier")] = m_classification.toVariantMap();
     m_responseMeta = meta;
     emit responseMetaChanged();
 }
@@ -342,7 +363,8 @@ bool BuddyProvider::hasAnyToolEnabled() const
     return m_agentMode && !m_toolsDisabledForTurn
            && (m_allowBash || m_allowComputer || m_allowEditor || m_allowCodeSearch
                || m_allowMemory || m_allowWebSearch || m_allowToolSearch
-               || m_allowAdvisor || m_allowTodoTask || m_allowAskUser || m_allowScreenshots);
+               || m_allowAdvisor || m_allowTodoTask || m_allowAskUser || m_allowScreenshots
+               || musicAvailable());
 }
 
 bool BuddyProvider::needsApiKey() const

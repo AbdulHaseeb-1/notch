@@ -6,6 +6,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QMediaDevices>
+#include <QRegularExpression>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -148,6 +149,47 @@ QString VoiceInput::engine() const
     return m_transcriber ? m_transcriber->name() : QString();
 }
 
+// Rebuilds the engine from the chosen kind and the Deepgram settings. A request in
+// flight is abandoned (its answer is dropped), which is what changing the engine means.
+void VoiceInput::applyEngine()
+{
+    if (m_sttEngine == QLatin1String("deepgram"))
+        setTranscriber(makeDeepgramTranscriber(m_dg));
+    else
+        setTranscriber(makeMoonshineTranscriber(defaultMoonshineFolder()));
+}
+
+void VoiceInput::setSttEngine(const QString &engine)
+{
+    const QString e = engine == QLatin1String("deepgram") ? engine : QStringLiteral("local");
+    if (e == m_sttEngine)
+        return;
+    m_sttEngine = e;
+    applyEngine();
+}
+
+#define NOCH_VOICE_DG_SETTER(Name, member)                                          void VoiceInput::Name(const QString &value)                                     {                                                                                   const QString v = value.trimmed();                                              if (v == m_dg.member)                                                               return;                                                                     m_dg.member = v;                                                                if (m_sttEngine == QLatin1String("deepgram"))                                       applyEngine();                                                          }
+NOCH_VOICE_DG_SETTER(setDeepgramKey, apiKey)
+NOCH_VOICE_DG_SETTER(setDeepgramModel, model)
+NOCH_VOICE_DG_SETTER(setDeepgramLanguage, language)
+NOCH_VOICE_DG_SETTER(setDeepgramApiBase, apiBase)
+#undef NOCH_VOICE_DG_SETTER
+
+void VoiceInput::setDeepgramKeyterms(const QString &terms)
+{
+    QStringList list;
+    for (const QString &t : terms.split(QRegularExpression(QStringLiteral("[,\n;]")), Qt::SkipEmptyParts)) {
+        const QString term = t.simplified();
+        if (!term.isEmpty() && !list.contains(term, Qt::CaseInsensitive))
+            list << term;
+    }
+    if (list == m_dg.keyterms)
+        return;
+    m_dg.keyterms = list;
+    if (m_sttEngine == QLatin1String("deepgram"))
+        applyEngine();
+}
+
 QVariantMap VoiceInput::sttModelStatus() const
 {
     QVariantMap s;
@@ -190,6 +232,8 @@ void VoiceInput::setTranscriber(std::unique_ptr<Transcriber> transcriber)
     m_ready = false;
     m_prepareError.clear();
     m_transcriber = std::move(transcriber);
+    // A network engine has nothing to load: it is ready as soon as it is configured.
+    m_ready = m_transcriber && m_transcriber->isAsync() && m_transcriber->problem().isEmpty();
     emit readyChanged();
     emit configChanged();
     if (m_enabled)
@@ -198,7 +242,7 @@ void VoiceInput::setTranscriber(std::unique_ptr<Transcriber> transcriber)
 
 void VoiceInput::ensureWorker()
 {
-    if (m_worker || !m_transcriber)
+    if (m_worker || !m_transcriber || m_transcriber->isAsync())
         return;
     m_worker = new TranscribeWorker(m_transcriber.get());
     m_worker->moveToThread(&m_thread);
@@ -385,6 +429,15 @@ quint64 VoiceInput::transcribe(const QByteArray &pcm16, QObject *context,
     ensureWorker();
     const quint64 ticket = m_nextTicket++;
     m_pending.insert(ticket, Pending{ QPointer<QObject>(context), std::move(done) });
+    if (m_transcriber && m_transcriber->isAsync()) {
+        // A network engine: the request runs on this thread's event loop and reports back.
+        const QPointer<VoiceInput> self(this);
+        m_transcriber->transcribeAsync(pcm16, [self, ticket](const QString &text, const QString &error) {
+            if (self)
+                self->onFinished(ticket, text, error);
+        });
+        return ticket;
+    }
     if (!m_worker) {
         Transcription t;
         t.error = problem();

@@ -1,24 +1,26 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 
-// Music pill beside the notch, separate from the app dock.
+// The music pill at the top edge of the desktop.
 //   - Stopped: a round note icon.
 //   - Playing: the pill minifies to a small capsule with a soft gradient level
 //     indicator, and a faint gradient wash across it.
 //   - Clicking the pill opens the transport bar: previous, play/pause, next,
-//     repeat and volume. The volume icon opens a slider inside the bar. The
-//     note at the start of the bar opens the full player card.
+//     repeat and volume. The volume icon opens a slider inside the bar.
+//   - With nothing loaded a click just says how to get music going; right-click
+//     opens Settings. There is no separate player card: Buddy queues and plays
+//     music when asked.
 // The bar closes on a second click on empty pill space, or when the pointer
 // leaves the pill (unless the volume slider is being dragged).
 Item {
     id: chip
 
     property real s: 1
-    property bool active: false         // the full player card is open
     property real appear: 1
     property bool highlight: false      // a file is being dragged over the pill
 
-    signal openRequested()
+    signal emptyClicked()
+    signal settingsRequested()
     signal volumeNudged(real volume)
     signal hintRequested(string text)
     signal hintCleared()
@@ -99,7 +101,7 @@ Item {
         id: bg
         anchors.fill: parent
         radius: height / 2
-        edge: chip.highlight || chip.active ? chip.dynAccent : "transparent"
+        edge: chip.highlight ? chip.dynAccent : "transparent"
     }
 
     // Dynamic ambient wash across the pill while music plays or cover art is loaded.
@@ -120,18 +122,21 @@ Item {
         }
     }
 
-    // Click target for the whole pill. When no track is loaded or the full
-    // player card is open (or on right-click), toggle the full player card
-    // directly; otherwise toggle the inline transport bar.
+    // Click target for the whole pill: toggles the inline transport bar (or, with
+    // nothing loaded, says how to get music going). Right-click opens Settings.
     MouseArea {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: Qt.PointingHandCursor
         onClicked: (mouse) => {
-            if (mouse.button === Qt.RightButton || !Media.hasTrack || chip.active) {
+            if (mouse.button === Qt.RightButton) {
                 chip.barOpen = false
                 chip.volumeOpen = false
-                chip.openRequested()
+                chip.settingsRequested()
+            } else if (!Media.hasTrack) {
+                chip.barOpen = false
+                chip.volumeOpen = false
+                chip.emptyClicked()
             } else {
                 chip.barOpen = !chip.barOpen
                 if (!chip.barOpen)
@@ -315,13 +320,7 @@ Item {
                 visible: !barMiniCover.visible
                 name: "notes"
                 size: Math.round(18 * chip.s)
-                color: chip.active ? chip.dynAccent : Theme.textDim
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: chip.openRequested()
+                color: Theme.textDim
             }
         }
 

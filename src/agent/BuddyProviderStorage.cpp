@@ -462,6 +462,25 @@ void BuddyProvider::executeAskUserTool(const PendingToolCall &call)
                                         .arg(parsed.error), QString(), true);
         return;
     }
+    // "Approve everything" means nobody is bothered: a question is answered with the option
+    // the model recommended (or the first), and the model is told so, so it says what it
+    // assumed. Not while the session is tainted: then approvals are asked even in this mode.
+    if (m_policy.mode() == AgentPolicy::Mode::Bypass && !m_policy.tainted()) {
+        QList<uq::Answer> picks;
+        for (const uq::Question &q : parsed.questions) {
+            uq::Answer a;
+            a.selected << uq::defaultOption(q);
+            picks << a;
+        }
+        addSpan(QJsonObject{ { "type", "question" }, { "decision", "auto" }, { "questions", int(parsed.questions.size()) } });
+        setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("Auto-approve is on: picked the recommended option") } });
+        finishCurrentToolCall(call,
+            uq::formatAnswers(parsed.questions, picks)
+                + QStringLiteral("\n(The user has auto-approve switched on, so they were not asked: the recommended, else the first, "
+                                 "option was picked for each question. Carry on, and say briefly what you assumed.)"),
+            QString(), false);
+        return;
+    }
     m_questionCall = call;
     m_questions = parsed.questions;
     m_questionSecondsLeft = m_questionTimeoutSec;
@@ -690,3 +709,58 @@ void BuddyProvider::emitFinal(const QString &text)
     emit responseReady(safe);
 }
 
+
+// ---- answering by voice -------------------------------------------------------------------
+
+QString BuddyProvider::pendingSpokenPrompt() const
+{
+    if (!m_pendingApproval.isEmpty()) {
+        QString text = tr("Buddy needs the user's permission: %1.").arg(m_pendingApproval.value(QStringLiteral("title")).toString());
+        const QString reason = m_pendingApproval.value(QStringLiteral("reason")).toString();
+        if (!reason.isEmpty())
+            text += QLatin1Char(' ') + reason;
+        return text + tr(" Ask the user to say yes or no (or \"always\" to stop being asked), then pass their words to answer_buddy.");
+    }
+    if (!m_pendingQuestion.isEmpty())
+        return tr("Buddy needs the user to choose. %1 Ask them out loud, then pass what they said to answer_buddy.")
+            .arg(uq::spokenForm(m_questions));
+    return QString();
+}
+
+QVariantMap BuddyProvider::answerPendingSpoken(const QString &said)
+{
+    auto result = [](const QString &kind, bool ok, const QString &message) {
+        return QVariantMap{ { QStringLiteral("kind"), kind }, { QStringLiteral("ok"), ok }, { QStringLiteral("message"), message } };
+    };
+    if (!m_pendingApproval.isEmpty()) {
+        switch (uq::spokenDecision(said)) {
+        case uq::Decision::Approve:
+            resolveApproval(true, false);
+            return result(QStringLiteral("approval"), true, tr("Approved."));
+        case uq::Decision::ApproveAlways:
+            resolveApproval(true, true);
+            return result(QStringLiteral("approval"), true, tr("Approved, and not asked again."));
+        case uq::Decision::Deny:
+            resolveApproval(false, false);
+            return result(QStringLiteral("approval"), true, tr("Declined."));
+        case uq::Decision::Unclear:
+            break;
+        }
+        return result(QStringLiteral("approval"), false, tr("That was not a clear yes or no. Ask the user again."));
+    }
+    if (!m_pendingQuestion.isEmpty()) {
+        const QList<uq::Answer> answers = uq::matchSpokenAll(m_questions, said);
+        if (!uq::complete(answers))
+            return result(QStringLiteral("question"), false, tr("Nothing was chosen. Ask the user again."));
+        QVariantList raw;
+        for (const uq::Answer &a : answers) {
+            QVariantList sel;
+            for (int i : a.selected)
+                sel << i;
+            raw << QVariantMap{ { QStringLiteral("selected"), sel }, { QStringLiteral("other"), a.other } };
+        }
+        answerQuestion(raw);
+        return result(QStringLiteral("question"), true, tr("Answered."));
+    }
+    return result(QStringLiteral("none"), false, tr("Nothing is waiting for an answer."));
+}

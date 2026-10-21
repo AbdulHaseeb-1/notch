@@ -54,7 +54,14 @@ class VoiceInput : public QObject
     Q_PROPERTY(QString problem READ problem NOTIFY configChanged)
     // The model is loaded and ready; false while it starts (a moment after turning voice on).
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
-    Q_PROPERTY(QString engine READ engine CONSTANT)
+    Q_PROPERTY(QString engine READ engine NOTIFY configChanged)
+    // Which speech-to-text engine: "local" (Moonshine, on this computer) or "deepgram" (a cloud service).
+    Q_PROPERTY(QString sttEngine READ sttEngine WRITE setSttEngine NOTIFY configChanged)
+    Q_PROPERTY(bool engineIsLocal READ engineIsLocal NOTIFY configChanged)
+    Q_PROPERTY(QString deepgramKey READ deepgramKey WRITE setDeepgramKey NOTIFY configChanged)
+    Q_PROPERTY(QString deepgramModel READ deepgramModel WRITE setDeepgramModel NOTIFY configChanged)
+    Q_PROPERTY(QString deepgramLanguage READ deepgramLanguage WRITE setDeepgramLanguage NOTIFY configChanged)
+    Q_PROPERTY(QString deepgramKeyterms READ deepgramKeyterms WRITE setDeepgramKeyterms NOTIFY configChanged)
     Q_PROPERTY(QString modelFolder READ modelFolder CONSTANT)
     // "idle" | "listening" | "transcribing"
     Q_PROPERTY(QString state READ state NOTIFY stateChanged)
@@ -78,6 +85,20 @@ public:
     bool ready() const { return m_ready; }
     QString engine() const;
     QString modelFolder() const { return m_modelFolder; }
+    QString sttEngine() const { return m_sttEngine; }
+    void setSttEngine(const QString &engine);
+    // False when the words are recognized by a cloud service.
+    bool engineIsLocal() const { return !m_transcriber || m_transcriber->isLocal(); }
+    QString deepgramKey() const { return m_dg.apiKey; }
+    void setDeepgramKey(const QString &key);
+    QString deepgramModel() const { return m_dg.model; }
+    void setDeepgramModel(const QString &model);
+    QString deepgramLanguage() const { return m_dg.language; }
+    void setDeepgramLanguage(const QString &language);
+    QString deepgramKeyterms() const { return m_dg.keyterms.join(QStringLiteral(", ")); }
+    void setDeepgramKeyterms(const QString &terms);
+    // Tests: send Deepgram requests here instead of api.deepgram.com.
+    void setDeepgramApiBase(const QString &base);
 
     QString state() const;
     bool listening() const { return m_state == State::Listening; }
@@ -133,6 +154,7 @@ private:
         std::function<void(const Transcription &)> done;
     };
     void setState(State s);
+    void applyEngine();
     void fail(const QString &message);
     void onAudio(const QByteArray &pcm);
     void ensureWorker();
@@ -140,6 +162,8 @@ private:
     void onFinished(quint64 ticket, const QString &text, const QString &error);
 
     std::unique_ptr<Transcriber> m_transcriber;
+    QString m_sttEngine = QStringLiteral("local");
+    DeepgramListenSettings m_dg;
     QThread m_thread;
     TranscribeWorker *m_worker = nullptr;
     QHash<quint64, Pending> m_pending;

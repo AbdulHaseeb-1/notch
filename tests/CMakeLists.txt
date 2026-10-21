@@ -34,6 +34,9 @@ set(NOCH_SPEECH_TO_TEXT_SOURCES
     src/voice/VoiceInput.h
     src/voice/Transcriber.h
     src/voice/MoonshineTranscriber.cpp
+    src/voice/DeepgramTranscriber.cpp
+    src/voice/DeepgramProtocol.cpp
+    src/voice/DeepgramProtocol.h
     src/voice/Moonshine.cpp
     src/voice/Moonshine.h
     src/voice/OrtRuntime.cpp
@@ -89,6 +92,7 @@ noch_add_unit_test(tst_voice
 
 noch_add_unit_test(tst_wakeword
     SOURCES tests/tst_wakeword.cpp
+            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
             src/voice/WakeWord.cpp src/voice/WakeWord.h
             src/voice/WakeDetector.cpp src/voice/WakeDetector.h
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h
@@ -118,6 +122,7 @@ noch_add_unit_test(tst_moonshine
 
 noch_add_unit_test(tst_speechout
     SOURCES tests/tst_speechout.cpp
+            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h
             src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
             src/voice/WakeWord.cpp src/voice/WakeWord.h
@@ -161,6 +166,7 @@ noch_add_unit_test(tst_buddyagent
             src/agent/PlanValidator.cpp src/agent/PlanValidator.h
             src/agent/HookBus.cpp src/agent/HookBus.h
             src/agent/MemoryStore.cpp src/agent/MemoryStore.h src/agent/MemoryExtractor.h
+            src/agent/TurnClassifier.cpp src/agent/TurnClassifier.h
             ${NOCH_AGENT_POLICY_SOURCES}
             src/agent/UserQuestions.cpp src/agent/UserQuestions.h
             src/agent/RunJournal.cpp src/agent/RunJournal.h
@@ -177,6 +183,31 @@ noch_add_unit_test(tst_computeruse
             ${NOCH_COMPUTER_USE_SOURCES}
     LIBS Qt6::Core Qt6::Gui ${NOCH_WIN_LIBS})
 
+noch_add_unit_test(tst_turnclassifier
+    SOURCES tests/tst_turnclassifier.cpp
+            src/agent/TurnClassifier.cpp src/agent/TurnClassifier.h
+            src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
+    LIBS Qt6::Core Qt6::Network)
+
+# Buddy's music tool against the real player, media hub and Windows media sessions.
+if(WIN32)
+    find_package(Qt6 REQUIRED COMPONENTS Quick Multimedia)
+    noch_add_unit_test(tst_musicagent
+        SOURCES tests/tst_musicagent.cpp tests/FakeYtDlp.h
+                src/media/YtDlp.cpp src/media/YtDlp.h src/media/OnlineTrack.h
+                src/media/MusicAgentBackend.cpp src/media/MusicAgentBackend.h
+                src/media/MediaHub.cpp src/media/MediaHub.h
+                src/media/MusicPlayer.cpp src/media/MusicPlayer.h
+                src/media/SmtcMedia.cpp src/media/SmtcMedia.h
+                src/media/AudioDevices.cpp src/media/AudioDevices.h
+                src/desktop/RunningApps.cpp src/desktop/RunningApps.h
+        LIBS Qt6::Core Qt6::Gui Qt6::Quick Qt6::Multimedia Qt6::Network user32 shell32 ole32 dwmapi)
+    noch_add_unit_test(tst_ytdlp
+        SOURCES tests/tst_ytdlp.cpp tests/FakeYtDlp.h
+                src/media/YtDlp.cpp src/media/YtDlp.h src/media/OnlineTrack.h
+        LIBS Qt6::Core Qt6::Gui Qt6::Network)
+endif()
+
 # QML component tests (tests/qml): run with Qt's qmltestrunner when installed.
 find_program(NOCH_QMLTESTRUNNER NAMES qmltestrunner qmltestrunner-qt6
              HINTS "${Qt6_DIR}/../../../bin" "${QT6_INSTALL_PREFIX}/bin" /usr/lib/qt6/bin)
@@ -187,3 +218,44 @@ if(NOCH_QMLTESTRUNNER AND NOT WIN32)
 else()
     message(STATUS "qmltestrunner not found (or Windows): QML tests are not registered")
 endif()
+
+# Deepgram: the WebSocket client, the wire protocol and the live voice session.
+noch_add_unit_test(tst_wsclient
+    SOURCES tests/tst_wsclient.cpp tests/WsTestServer.h
+            src/voice/WsClient.cpp src/voice/WsClient.h
+    LIBS Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_deepgram
+    SOURCES tests/tst_deepgram.cpp tests/SpeechFakes.h tests/WsTestServer.h
+            src/voice/DeepgramAgent.cpp src/voice/DeepgramAgent.h
+            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
+            src/voice/WsClient.cpp src/voice/WsClient.h
+            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
+            ${NOCH_SPEECH_TO_TEXT_SOURCES}
+    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+
+noch_add_unit_test(tst_deepgramrest
+    SOURCES tests/tst_deepgramrest.cpp tests/SpeechFakes.h
+            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
+            src/voice/SpeechOut.cpp src/voice/SpeechOut.h
+            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
+            src/voice/WakeWord.cpp src/voice/WakeWord.h
+            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
+            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
+            ${NOCH_SPEECH_TO_TEXT_SOURCES}
+    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+
+# The same against the real service. Skipped unless DEEPGRAM_API_KEY is set, so the
+# key stays out of the repository and the normal run stays offline.
+noch_add_unit_test(tst_deepgramlive
+    SOURCES tests/tst_deepgramlive.cpp tests/SpeechFakes.h
+            src/voice/DeepgramAgent.cpp src/voice/DeepgramAgent.h
+            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
+            src/voice/WsClient.cpp src/voice/WsClient.h
+            src/voice/SpeechOut.cpp src/voice/SpeechOut.h
+            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
+            src/voice/WakeWord.cpp src/voice/WakeWord.h
+            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
+            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
+            ${NOCH_SPEECH_TO_TEXT_SOURCES}
+    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)

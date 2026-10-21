@@ -69,6 +69,8 @@ set(NOCH_SOURCES
     src/agent/StreamAccumulator.h
     src/agent/UserQuestions.cpp
     src/agent/UserQuestions.h
+    src/agent/TurnClassifier.cpp
+    src/agent/TurnClassifier.h
 
     src/app/QmlSingletons.h
 
@@ -96,6 +98,7 @@ set(NOCH_SOURCES
     src/media/AudioDevices.cpp
     src/media/AudioDevices.h
     src/media/MediaHub.cpp
+    src/media/MusicAgentBackend.cpp
     src/media/MediaHub.h
     src/media/MusicPlayer.cpp
     src/media/MusicPlayer.h
@@ -103,6 +106,9 @@ set(NOCH_SOURCES
     src/media/Radios.h
     src/media/SmtcMedia.cpp
     src/media/SmtcMedia.h
+    src/media/OnlineTrack.h
+    src/media/YtDlp.cpp
+    src/media/YtDlp.h
 
     src/platform/Appearance.cpp
     src/platform/Appearance.h
@@ -122,6 +128,11 @@ set(NOCH_SOURCES
 
     src/voice/BuddySfx.cpp
     src/voice/BuddySfx.h
+    src/voice/DeepgramAgent.cpp
+    src/voice/DeepgramAgent.h
+    src/voice/DeepgramProtocol.cpp
+    src/voice/DeepgramProtocol.h
+    src/voice/DeepgramTranscriber.cpp
     src/voice/Moonshine.cpp
     src/voice/Moonshine.h
     src/voice/MoonshineTranscriber.cpp
@@ -133,6 +144,8 @@ set(NOCH_SOURCES
     src/voice/SpeechOut.h
     src/voice/SpeechPlayer.cpp
     src/voice/SpeechPlayer.h
+    src/voice/StreamingPlayer.cpp
+    src/voice/StreamingPlayer.h
     src/voice/Transcriber.h
     src/voice/VoiceAudio.cpp
     src/voice/VoiceAudio.h
@@ -142,6 +155,8 @@ set(NOCH_SOURCES
     src/voice/WakeDetector.h
     src/voice/WakeWord.cpp
     src/voice/WakeWord.h
+    src/voice/WsClient.cpp
+    src/voice/WsClient.h
 )
 qt_add_executable(noch ${NOCH_SOURCES})
 
@@ -171,8 +186,6 @@ set(NOCH_QML_FILES
 
     qml/theme/Theme.qml
 
-    qml/components/AppContextMenu.qml
-    qml/components/DockItem.qml
     qml/components/Flyout.qml
     qml/components/Glass.qml
     qml/components/Glyph.qml
@@ -182,16 +195,12 @@ set(NOCH_QML_FILES
     qml/components/ResizeGrip.qml
     qml/components/Segmented.qml
     qml/components/SizeSlider.qml
-    qml/components/StatusBlock.qml
     qml/components/Toggle.qml
     qml/components/TooltipToast.qml
-    qml/components/WindowPreview.qml
 
     qml/panels/ClipboardView.qml
     qml/panels/FocusTimer.qml
     qml/panels/HubPanel.qml
-    qml/panels/MusicIconHit.qml
-    qml/panels/MusicPanel.qml
     qml/panels/NowPlaying.qml
     qml/panels/PaletteCard.qml
     qml/panels/SettingsPanel.qml
@@ -210,12 +219,13 @@ set(NOCH_QML_FILES
     qml/panels/settings/SettingsPillButton.qml
     qml/panels/settings/SettingsRingSwatch.qml
     qml/panels/settings/SettingsSectionHeader.qml
+    qml/panels/settings/SettingsTextArea.qml
     qml/panels/settings/SettingsSidebarItem.qml
     qml/panels/settings/SettingsToggleRow.qml
 
     qml/panels/settings/pages/AgentPage.qml
-    qml/panels/settings/pages/AppsPage.qml
     qml/panels/settings/pages/BuddyPage.qml
+    qml/panels/settings/pages/DeepgramPage.qml
     qml/panels/settings/pages/GeneralPage.qml
     qml/panels/settings/pages/LookPage.qml
     qml/panels/settings/pages/ModelPage.qml
@@ -223,7 +233,6 @@ set(NOCH_QML_FILES
     qml/panels/settings/pages/VoicePage.qml
 
     qml/flyouts/HubFlyout.qml
-    qml/flyouts/MusicFlyout.qml
     qml/flyouts/PaletteFlyout.qml
     qml/flyouts/SettingsFlyout.qml
 
@@ -232,6 +241,7 @@ set(NOCH_QML_FILES
     qml/buddy/BuddyBubble.qml
     qml/buddy/BuddyChartCard.qml
     qml/buddy/BuddyHelpCard.qml
+    qml/buddy/BuddyMenu.qml
     qml/buddy/BuddyNeonRing.qml
     qml/buddy/BuddyPanel.qml
     qml/buddy/BuddyQuestionCard.qml

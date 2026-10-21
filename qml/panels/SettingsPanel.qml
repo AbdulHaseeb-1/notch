@@ -10,8 +10,6 @@ Item {
     id: settings
 
     property var prefs
-    property var dockModel: []
-    property var runningList: []
     property bool startupSupported: false
     property bool launchAtStartup: false
     property bool blurSupported: false
@@ -21,12 +19,8 @@ Item {
     property string version: ""
 
     signal closeRequested()
-    signal addRequested()
-    signal pinAppRequested(string name, string path)
     signal resetRequested()
     signal quitRequested()
-    signal unpinRequested(int index)
-    signal moveRequested(int from, int to)
     signal startupToggled(bool enabled)
     signal blurToggled(bool on)
     signal resetBuddyPosRequested()
@@ -42,23 +36,23 @@ Item {
     // for callers that open Settings on one of those.
     property string page: "general"
     property int tab: 0
-    onTabChanged: page = ["general", "apps", "buddy"][Math.max(0, Math.min(2, tab))]
+    onTabChanged: page = ["general", "buddy"][Math.max(0, Math.min(1, tab))]
 
     readonly property var pageList: [
         { id: "general", group: qsTr("Notch"), label: qsTr("General"), icon: "settings",
-          keys: "size scale notch clock auto hide delay fullscreen hotkey palette startup launch blur icons monochrome position" },
-        { id: "apps", group: qsTr("Notch"), label: qsTr("Apps"), icon: "app",
-          keys: "pinned dock installed apps add remove unpin reorder" },
+          keys: "size scale notch auto hide delay fullscreen hotkey palette startup launch blur position" },
         { id: "buddy", group: qsTr("Buddy"), label: qsTr("Buddy"), icon: "spark",
           keys: "desktop buddy orb companion sound effects chime volume position chat" },
         { id: "look", group: qsTr("Buddy"), label: qsTr("Look & glow"), icon: "droplet",
           keys: "ring colour color style neon aurora comet orbit beads pulse prism halo thickness speed glow shadow bloom floor listening speaking animation waves screen cursor" },
         { id: "voice", group: qsTr("Buddy"), label: qsTr("Voice"), icon: "mic",
           keys: "microphone speech text wake word hey buddy moonshine transcription read aloud speak tts google cloud kokoro voice" },
+        { id: "deepgram", group: qsTr("Buddy"), label: qsTr("Deepgram"), icon: "activity",
+          keys: "deepgram live conversation voice agent hands-free talk speech listen hear think speak stt tts aura nova flux haiku claude model prompt api key interrupt barge headphones speakers" },
         { id: "model", group: qsTr("Agent"), label: qsTr("AI model"), icon: "cpu",
           keys: "provider openai anthropic ollama custom api key model endpoint temperature test connection" },
         { id: "agent", group: qsTr("Agent"), label: qsTr("Agent & tools"), icon: "terminal",
-          keys: "tools bash shell computer use editor code search memory web fetch advisor tasks steps screenshots detail handoffs stream thinking" },
+          keys: "tools bash shell computer use editor code search memory web fetch advisor tasks steps screenshots detail handoffs stream thinking jev classifier classify intent request" },
         { id: "safety", group: qsTr("Agent"), label: qsTr("Safety"), icon: "shield-check",
           keys: "permission mode approve approval auto-approve bypass trusted plan ask rules always allow workspace redact secrets traces instructions commands" }
     ]
@@ -118,9 +112,6 @@ Item {
         }
     }
 
-    property string appFilter: ""
-    property var availableList: []
-
     // ---- AI provider (Buddy tab) -----------------------------------------
     readonly property var providerInfo: ({
         openai: {
@@ -177,6 +168,8 @@ Item {
     property var remoteModels: []
     property string testState: "idle"     // idle | testing | ok | failed
     property string testMessage: ""
+    property string classifierTestState: "idle"     // idle | testing | ok | failed
+    property string classifierTestMessage: ""
 
     readonly property bool realChat: prefs && prefs.buddyProvider !== "none"
     readonly property bool buddyMovedCustom: prefs && (prefs.buddyX >= 0 || prefs.buddyY >= 0)
@@ -265,8 +258,22 @@ Item {
         BuddyAgent.probe()
     }
 
+    function runClassifierTest() {
+        settings.classifierTestState = "testing"
+        settings.classifierTestMessage = qsTr("Asking %1…").arg(BuddyAgent.classifierUrl())
+        BuddyAgent.testClassifier()
+    }
+    function classifierEdited() {
+        settings.classifierTestState = "idle"
+        settings.classifierTestMessage = ""
+    }
+
     Connections {
         target: BuddyAgent
+        function onClassifierTestFinished(ok, message) {
+            settings.classifierTestState = ok ? "ok" : "failed"
+            settings.classifierTestMessage = message
+        }
         function onTestFinished(ok, message) {
             settings.testState = ok ? "ok" : "failed"
             settings.testMessage = message
@@ -290,36 +297,13 @@ Item {
     implicitWidth: Theme.fit(Theme.settingsWidth, maxPanelWidth)
     readonly property bool compact: width < 760
     readonly property real sidebarW: compact ? 62 : 216
-    // The Apps lists grow with the screen instead of a fixed 322 px.
-    readonly property real appsListH: Math.max(240, Math.min(460, maxBodyHeight - 150))
     // One steady height for every page, so switching pages never makes the panel jump.
     readonly property real targetBodyHeight: Math.min(Math.max(380, maxBodyHeight), 600)
     implicitHeight: headerH + 1 + content.height + 1 + footerH
     readonly property real targetHeight: headerH + 1 + targetBodyHeight + 1 + footerH
 
-    function refreshAvailableApps() {
-        const raw = AppIndex.availableApps(settings.appFilter)
-        const filtered = []
-        for (let i = 0; i < raw.length; ++i) {
-            const item = raw[i]
-            if (!Dock.isPinned(item.path || "", item.exe || ""))
-                filtered.push(item)
-        }
-        settings.availableList = filtered
-    }
-
-    onDockModelChanged: refreshAvailableApps()
-    onRunningListChanged: if (settings.visible) refreshAvailableApps()
-    onAppFilterChanged: refreshAvailableApps()
-    onPageChanged: if (page === "apps") refreshAvailableApps()
-    Component.onCompleted: { refreshAvailableApps(); loadProviderMemory() }
-
-    Connections {
-        target: AppIndex
-        function onIndexReady() {
-            if (settings.visible)
-                settings.refreshAvailableApps()
-        }
+    Component.onCompleted: {
+        loadProviderMemory()
     }
 
     // ---------- reusable components -------------------------------------------
@@ -541,7 +525,6 @@ Item {
                                 width: parent.width
                                 text: settings.compact ? "" : navEntry.modelData.label
                                 icon: navEntry.modelData.icon
-                                badge: navEntry.modelData.id === "apps" && !settings.compact ? String(settings.dockModel.length) : ""
                                 selected: settings.page === navEntry.modelData.id
                                 onClicked: settings.page = navEntry.modelData.id
                             }
@@ -570,16 +553,16 @@ Item {
             height: parent.height
 
             Component { id: generalC; GeneralPage { panel: settings } }
-            Component { id: appsC; AppsPage { panel: settings } }
             Component { id: buddyC; BuddyPage { panel: settings } }
             Component { id: lookC; LookPage { panel: settings } }
             Component { id: voiceC; VoicePage { panel: settings } }
+            Component { id: deepgramC; DeepgramPage { panel: settings } }
             Component { id: modelC; ModelPage { panel: settings } }
             Component { id: agentC; AgentPage { panel: settings } }
             Component { id: safetyC; SafetyPage { panel: settings } }
             readonly property var components: ({
-                general: generalC, apps: appsC, buddy: buddyC, look: lookC,
-                voice: voiceC, model: modelC, agent: agentC, safety: safetyC
+                general: generalC, buddy: buddyC, look: lookC,
+                voice: voiceC, deepgram: deepgramC, model: modelC, agent: agentC, safety: safetyC
             })
 
             Repeater {

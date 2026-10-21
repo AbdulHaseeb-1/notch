@@ -201,6 +201,122 @@ private slots:
         QVERIFY(uq::summary(longQ.questions).size() < 70);
         QVERIFY(uq::summary({}).size() > 0);
     }
+
+    // ---- answers given out loud ---------------------------------------------------------
+
+    static uq::Question fmtQuestion(bool multi = false) {
+        return uq::parse(input(QJsonArray{ question("Which format?", QJsonArray{ option("PDF"), option("Word document"),
+                                                                                 option("Plain text") }, "Format", multi) })).questions.first();
+    }
+
+    void aSpokenOrdinalOrNumberPicksThatOption_data() {
+        QTest::addColumn<QString>("said");
+        QTest::addColumn<int>("index");
+        QTest::newRow("first") << "the first one" << 0;
+        QTest::newRow("second") << "Second, please." << 1;
+        QTest::newRow("third") << "I'll take the third" << 2;
+        QTest::newRow("last") << "the last one" << 2;
+        QTest::newRow("option two") << "option two" << 1;
+        QTest::newRow("number 3") << "number 3" << 2;
+        QTest::newRow("bare number") << "2" << 1;
+    }
+    void aSpokenOrdinalOrNumberPicksThatOption() {
+        QFETCH(QString, said);
+        QFETCH(int, index);
+        const uq::Answer a = uq::matchSpoken(fmtQuestion(), said);
+        QCOMPARE(a.selected, (QList<int>{ index }));
+        QVERIFY(a.other.isEmpty());
+    }
+
+    void spokenWordsFromALabelPickThatOption() {
+        QCOMPARE(uq::matchSpoken(fmtQuestion(), "PDF").selected, (QList<int>{ 0 }));
+        QCOMPARE(uq::matchSpoken(fmtQuestion(), "make it a pdf please").selected, (QList<int>{ 0 }));
+        QCOMPARE(uq::matchSpoken(fmtQuestion(), "the word document").selected, (QList<int>{ 1 }));
+        QCOMPARE(uq::matchSpoken(fmtQuestion(), "word").selected, (QList<int>{ 1 }));       // part of the label is enough
+        QCOMPARE(uq::matchSpoken(fmtQuestion(), "just plain text").selected, (QList<int>{ 2 }));
+    }
+
+    void multiSelectTakesEveryOptionNamed() {
+        const uq::Question q = uq::parse(input(QJsonArray{ question("Which extras?",
+            QJsonArray{ option("Table of contents"), option("Index"), option("Cover page") }, "", true) })).questions.first();
+        const uq::Answer a = uq::matchSpoken(q, "the index and the cover page");
+        QCOMPARE(a.selected, (QList<int>{ 1, 2 }));
+    }
+
+    void wordsThatFitNoOptionBecomeTheUsersOwnAnswer() {
+        const uq::Answer a = uq::matchSpoken(fmtQuestion(), "markdown, with a table of contents");
+        QVERIFY(a.selected.isEmpty());
+        QCOMPARE(a.other, QStringLiteral("markdown, with a table of contents"));
+        // naming two single-choice options equally is not an answer either
+        const uq::Answer both = uq::matchSpoken(fmtQuestion(), "either PDF or plain text");
+        QVERIFY(both.selected.isEmpty());
+        QVERIFY(!both.other.isEmpty());
+    }
+
+    void spokenInputCannotSelectAnythingNotOffered() {
+        const uq::Answer far = uq::matchSpoken(fmtQuestion(), "option four");     // there are only three
+        QVERIFY(far.selected.isEmpty());
+        QVERIFY(uq::matchSpoken(fmtQuestion(), "").empty());
+        // invisible characters in what was heard are dropped
+        QCOMPARE(uq::matchSpoken(fmtQuestion(), QStringLiteral("p\u200bdf")).other.contains(QChar(0x200b)), false);
+    }
+
+    void severalQuestionsInOneBreath() {
+        const uq::Parsed p = uq::parse(input(QJsonArray{ goodQuestion("Which format?"),
+            question("Which size?", QJsonArray{ option("Small"), option("Large") }) }));
+        const QList<uq::Answer> a = uq::matchSpokenAll(p.questions, "word; large");
+        QCOMPARE(a.size(), 2);
+        QCOMPARE(a.at(0).selected, (QList<int>{ 1 }));
+        QCOMPARE(a.at(1).selected, (QList<int>{ 1 }));
+        // one part answers every question
+        const QList<uq::Answer> same = uq::matchSpokenAll(p.questions, "the second one");
+        QCOMPARE(same.at(0).selected, (QList<int>{ 1 }));
+        QCOMPARE(same.at(1).selected, (QList<int>{ 1 }));
+        QVERIFY(uq::complete(a));
+    }
+
+    void spokenDecisions_data() {
+        QTest::addColumn<QString>("said");
+        QTest::addColumn<int>("decision");
+        using D = uq::Decision;
+        QTest::newRow("yes") << "yes" << int(D::Approve);
+        QTest::newRow("go ahead") << "Sure, go ahead." << int(D::Approve);
+        QTest::newRow("okay") << "okay" << int(D::Approve);
+        QTest::newRow("do it") << "do it" << int(D::Approve);
+        QTest::newRow("always") << "yes, always" << int(D::ApproveAlways);
+        QTest::newRow("every time") << "sure, every time" << int(D::ApproveAlways);
+        QTest::newRow("no") << "no" << int(D::Deny);
+        QTest::newRow("dont") << "don't do that" << int(D::Deny);
+        QTest::newRow("do not") << "please do not" << int(D::Deny);
+        QTest::newRow("stop") << "stop" << int(D::Deny);
+        QTest::newRow("no stop") << "no, stop" << int(D::Deny);
+        QTest::newRow("not now") << "not now" << int(D::Deny);
+        QTest::newRow("first verdict wins") << "yes but not the second one" << int(D::Approve);
+        QTest::newRow("unclear") << "hmm what does that mean" << int(D::Unclear);
+        QTest::newRow("empty") << "" << int(D::Unclear);
+        QTest::newRow("a question back") << "which file is it" << int(D::Unclear);
+    }
+    void spokenDecisions() {
+        QFETCH(QString, said);
+        QFETCH(int, decision);
+        QCOMPARE(int(uq::spokenDecision(said)), decision);
+    }
+
+    void aQuestionIsReadOutWithItsOptions() {
+        const uq::Parsed p = uq::parse(input(QJsonArray{ goodQuestion() }));
+        const QString t = uq::spokenForm(p.questions);
+        QVERIFY2(t.contains("Which format?") && t.contains("PDF, or Word"), qPrintable(t));
+        const uq::Parsed two = uq::parse(input(QJsonArray{ goodQuestion("a?"), goodQuestion("b?") }));
+        QVERIFY(uq::spokenForm(two.questions).contains("Question 2: b?"));
+    }
+
+    void theDefaultOptionIsTheRecommendedOneElseTheFirst() {
+        const uq::Parsed p = uq::parse(input(QJsonArray{
+            question("Pick?", QJsonArray{ option("A"), option("B (Recommended)"), option("C") }),
+            question("Pick again?", QJsonArray{ option("X"), option("Y") }) }));
+        QCOMPARE(uq::defaultOption(p.questions.at(0)), 1);
+        QCOMPARE(uq::defaultOption(p.questions.at(1)), 0);
+    }
 };
 
 QTEST_GUILESS_MAIN(TstUserQuestions)
