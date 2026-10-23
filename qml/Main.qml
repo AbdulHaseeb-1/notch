@@ -82,6 +82,12 @@ Window {
         property bool buddyAllowAskUser: true
         property bool buddyAllowScreenshots: true
         property bool buddyAllowMusic: true
+        // Connected apps (Settings > Connectors): their tools are offered to Buddy while this is on.
+        property bool buddyAllowConnectors: true
+        // Agent Skills: folders of instructions Buddy loads when a task matches. Names switched
+        // off in Settings are kept comma separated.
+        property bool buddyAllowSkills: true
+        property string buddyDisabledSkills: ""
         // ---- Push-to-talk voice (off until the user adds a speech service) --
         property bool buddyVoiceEnabled: false
         property bool buddyVoiceHotkey: true
@@ -157,6 +163,19 @@ Window {
         property string buddyClassifierBase: "https://openrouter.ai/api/v1/systemone"
         property string buddyClassifierKey: ""
         property string buddyClassifierModel: "inception/mercury-decide:free"
+        // ---- Long-term memory (Mem0) ------------------------------------------
+        // "local" is the Docker stack in docker/mem0 (nothing leaves this computer),
+        // "platform" is api.mem0.ai, "custom" is any address that serves the same API.
+        property bool buddyMemEnabled: true
+        property string buddyMemBackend: "local"
+        property string buddyMemUrl: ""
+        property string buddyMemKey: ""
+        property string buddyMemUserId: "noch"
+        // Local Mem0 borrows the chat provider; blank model = the chat model.
+        property string buddyMemLlmModel: ""
+        property string buddyMemEmbedModel: ""
+        property string buddyMemEmbedBase: ""
+        property string buddyMemEmbedKey: ""
         // ---- Desktop buddy sound effects -------------------------------------
         property bool buddySfxEnabled: true
         property real buddySfxVolume: 0.75
@@ -172,7 +191,7 @@ Window {
         cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyCuGlowStyle, cfg.buddyRingStyle, cfg.buddyRingThickness, cfg.buddyRingSpeed, cfg.buddyRingShader, cfg.buddyGlowStrength, cfg.buddyGlowMode, cfg.buddyGlowAlways, cfg.buddyVoiceFx, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
         cfg.buddyAllowTodoTask,
-        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots, cfg.buddyAllowMusic,
+        cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots, cfg.buddyAllowMusic, cfg.buddyAllowConnectors, cfg.buddyAllowSkills, cfg.buddyDisabledSkills,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceAutoSend,
         cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddySpeakReports,
         cfg.buddyLiveEnabled, cfg.buddySttEngine, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel,
@@ -180,6 +199,7 @@ Window {
         cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsKokoroBase, cfg.buddyTtsKokoroVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking,
         cfg.buddyClassifierEnabled, cfg.buddyClassifierBase, cfg.buddyClassifierModel,
+        cfg.buddyMemEnabled, cfg.buddyMemBackend, cfg.buddyMemUrl, cfg.buddyMemUserId, cfg.buddyMemLlmModel, cfg.buddyMemEmbedModel, cfg.buddyMemEmbedBase,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
     onSnapshotKeyChanged: snapshotSyncTimer.restart()
@@ -985,12 +1005,24 @@ Window {
     }
     Binding { target: BuddyAgent; property: "classifierModel"; value: cfg.buddyClassifierModel }
     Binding { target: BuddyAgent; property: "classifierEnabled"; value: cfg.buddyClassifierEnabled }
+    Binding { target: BuddyAgent; property: "memBackend"; value: cfg.buddyMemBackend }
+    Binding { target: BuddyAgent; property: "memUrl"; value: cfg.buddyMemUrl }
+    Binding { target: BuddyAgent; property: "memKey"; value: cfg.buddyMemKey }
+    Binding { target: BuddyAgent; property: "memUserId"; value: cfg.buddyMemUserId }
+    Binding { target: BuddyAgent; property: "memLlmModel"; value: cfg.buddyMemLlmModel }
+    Binding { target: BuddyAgent; property: "memEmbedModel"; value: cfg.buddyMemEmbedModel }
+    Binding { target: BuddyAgent; property: "memEmbedBase"; value: cfg.buddyMemEmbedBase }
+    Binding { target: BuddyAgent; property: "memEmbedKey"; value: cfg.buddyMemEmbedKey }
+    Binding { target: BuddyAgent; property: "memEnabled"; value: cfg.buddyMemEnabled }
     Binding { target: BuddyAgent; property: "officialComputerTools"; value: cfg.buddyOfficialComputer }
     Binding { target: BuddyAgent; property: "computerDetail"; value: cfg.buddyComputerDetail }
     Binding { target: BuddyAgent; property: "maxSteps"; value: cfg.buddyMaxSteps }
     Binding { target: BuddyAgent; property: "allowAskUser"; value: cfg.buddyAllowAskUser }
     Binding { target: BuddyAgent; property: "allowScreenshots"; value: cfg.buddyAllowScreenshots }
     Binding { target: BuddyAgent; property: "allowMusic"; value: cfg.buddyAllowMusic }
+    Binding { target: BuddyAgent; property: "allowConnectors"; value: cfg.buddyAllowConnectors }
+    Binding { target: BuddyAgent; property: "allowSkills"; value: cfg.buddyAllowSkills }
+    Binding { target: BuddyAgent; property: "disabledSkills"; value: cfg.buddyDisabledSkills }
     Binding { target: Voice; property: "enabled"; value: cfg.buddyVoiceEnabled }
     Binding { target: TalkKey; property: "enabled"; value: (cfg.buddyVoiceEnabled || cfg.buddyLiveEnabled) && cfg.buddyVoiceHotkey }
     Binding { target: Wake; property: "enabled"; value: cfg.buddyWakeEnabled }

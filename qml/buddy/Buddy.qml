@@ -108,7 +108,23 @@ Item {
     readonly property bool micLive: Voice.listening || Wake.state === "awaiting" || fxPreview === "listen" || liveListening
     // Being typed to: a quieter version of the same attentiveness.
     readonly property bool typingTo: session === "input" && !micLive
-    readonly property bool listenFxOn: voiceFx !== "off" && (micLive || typingTo)
+    // While the buddy thinks its eyes give way to three dots on the orb (the ring and glow are
+    // already lit). The dots only move while no bubble is open: a moving item redraws the
+    // whole bubble window every frame.
+    readonly property bool thinkLook: session === "thinking" && busy
+    readonly property real thinkDot: Math.max(3, Math.round(orbSize * 0.09))
+    property real thinkT: 0
+    NumberAnimation on thinkT {
+        from: 0; to: 1; duration: 1300; loops: Animation.Infinite
+        running: buddy.thinkLook && !thought.visible && !buddy.motionPaused
+    }
+    function thinkWave(i) {
+        return 0.5 + 0.5 * Math.sin(thinkT * 2 * Math.PI - i * 1.1)
+    }
+    // Only a live microphone starts the listening rings. Typing used to start them too, and
+    // they then turned for the whole time the prompt was open, redrawing the bubble window
+    // every frame (the glow's light and the typing glow still show while typing).
+    readonly property bool listenFxOn: voiceFx !== "off" && micLive
     readonly property bool speakFxOn: voiceFx !== "off" && (Speech.speaking || Live.speaking || mood === "speaking" || fxPreview === "speak")
     readonly property bool fxActive: listenFxOn || speakFxOn
     // How much is going on, for the light the orb throws.
@@ -916,8 +932,11 @@ Item {
 
     FrameAnimation {
         id: gazeSpring
+        // The prompt ("input") is not a reason to run every frame: its eyes settle once
+        // (openPrompt sets springing), then the loop stops. While it ran, the breathing and
+        // the gaze redrew the whole bubble window at vsync, which is what made typing lag.
         running: buddy.visible && !buddy.motionPaused && !buddy.calmMotion
-                 && (buddy.springing || buddy.session !== "idle" || buddy.busy)
+                 && (buddy.springing || (!thought.visible && (buddy.busy || buddy.session !== "idle")))
         onTriggered: buddy.springStep(frameTime)
     }
     Timer {
@@ -951,7 +970,9 @@ Item {
         strength: buddy.glowStrength
         activity: buddy.glowActivity
         always: buddy.glowAlways
-        running: buddy.visible && !buddy.motionPaused
+        // The light turns slowly all the time; while the bubble is open the whole bubble
+        // window would be redrawn on every frame for it, so it holds still until the bubble closes.
+        running: buddy.visible && !buddy.motionPaused && !thought.visible
     }
 
     // ---- visual: expressive companion orb -----------------------------------
@@ -975,91 +996,125 @@ Item {
             yScale: (buddyHit.pressed && !buddyHit.dragged ? 0.92 : 1.0) * buddy.squashY
         }
 
-        // left eye
+        // Both eyes in one layer: computeEyePoses() sets each eye's own opacity every frame,
+        // so hiding them for the thinking dots has to happen up here.
         Item {
-            id: eyeL
-            x: -(buddy.eyeW * buddy.scale_) / 2
-            y: -(buddy.eyeH * buddy.scale_) / 2
-            width: buddy.eyeW * buddy.scale_
-            height: buddy.eyeH * buddy.scale_
-            transform: Matrix4x4 { id: eyeLMat }
+            id: eyeLayer
+            opacity: buddy.thinkLook ? 0 : 1
+            Behavior on opacity { NumberAnimation { duration: 160 } }
 
-            Rectangle {
-                id: eyeLPill
-                anchors.fill: parent
-                radius: width / 2
-                color: buddy.mood === "love" ? Theme.loveSoft
-                     : (buddy.mood === "error" ? Theme.danger
-                     : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
-                Behavior on color { ColorAnimation { duration: 140 } }
-                antialiasing: true
+            // left eye
+            Item {
+                id: eyeL
+                x: -(buddy.eyeW * buddy.scale_) / 2
+                y: -(buddy.eyeH * buddy.scale_) / 2
+                width: buddy.eyeW * buddy.scale_
+                height: buddy.eyeH * buddy.scale_
+                transform: Matrix4x4 { id: eyeLMat }
+
+                Rectangle {
+                    id: eyeLPill
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: buddy.mood === "love" ? Theme.loveSoft
+                         : (buddy.mood === "error" ? Theme.danger
+                         : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                    antialiasing: true
+                }
+
+                // Lower-eyelid mask that rises up when happy to carve a cute '^' arc
+                Rectangle {
+                    width: parent.width * 1.45
+                    height: parent.height * 0.95
+                    radius: width / 2
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: parent.height * (1.05 - buddy.happyArc * 0.62)
+                    color: orb.color
+                    visible: buddy.happyArc > 0.03 && !buddy.blinkShut
+                    antialiasing: true
+                }
+
+                // Inner specular glint dot (gives soul & lifelike depth)
+                Rectangle {
+                    width: Math.max(2, Math.round(parent.width * 0.34))
+                    height: width
+                    radius: width / 2
+                    x: Math.round(parent.width * 0.22)
+                    y: Math.round(parent.height * 0.16)
+                    color: "#ffffff"
+                    opacity: buddy.blinkShut ? 0 : 0.92
+                }
             }
 
-            // Lower-eyelid mask that rises up when happy to carve a cute '^' arc
-            Rectangle {
-                width: parent.width * 1.45
-                height: parent.height * 0.95
-                radius: width / 2
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height * (1.05 - buddy.happyArc * 0.62)
-                color: orb.color
-                visible: buddy.happyArc > 0.03 && !buddy.blinkShut
-                antialiasing: true
-            }
+            // right eye
+            Item {
+                id: eyeR
+                x: -(buddy.eyeW * buddy.scale_) / 2
+                y: -(buddy.eyeH * buddy.scale_) / 2
+                width: buddy.eyeW * buddy.scale_
+                height: buddy.eyeH * buddy.scale_
+                transform: Matrix4x4 { id: eyeRMat }
 
-            // Inner specular glint dot (gives soul & lifelike depth)
-            Rectangle {
-                width: Math.max(2, Math.round(parent.width * 0.34))
-                height: width
-                radius: width / 2
-                x: Math.round(parent.width * 0.22)
-                y: Math.round(parent.height * 0.16)
-                color: "#ffffff"
-                opacity: buddy.blinkShut ? 0 : 0.92
+                Rectangle {
+                    id: eyeRPill
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: buddy.mood === "love" ? Theme.loveSoft
+                         : (buddy.mood === "error" ? Theme.danger
+                         : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
+                    Behavior on color { ColorAnimation { duration: 140 } }
+                    antialiasing: true
+                }
+
+                // Lower-eyelid mask that rises up when happy to carve a cute '^' arc
+                Rectangle {
+                    width: parent.width * 1.45
+                    height: parent.height * 0.95
+                    radius: width / 2
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: parent.height * (1.05 - buddy.happyArc * 0.62)
+                    color: orb.color
+                    visible: buddy.happyArc > 0.03 && !buddy.blinkShut
+                    antialiasing: true
+                }
+
+                // Inner specular glint dot
+                Rectangle {
+                    width: Math.max(2, Math.round(parent.width * 0.34))
+                    height: width
+                    radius: width / 2
+                    x: Math.round(parent.width * 0.22)
+                    y: Math.round(parent.height * 0.16)
+                    color: "#ffffff"
+                    opacity: buddy.blinkShut ? 0 : 0.92
+                }
             }
         }
 
-        // right eye
-        Item {
-            id: eyeR
-            x: -(buddy.eyeW * buddy.scale_) / 2
-            y: -(buddy.eyeH * buddy.scale_) / 2
-            width: buddy.eyeW * buddy.scale_
-            height: buddy.eyeH * buddy.scale_
-            transform: Matrix4x4 { id: eyeRMat }
-
-            Rectangle {
-                id: eyeRPill
-                anchors.fill: parent
-                radius: width / 2
-                color: buddy.mood === "love" ? Theme.loveSoft
-                     : (buddy.mood === "error" ? Theme.danger
-                     : ((buddy.session === "thinking" || buddy.busy) ? Theme.accent : "#ffffff"))
-                Behavior on color { ColorAnimation { duration: 140 } }
-                antialiasing: true
-            }
-
-            // Lower-eyelid mask that rises up when happy to carve a cute '^' arc
-            Rectangle {
-                width: parent.width * 1.45
-                height: parent.height * 0.95
-                radius: width / 2
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: parent.height * (1.05 - buddy.happyArc * 0.62)
-                color: orb.color
-                visible: buddy.happyArc > 0.03 && !buddy.blinkShut
-                antialiasing: true
-            }
-
-            // Inner specular glint dot
-            Rectangle {
-                width: Math.max(2, Math.round(parent.width * 0.34))
-                height: width
-                radius: width / 2
-                x: Math.round(parent.width * 0.22)
-                y: Math.round(parent.height * 0.16)
-                color: "#ffffff"
-                opacity: buddy.blinkShut ? 0 : 0.92
+        // Thinking: three dots in the buddy's colours stand in for the eyes. They are the
+        // orb's children, so they lean, bob and squash with it.
+        Row {
+            id: thinkDots
+            anchors.centerIn: parent
+            spacing: Math.max(3, Math.round(buddy.orbSize * 0.176) - buddy.thinkDot)
+            opacity: buddy.thinkLook ? 1 : 0
+            visible: opacity > 0.01
+            Behavior on opacity { NumberAnimation { duration: 160 } }
+            Repeater {
+                model: 3
+                Rectangle {
+                    id: tdot
+                    required property int index
+                    readonly property real lift: buddy.thinkWave(index) * (0.4 + 0.6 * buddy.mo)
+                    width: buddy.thinkDot
+                    height: width
+                    radius: width / 2
+                    color: buddy.ringColors[index]
+                    opacity: 0.4 + 0.6 * lift
+                    scale: 0.82 + 0.28 * lift
+                    antialiasing: true
+                }
             }
         }
     }
@@ -1100,7 +1155,7 @@ Item {
             stops: buddy.ringColors
             speed: buddy.ringSpeed * (buddy.mo < 1 ? 0.4 : (buddy.busy ? 1.15 : 1))
             glow: 0.6 + buddy.glowStrength
-            running: neonHalo.visible && !buddy.motionPaused
+            running: neonHalo.visible && !buddy.motionPaused && !thought.visible
         }
     }
 
@@ -1491,6 +1546,7 @@ Item {
         hop(wasShown ? 50 : 85)
         thought.openInput()
         lookAtBubble(26, 4)
+        buddy.springing = true   // settle the eyes on the bubble once; gazeSpring stops after that
         if (BuddySound)
             BuddySound.play(wasShown ? "pop" : "wake")
     }
@@ -1584,7 +1640,7 @@ Item {
         for (let i = 0; i < list.length; ++i) {
             const c = list[i]
             lines.push("- `/" + c.name + (c.argumentHint ? " " + c.argumentHint : "") + "` — " + c.description
-                       + (c.source === "builtin" ? "" : (c.source === "project" ? qsTr(" (this workspace)") : qsTr(" (yours)"))))
+                       + (c.source === "builtin" ? "" : (c.source === "skill" ? qsTr(" (skill)") : (c.source === "project" ? qsTr(" (this workspace)") : qsTr(" (yours)")))))
         }
         lines.push("")
         lines.push(qsTr("Your own commands are Markdown files in `.noch/commands` of the workspace, or in Noch's data folder under `commands`."))
@@ -1729,6 +1785,9 @@ Item {
             break
         case "instructions":
             showLocal(typed, instructionsText())
+            break
+        case "skills":
+            showLocal(typed, BuddyAgent.skillsReport())
             break
         default:
             showLocal(typed, qsTr("I don't know how to run /%1.").arg(cmd.name))

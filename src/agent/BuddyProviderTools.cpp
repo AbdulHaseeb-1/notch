@@ -13,8 +13,16 @@
 
 using namespace noch::buddyprovider;
 
+// Tools of connected apps are named gmail_* or mcp_<server>_*.
+static bool isConnectorToolName(const QString &name)
+{
+    return name.startsWith(QLatin1String("gmail_")) || name.startsWith(QLatin1String("mcp_"));
+}
+
 QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input)
 {
+    if (isConnectorToolName(name))
+        return connectors::iconForConnectorTool(name);
     if (name == QLatin1String("bash"))
         return QStringLiteral("terminal");
     if (name == QLatin1String("computer")) {
@@ -49,11 +57,20 @@ QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input
             return QStringLiteral("activity");
         return QStringLiteral("tasks");
     }
+    if (name == QLatin1String("skill"))
+        return QStringLiteral("spark");
     return QStringLiteral("bolt");
 }
 
 QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &input)
 {
+    if (name.startsWith(QLatin1String("gmail_")))
+        return QStringLiteral("GMAIL");
+    if (name.startsWith(QLatin1String("mcp_"))) {
+        const QString rest = name.mid(4);
+        const int cut = rest.indexOf(QLatin1Char('_'));
+        return rest.left(cut > 0 ? cut : rest.size()).toUpper();
+    }
     if (name == QLatin1String("bash"))
         return QStringLiteral("SHELL");
     if (name == QLatin1String("computer"))
@@ -91,6 +108,26 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
 
 QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject &input)
 {
+    if (name.startsWith(QLatin1String("gmail_"))) {
+        const auto field = [&input](const char *k, int max) {
+            return input.value(QLatin1String(k)).toString().simplified().left(max);
+        };
+        if (name == QLatin1String("gmail_search_messages")) {
+            const QString q = field("query", 40);
+            return q.isEmpty() ? QStringLiteral("Look at the latest email") : QStringLiteral("Search Gmail: %1").arg(q);
+        }
+        if (name == QLatin1String("gmail_read_message"))
+            return QStringLiteral("Read an email");
+        if (name == QLatin1String("gmail_read_thread"))
+            return QStringLiteral("Read an email conversation");
+        if (name == QLatin1String("gmail_create_draft") || name == QLatin1String("gmail_send_message")) {
+            const QString verb = name == QLatin1String("gmail_send_message") ? QStringLiteral("Send an email") : QStringLiteral("Draft an email");
+            const QString to = field("to", 40);
+            return to.isEmpty() ? verb : QStringLiteral("%1 to %2").arg(verb, to);
+        }
+    }
+    if (name.startsWith(QLatin1String("mcp_")))
+        return connectors::prettyToolName(name);
     if (name == QLatin1String("bash")) {
         QString cmd = input.value(QStringLiteral("command")).toString().simplified();
         if (cmd.size() > 44)
@@ -227,11 +264,20 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
         const int count = input.value(QStringLiteral("todos")).toArray().size();
         return QStringLiteral("Update task checklist (%1 items)").arg(count);
     }
+    if (name == QLatin1String("skill")) {
+        const QString file = input.value(QStringLiteral("file")).toString().simplified().left(40);
+        const QString skill = input.value(QStringLiteral("name")).toString().simplified().left(40);
+        return file.isEmpty() ? QStringLiteral("Load skill %1").arg(skill) : QStringLiteral("Read %1 of skill %2").arg(file, skill);
+    }
     return name;
 }
 
 QString BuddyProvider::detailForToolCall(const QString &name, const QJsonObject &input)
 {
+    // What an approval card shows for a connected app: every argument, so the user sees the
+    // exact recipient, subject and text before it goes anywhere.
+    if (isConnectorToolName(name))
+        return connectors::describeArguments(input, 1500);
     if (name == QLatin1String("bash"))
         return QStringLiteral("$ ") + input.value(QStringLiteral("command")).toString().trimmed();
     if (name == QLatin1String("computer")) {
@@ -1004,21 +1050,49 @@ void BuddyProvider::executeMemorySearchTool(const PendingToolCall &call)
 
     MemoryStore store(memoriesPath());
     const QList<MemoryStore::SearchHit> hits = store.search(query, topK);
-    if (hits.isEmpty()) {
-        finishCurrentToolCall(call, QStringLiteral("No saved memories match \"%1\".").arg(query),
-                              QString(), false);
+    QStringList localLines;
+    for (const MemoryStore::SearchHit &h : hits) {
+        localLines << QStringLiteral("\n• /memories/%1%2\n  %3")
+                          .arg(h.fact.id,
+                               h.fact.procedure ? QStringLiteral(" [procedure]") : QString(),
+                               h.fact.gist);
+    }
+    if (m_mem->searchReady()) {
+        // Long-term memory answers too; the call finishes in onMemSearched().
+        m_memToolPending = true;
+        m_memToolCall = call;
+        m_memToolQuery = query;
+        m_memToolLocal = localLines;
+        m_mem->search(query, m_runGeneration, topK);
+        return;
+    }
+    finishMemorySearch(call, query, localLines, {}, QString());
+}
+
+void BuddyProvider::finishMemorySearch(const PendingToolCall &call, const QString &query,
+                                       const QStringList &localLines, const QList<mem0::Hit> &remote,
+                                       const QString &remoteError)
+{
+    if (localLines.isEmpty() && remote.isEmpty()) {
+        QString msg = QStringLiteral("No saved memories match \"%1\".").arg(query);
+        if (!remoteError.isEmpty())
+            msg += QStringLiteral(" (Long-term memory could not be searched: %1)").arg(remoteError);
+        finishCurrentToolCall(call, msg, QString(), false);
         return;
     }
     QStringList lines;
-    lines << QStringLiteral("%1 memor%2 matched \"%3\":")
-                 .arg(hits.size()).arg(hits.size() == 1 ? QStringLiteral("y") : QStringLiteral("ies"), query);
-    for (const MemoryStore::SearchHit &h : hits) {
-        lines << QStringLiteral("\n• /memories/%1%2\n  %3")
-                     .arg(h.fact.id,
-                          h.fact.procedure ? QStringLiteral(" [procedure]") : QString(),
-                          h.fact.gist);
+    if (!remote.isEmpty()) {
+        lines << QStringLiteral("Long-term memory (%1 from earlier conversations):").arg(remote.size());
+        lines << redact(mem0::recallLines(remote));
     }
-    lines << QStringLiteral("\nUse the memory tool with command 'view' and the path to read a full memory.");
+    if (!localLines.isEmpty()) {
+        if (!lines.isEmpty())
+            lines << QString();
+        lines << QStringLiteral("%1 saved note%2 matched \"%3\":")
+                     .arg(localLines.size()).arg(localLines.size() == 1 ? QString() : QStringLiteral("s"), query);
+        lines << localLines;
+        lines << QStringLiteral("\nUse the memory tool with command 'view' and the path to read a full memory.");
+    }
     finishCurrentToolCall(call, lines.join(QLatin1Char('\n')), QString(), false);
 }
 

@@ -61,7 +61,14 @@ Modelled on the Claude Agent SDK permission flow
    things no amount of trust in the model can cover.
 6. **Session grants.** *Always allow* on an approval card trusts that tool for
    the rest of the app session. Changing the mode clears every grant.
-7. **Unknown tools are denied.**
+7. **Connected apps** (Gmail, MCP servers; see [connectors.md](connectors.md)). Tools that
+   only read run without asking (`connector-read`) unless the run saw a prompt injection
+   (`ask:tainted-connector`). Tools that create, send or change something ask **every time**
+   (`ask:connector-write`) in every mode, Trusted included, and are denied in Plan mode. Only a
+   saved *Always allow* for that one tool skips the card (`connector-always`), and only while
+   the run is untainted. The grant is kept in `connectors.json` and revoked in Settings,
+   Connectors. Session grants and Trusted mode do not cover them.
+8. **Unknown tools are denied.**
 
 Commands the user types directly (for example `run: …`) count as already
 approved, so they skip *ask*. Hard-deny rules still apply to them.
@@ -83,7 +90,8 @@ Agent SDK deny reason.
 - **Secret redaction**, on by default: API keys, bearer tokens, private-key
   blocks, AWS keys, GitHub/Slack/OpenAI/Anthropic tokens and the configured
   API key are masked in tool output, the final answer and saved traces.
-- **Untrusted content fencing:** `web_fetch` and `web_search` results are
+- **Untrusted content fencing:** `web_fetch`, `web_search` and every connected-app tool
+  (mail, tickets, pages) results are
   wrapped in `<untrusted_content>` after invisible characters are stripped
   and any attempt to close the fence early is neutralised. The system prompt
   tells the model that everything inside is data, never instructions.
@@ -202,10 +210,28 @@ instruction file is still text written by someone else; it cannot widen what
 Buddy may do, only what it is asked to do.
 
 Slash commands: `/help`, `/new`, `/resume`, `/branch`, `/compact`, `/undo`,
-`/mode`, `/init` and `/instructions` are built in and answer locally (nothing is
+`/mode`, `/init`, `/instructions` and `/skills` are built in and answer locally (nothing is
 sent to the model). Your own commands are Markdown files in
 `<workspace>/.noch/commands/` or `<AppData>/commands/`, run as `/name arguments`
 (`$ARGUMENTS`, `$1`..`$9`); they cannot replace a built-in.
+
+## Skills
+
+Agent Skills (`SKILL.md` folders, the Claude Code / Agent SDK format; see
+[skills.md](skills.md)) are loaded on demand through a `skill` tool. They are
+guidance, never authority:
+
+- the tool only reads (a skill's `SKILL.md`, or a file inside its own folder: no
+  absolute paths, `..` or links out), so the policy allows it without a prompt;
+- a skill cannot grant a tool or a permission, and `allowed-tools` in its
+  frontmatter is ignored: whatever it leads Buddy to do passes the same policy,
+  approval cards and hard stops as any other step;
+- skills from the user's or a workspace's folder are scanned like file content
+  for text aimed at AI agents, and flagged (and the run tainted) when it is
+  found; Noch's built-in skills are trusted;
+- creating or changing a `SKILL.md`, or anything under `.claude/skills`,
+  `.claude/commands` or `.noch/`, always asks, even in Trusted mode. Noch's data
+  folder stays private to the agent except its `skills/` subfolder.
 
 ## Undo for a run
 

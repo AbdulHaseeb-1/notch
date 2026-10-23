@@ -292,8 +292,26 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
 
     // Sandboxed or read-only tools.
     if (tool == QLatin1String("memory") || tool == QLatin1String("memory_search")
-            || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question"))
+            || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
+            || tool == QLatin1String("skill"))   // reads only inside the skill's own folder; grants nothing
         return allow(QStringLiteral("safe-tool"));
+
+    // Connected apps. Reads are free; writes ask, whatever the mode (see setConnectorTools).
+    const auto connector = m_connectorTools.constFind(tool);
+    if (connector != m_connectorTools.constEnd()) {
+        if (!connector.value()) {
+            if (m_tainted)
+                return ask(QStringLiteral("ask:tainted-connector"),
+                           QStringLiteral("A previous tool result looked like a prompt injection; reading your connected apps needs approval."));
+            return allow(QStringLiteral("connector-read"));
+        }
+        if (plan)
+            return deny(QStringLiteral("mode:plan"), QStringLiteral("Plan mode is read-only; it cannot change anything in your connected apps."));
+        if (!m_tainted && m_connectorAlways.contains(tool))
+            return allow(QStringLiteral("connector-always"));
+        return ask(QStringLiteral("ask:connector-write"),
+                   QStringLiteral("Buddy wants to change something in an app you connected. It is never done without your say-so."));
+    }
 
     return deny(QStringLiteral("deny:unknown-tool"), QStringLiteral("Unknown tool '%1'.").arg(tool));
 }

@@ -33,7 +33,7 @@ registered singletons and their signals.
 
 | Folder | Responsibility |
 | --- | --- |
-| `src/agent/` | Buddy provider, agent loop, permission policy, computer use, questions, run journal, saved rules, project context, stream parsing |
+| `src/agent/` | Buddy provider, agent loop, permission policy, computer use, questions, run journal, saved rules, project context, agent skills, stream parsing, connected apps (connectors: Gmail, MCP servers, OAuth, encrypted secrets; see [connectors.md](connectors.md)) |
 | `src/app/` | `QmlSingletons.h`, the typed singleton registration used by the generated QML module |
 | `src/chat/` | Saved chats, turn storage, session formatting and resume/branch support |
 | `src/common/` | Header-only utilities shared by more than one domain (`ShapeRegion.h`, `ImageAlpha.h`) |
@@ -61,6 +61,7 @@ Large classes are split by responsibility while keeping one public header:
   - `BuddyProviderPrompts.cpp` — system prompt and tool catalogue
   - `BuddyProviderProtocol.cpp` — request/response JSON extraction
   - `BuddyProviderRun.cpp` — request dispatch, streaming, retries, gate and context compaction
+  - `BuddyProviderSkills.cpp` — Agent Skills: the `skill` tool, `/skills` and `/<name>`, the per-run snapshot (loader in `Skills.{h,cpp}`, see [skills.md](skills.md))
   - `BuddyProviderStorage.cpp` — summaries, traces, approvals and questions
   - `BuddyProviderTools.cpp` — local tool implementations
   - `BuddyProviderWeb.cpp` — web search/fetch helpers

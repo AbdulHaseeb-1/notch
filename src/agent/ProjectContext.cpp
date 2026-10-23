@@ -235,6 +235,7 @@ QList<Command> builtinCommands()
         c("mode", "Change what Buddy may do without asking", "[ask|auto-edit|plan|trusted]"),
         c("init", "Create a NOCH.md with standing instructions for this workspace"),
         c("instructions", "Show which instruction files Buddy is reading"),
+        c("skills", "List the skills Buddy can use; run one with /<skill-name>"),
     };
 }
 

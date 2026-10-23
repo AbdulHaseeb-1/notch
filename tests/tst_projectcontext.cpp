@@ -169,6 +169,11 @@ private slots:
         QTest::newRow("command file") << "/home/u/proj/.noch/commands/review.md" << true;
         QTest::newRow("dot noch settings") << "/home/u/proj/.noch/anything" << true;
         QTest::newRow("windows dot noch") << "C:\\proj\\.noch\\commands\\x.md" << true;
+        QTest::newRow("skill file") << "/home/u/proj/tools/pdf/SKILL.md" << true;
+        QTest::newRow("skill file, any case") << "C:\\Users\\u\\AppData\\Roaming\\noch\\skills\\x\\skill.md" << true;
+        QTest::newRow("claude skills folder") << "/home/u/proj/.claude/skills/x/scripts/run.ps1" << true;
+        QTest::newRow("claude commands folder") << "/home/u/proj/.claude/commands/x.md" << true;
+        QTest::newRow("other claude file") << "/home/u/proj/.claude/notes.txt" << false;
         QTest::newRow("readme") << "/home/u/proj/README.md" << false;
         QTest::newRow("notes") << "/home/u/proj/notes.md" << false;
         QTest::newRow("backup copy") << "/home/u/proj/CLAUDE.md.bak" << false;
@@ -192,7 +197,7 @@ private slots:
             QVERIFY2(!names.contains(c.name), qPrintable(c.name));
             names.insert(c.name);
         }
-        for (const char *n : { "help", "new", "resume", "branch", "compact", "undo", "mode", "init", "instructions" })
+        for (const char *n : { "help", "new", "resume", "branch", "compact", "undo", "mode", "init", "instructions", "skills" })
             QVERIFY2(names.contains(n), n);
     }
 

@@ -290,20 +290,6 @@ BuddySfx::BuddySfx(QObject *parent)
         else
             dropSink();     // release the device while the buddy is quiet
     });
-    connect(&m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
-        // Default device switched, headphones plugged, etc.: reopen lazily on
-        // the next cue, in that device's own format.
-        dropSink();
-        m_formatReady = false;
-        m_device = QAudioDevice();
-        m_failures = 0;
-        m_retryAfterMs = 0;
-        const bool avail = !QMediaDevices::defaultAudioOutput().isNull();
-        if (avail != m_outputAvailable) {
-            m_outputAvailable = avail;
-            emit outputChanged();
-        }
-    });
     // Cues used to be written to %TEMP%\noch-buddy-sfx as WAV files for
     // QSoundEffect; they are rendered in memory now, so tidy that folder up.
     QDir(QDir::temp().filePath(QStringLiteral("noch-buddy-sfx"))).removeRecursively();
@@ -456,12 +442,37 @@ bool BuddySfx::play(const QString &cue)
     return true;
 }
 
+// Watches the platform's audio outputs, once a cue first needs one. Creating
+// QMediaDevices starts Qt Multimedia's backend (FFmpeg), so it waits until the
+// buddy makes a sound instead of being paid for at start-up.
+void BuddySfx::watchDevices()
+{
+    if (m_mediaDevices)
+        return;
+    m_mediaDevices = new QMediaDevices(this);
+    connect(m_mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        // Default device switched, headphones plugged, etc.: reopen lazily on
+        // the next cue, in that device's own format.
+        dropSink();
+        m_formatReady = false;
+        m_device = QAudioDevice();
+        m_failures = 0;
+        m_retryAfterMs = 0;
+        const bool avail = !QMediaDevices::defaultAudioOutput().isNull();
+        if (avail != m_outputAvailable) {
+            m_outputAvailable = avail;
+            emit outputChanged();
+        }
+    });
+}
+
 // Finds the default output and the format it mixes in natively, and converts
 // the cues to that rate. Both are remembered until the device list changes:
 // asking the platform for them again on every reopen is most of what made the
 // first cue after a quiet spell stall the UI.
 bool BuddySfx::resolveFormat()
 {
+    watchDevices();
     if (m_formatReady && !m_device.isNull())
         return true;
 

@@ -11,12 +11,14 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QPointer>
+#include <QSharedPointer>
 #include <QTimer>
 
 #include "BuddyProvider.h"
 #include "ChatSessions.h"
 #include "SessionLink.h"
 #include "ComputerUse.h"
+#include "Connector.h"
 
 // FakeAnthropic is a QObject, so it must stay out of the anonymous namespace: moc puts its
 // vtable in its own translation unit, and a class in an unnamed namespace gets a different
@@ -75,18 +77,20 @@ private:
                      + (r.declaredLength > 0 ? "Content-Length: " + QByteArray::number(r.declaredLength) + "\r\n" : QByteArray())
                      + "Connection: close\r\n\r\n");
             QPointer<QTcpSocket> sp(s);
-            for (int i = 0; i < r.sse.size(); ++i) {
-                const QByteArray chunk = r.sse.at(i);
-                const bool last = i == r.sse.size() - 1;
-                QTimer::singleShot(r.gapMs * (i + 1), this, [sp, chunk, last] {
+            const QList<QByteArray> chunks = r.sse;
+            const auto sent = QSharedPointer<int>::create(0);
+            for (int i = 0; i < chunks.size(); ++i)
+                QTimer::singleShot(r.gapMs * (i + 1), this, [sp, chunks, sent] {
+                    // Each timer sends the next chunk in line, not the one it was started with:
+                    // timers due at the same moment do not always fire in the order they were
+                    // started, and bytes out of order broke the event stream.
                     if (!sp)
                         return;
-                    sp->write(chunk);
+                    sp->write(chunks.at((*sent)++));
                     sp->flush();
-                    if (last)
+                    if (*sent == chunks.size())
                         sp->disconnectFromHost();
                 });
-            }
             return;
         }
         QByteArray out = "HTTP/1.1 " + QByteArray::number(r.status) + (r.status == 200 ? " OK" : " ERR")
@@ -408,5 +412,106 @@ public:
         calls << QStringLiteral("add");
         addedPath = path;
         done(addResult, addError);
+    }
+};
+
+// A Mem0 server (Platform API shape) that answers every search with `memories`
+// and every add with success, and records the requests it saw.
+struct FakeMem0 {
+    QTcpServer server;
+    QStringList memories;
+    int addStatus = 200;
+    QList<QByteArray> searches;   // request bodies
+    QList<QByteArray> adds;
+
+    bool start() {
+        QObject::connect(&server, &QTcpServer::newConnection, &server, [this] {
+            while (QTcpSocket *s = server.nextPendingConnection()) {
+                auto buf = QSharedPointer<QByteArray>::create();
+                QObject::connect(s, &QTcpSocket::readyRead, s, [this, s, buf] {
+                    *buf += s->readAll();
+                    const int end = buf->indexOf("\r\n\r\n");
+                    if (end < 0)
+                        return;
+                    const int len = QString::fromLatin1(buf->left(end)).section("Content-Length:", 1)
+                                        .section("\r\n", 0, 0).trimmed().toInt();
+                    if (buf->size() < end + 4 + len)
+                        return;
+                    const bool isAdd = buf->startsWith("POST /v3/memories/add/");
+                    const QByteArray body = buf->mid(end + 4, len);
+                    QByteArray reply;
+                    int status = 200;
+                    if (isAdd) {
+                        adds.append(body);
+                        status = addStatus;
+                        reply = "{\"status\":\"SUCCEEDED\",\"results\":[]}";
+                    } else {
+                        searches.append(body);
+                        QJsonArray results;
+                        for (const QString &m : std::as_const(memories))
+                            results.append(QJsonObject{ { "id", "m1" }, { "memory", m }, { "score", 0.9 } });
+                        reply = QJsonDocument(QJsonObject{ { "results", results } }).toJson(QJsonDocument::Compact);
+                    }
+                    buf->clear();
+                    s->write("HTTP/1.1 " + QByteArray::number(status) + " X\r\nContent-Type: application/json\r\nContent-Length: "
+                             + QByteArray::number(reply.size()) + "\r\nConnection: close\r\n\r\n" + reply);
+                    s->disconnectFromHost();
+                });
+            }
+        });
+        return server.listen(QHostAddress::LocalHost, 0);
+    }
+    QString base() const { return QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort()); }
+};
+
+// A connected app (the Gmail / MCP shape) that records what it is asked and answers from a script.
+// It lives outside the anonymous namespace for the same reason as FakeAnthropic (moc).
+class FakeConnector : public Connector
+{
+    Q_OBJECT
+public:
+    QList<connectors::ToolDef> defs;
+    QStringList calls;               // tool names, in order
+    QList<QJsonObject> callArgs;
+    QString reply = QStringLiteral("2 messages: Invoice from Alice; Lunch?");
+    bool replyOk = true;
+    int replyDelayMs = 0;
+
+    FakeConnector() {
+        connectors::ToolDef read;
+        read.name = QStringLiteral("fake_search");
+        read.description = QStringLiteral("Search the fake mailbox.");
+        read.inputSchema = QJsonObject{ { "type", "object" },
+            { "properties", QJsonObject{ { "query", QJsonObject{ { "type", "string" } } },
+                                         { "max_results", QJsonObject{ { "type", "integer" } } } } },
+            { "required", QJsonArray{ "query" } } };
+        read.access = connectors::Access::Read;
+        connectors::ToolDef write;
+        write.name = QStringLiteral("fake_send");
+        write.description = QStringLiteral("Send a fake email.");
+        write.inputSchema = QJsonObject{ { "type", "object" },
+            { "properties", QJsonObject{ { "to", QJsonObject{ { "type", "string" } } },
+                                         { "body", QJsonObject{ { "type", "string" } } } } },
+            { "required", QJsonArray{ "to", "body" } } };
+        write.access = connectors::Access::Write;
+        defs = { read, write };
+    }
+    void makeConnected() { setState(connectors::State::Connected, QStringLiteral("Connected as me@example.com"), QStringLiteral("me@example.com")); }
+    void makeDisconnected() { setState(connectors::State::Disconnected, QStringLiteral("Not connected")); }
+
+    QString id() const override { return QStringLiteral("fake"); }
+    QString name() const override { return QStringLiteral("FakeMail"); }
+    QString summary() const override { return QStringLiteral("A fake app."); }
+    QString kind() const override { return QStringLiteral("oauth"); }
+    QList<connectors::Permission> permissions() const override { return {}; }
+    QList<connectors::ToolDef> tools() const override { return connected() ? defs : QList<connectors::ToolDef>(); }
+    void connectAccount() override { makeConnected(); }
+    void disconnectAccount() override { makeDisconnected(); }
+    void call(const QString &tool, const QJsonObject &args, connectors::Done done) override {
+        calls << tool;
+        callArgs << args;
+        const bool ok = replyOk;
+        const QString text = reply;
+        QTimer::singleShot(replyDelayMs, this, [done, ok, text] { done(ok, text); });
     }
 };

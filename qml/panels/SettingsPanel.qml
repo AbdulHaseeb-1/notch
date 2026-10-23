@@ -49,7 +49,9 @@ Item {
         { id: "model", group: qsTr("Agent"), label: qsTr("AI model"), icon: "cpu",
           keys: "provider openai anthropic ollama custom api key model endpoint temperature test connection" },
         { id: "agent", group: qsTr("Agent"), label: qsTr("Agent & tools"), icon: "terminal",
-          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking jev classifier classify intent request" },
+          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking jev classifier classify intent request mem0 memory remember docker long-term" },
+        { id: "connectors", group: qsTr("Agent"), label: qsTr("Connectors"), icon: "layers",
+          keys: "connectors apps accounts gmail google email mail inbox draft reply calendar drive slack github notion mcp server oauth sign in connect disconnect integrations" },
         { id: "safety", group: qsTr("Agent"), label: qsTr("Safety"), icon: "shield-check",
           keys: "permission mode approve approval auto-approve bypass trusted plan ask rules always allow workspace redact secrets traces instructions commands" }
     ]
@@ -84,7 +86,7 @@ Item {
             if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
                 step(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
                 event.accepted = true
-            } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_8) {
+            } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_9 && event.key - Qt.Key_1 < pageList.length) {
                 page = pageList[event.key - Qt.Key_1].id
                 event.accepted = true
             } else if (event.key === Qt.Key_F) {
@@ -167,6 +169,8 @@ Item {
     property string testMessage: ""
     property string classifierTestState: "idle"     // idle | testing | ok | failed
     property string classifierTestMessage: ""
+    property string memTestState: "idle"     // idle | testing | ok | failed
+    property string memTestMessage: ""
 
     readonly property bool realChat: prefs && prefs.buddyProvider !== "none"
     readonly property bool buddyMovedCustom: prefs && (prefs.buddyX >= 0 || prefs.buddyY >= 0)
@@ -265,8 +269,22 @@ Item {
         settings.classifierTestMessage = ""
     }
 
+    function runMemTest() {
+        settings.memTestState = "testing"
+        settings.memTestMessage = qsTr("Asking %1…").arg(BuddyAgent.memBaseUrl())
+        BuddyAgent.testMem()
+    }
+    function memEdited() {
+        settings.memTestState = "idle"
+        settings.memTestMessage = ""
+    }
+
     Connections {
         target: BuddyAgent
+        function onMemTestFinished(ok, message) {
+            settings.memTestState = ok ? "ok" : "failed"
+            settings.memTestMessage = message
+        }
         function onClassifierTestFinished(ok, message) {
             settings.classifierTestState = ok ? "ok" : "failed"
             settings.classifierTestMessage = message
@@ -556,10 +574,11 @@ Item {
             Component { id: deepgramC; DeepgramPage { panel: settings } }
             Component { id: modelC; ModelPage { panel: settings } }
             Component { id: agentC; AgentPage { panel: settings } }
+            Component { id: connectorsC; ConnectorsPage { panel: settings } }
             Component { id: safetyC; SafetyPage { panel: settings } }
             readonly property var components: ({
                 general: generalC, buddy: buddyC, look: lookC,
-                voice: voiceC, deepgram: deepgramC, model: modelC, agent: agentC, safety: safetyC
+                voice: voiceC, deepgram: deepgramC, model: modelC, agent: agentC, connectors: connectorsC, safety: safetyC
             })
 
             Repeater {

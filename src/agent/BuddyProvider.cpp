@@ -16,6 +16,18 @@ BuddyProvider::BuddyProvider(QObject *parent)
     connect(m_classifier, &TurnClassifier::testFinished,
             this, &BuddyProvider::classifierTestFinished);
 
+    // Long-term memory (Mem0): its own network client, like the classifier's.
+    m_mem = new Mem0Client(this);
+    connect(m_mem, &Mem0Client::searched, this, &BuddyProvider::onMemSearched);
+    connect(m_mem, &Mem0Client::added, this, &BuddyProvider::onMemAdded);
+    connect(m_mem, &Mem0Client::testFinished, this, &BuddyProvider::memTestFinished);
+    m_mem->setProviderSupplier([this] { return memProviderJson(); });
+
+    // Connected apps. Nothing is read from disk until startConnectors() (tests never touch real files).
+    m_connectors = new ConnectorRegistry(this);
+    connect(m_connectors, &ConnectorRegistry::toolsChanged, this, &BuddyProvider::syncConnectorPolicy);
+    connect(m_connectors, &ConnectorRegistry::toolsChanged, this, &BuddyProvider::agentConfigChanged);
+
     // Computer use: the HUD Stop button, Ctrl+Alt+Esc or a held Esc end the
     // whole run at once; a finished run hands the screen back.
     m_computer = new ComputerUse(this);
@@ -226,6 +238,205 @@ void BuddyProvider::onClassified(quint64 token, const turnclass::Classification 
         emit lastClassificationChanged();
     }
     dispatchAgentTurn();
+}
+
+// ---- long-term memory (Mem0) -------------------------------------------------
+
+void BuddyProvider::setMemEnabled(bool on)
+{
+    if (on == m_mem->enabled())
+        return;
+    m_mem->setEnabled(on);
+    if (!on)
+        m_memPending = false;
+    emit memConfigChanged();
+}
+
+void BuddyProvider::setMemBackend(const QString &backend)
+{
+    const QString before = m_mem->backend();
+    m_mem->setConfig(backend, m_mem->customUrl(), m_memKeyTyped, m_mem->userId());
+    if (m_mem->backend() != before)
+        emit memConfigChanged();
+}
+
+void BuddyProvider::setMemUrl(const QString &url)
+{
+    const QString before = m_mem->customUrl();
+    m_mem->setConfig(m_mem->backend(), url, m_memKeyTyped, m_mem->userId());
+    if (m_mem->customUrl() != before)
+        emit memConfigChanged();
+}
+
+void BuddyProvider::setMemKey(const QString &key)
+{
+    const QString k = key.trimmed();
+    if (k == m_memKeyTyped)
+        return;
+    m_memKeyTyped = k;
+    m_mem->setConfig(m_mem->backend(), m_mem->customUrl(), k, m_mem->userId());
+    emit memConfigChanged();
+}
+
+void BuddyProvider::setMemUserId(const QString &id)
+{
+    const QString before = m_mem->userId();
+    m_mem->setConfig(m_mem->backend(), m_mem->customUrl(), m_memKeyTyped, id);
+    if (m_mem->userId() != before)
+        emit memConfigChanged();
+}
+
+#define NOCH_MEM_STRING_SETTER(Setter, Member)            \
+    void BuddyProvider::Setter(const QString &v)          \
+    {                                                     \
+        const QString t = v.trimmed();                    \
+        if (t == Member)                                  \
+            return;                                       \
+        Member = t;                                       \
+        emit memConfigChanged();                          \
+    }
+NOCH_MEM_STRING_SETTER(setMemLlmModel, m_memLlmModel)
+NOCH_MEM_STRING_SETTER(setMemEmbedModel, m_memEmbedModel)
+NOCH_MEM_STRING_SETTER(setMemEmbedBase, m_memEmbedBase)
+NOCH_MEM_STRING_SETTER(setMemEmbedKey, m_memEmbedKey)
+#undef NOCH_MEM_STRING_SETTER
+
+namespace {
+// The local Mem0 server runs in a container: this computer is host.docker.internal there.
+QString forContainer(const QString &base)
+{
+    QUrl url(base);
+    const QString host = url.host().toLower();
+    if (host == QLatin1String("localhost") || host == QLatin1String("127.0.0.1") || host == QLatin1String("::1")) {
+        url.setHost(QStringLiteral("host.docker.internal"));
+        return url.toString();
+    }
+    return base;
+}
+
+// OpenAI-style clients want the address that ends in /v1.
+QString openAiBase(const QString &base)
+{
+    QString b = base.trimmed();
+    while (b.endsWith(QLatin1Char('/')))
+        b.chop(1);
+    for (const char *tail : { "/chat/completions", "/embeddings", "/models" })
+        if (b.endsWith(QLatin1String(tail)))
+            b.chop(int(qstrlen(tail)));
+    static const QRegularExpression versioned(QStringLiteral("/v\\d+$"));
+    if (!versioned.match(b).hasMatch())
+        b += QStringLiteral("/v1");
+    return b;
+}
+} // namespace
+
+QJsonObject BuddyProvider::memProviderJson() const
+{
+    if (m_provider == QLatin1String("none") || m_provider == QLatin1String("anthropic"))
+        return {};
+    const QString rawBase = m_apiBase.trimmed().isEmpty() ? defaultBaseFor(m_provider) : m_apiBase;
+    if (rawBase.trimmed().isEmpty())
+        return {};
+    const bool ollama = m_provider == QLatin1String("ollama");
+    const QString base = openAiBase(forContainer(rawBase));
+    const QString key = !m_apiKey.trimmed().isEmpty() ? m_apiKey.trimmed()
+                      : ollama ? QStringLiteral("ollama") : QString();
+
+    QJsonObject llm{ { QStringLiteral("base_url"), base },
+                     { QStringLiteral("api_key"), key },
+                     { QStringLiteral("model"), m_memLlmModel.isEmpty() ? m_model : m_memLlmModel } };
+    QJsonObject emb{ { QStringLiteral("base_url"), m_memEmbedBase.isEmpty() ? base : openAiBase(forContainer(m_memEmbedBase)) },
+                     { QStringLiteral("api_key"), m_memEmbedKey.isEmpty() ? key : m_memEmbedKey },
+                     { QStringLiteral("model"), !m_memEmbedModel.isEmpty() ? m_memEmbedModel
+                           : ollama ? QStringLiteral("nomic-embed-text") : QStringLiteral("text-embedding-3-small") } };
+    return QJsonObject{ { QStringLiteral("llm"), llm }, { QStringLiteral("embedder"), emb } };
+}
+
+// The first model turn of a run waits (2.5 s at most) for recall, so what Mem0 knows
+// about the user is already in the system prompt. Anything that goes wrong just
+// dispatches without it.
+void BuddyProvider::recallThenDispatch(const QString &text)
+{
+    if (!m_allowMemory || !m_mem->searchReady() || text.trimmed().size() < 3) {
+        dispatchAfterClassify(text);
+        return;
+    }
+    m_memPending = true;
+    m_mem->search(text, m_runGeneration, 6);
+}
+
+void BuddyProvider::onMemSearched(quint64 token, const QList<mem0::Hit> &hits, int ms, const QString &error)
+{
+    if (token != m_runGeneration)
+        return;   // cancelled or superseded while the request was in flight
+
+    if (m_memToolPending) {
+        m_memToolPending = false;
+        finishMemorySearch(m_memToolCall, m_memToolQuery, m_memToolLocal, hits, error);
+        return;
+    }
+    if (!m_memPending)
+        return;
+    m_memPending = false;
+
+    QJsonObject span{ { QStringLiteral("type"), QStringLiteral("memory") },
+                      { QStringLiteral("event"), QStringLiteral("recall") },
+                      { QStringLiteral("backend"), m_mem->backend() },
+                      { QStringLiteral("ms"), ms },
+                      { QStringLiteral("hits"), int(hits.size()) } };
+    if (!error.isEmpty())
+        span[QStringLiteral("error")] = error;
+    addSpan(span);
+
+    if (!hits.isEmpty()) {
+        m_memoryIndexSnapshot += redact(mem0::recallSection(hits));
+        // The system prompt was built before recall: rebuild it with the new section.
+        // (Anthropic builds it per request, so it picks the snapshot up by itself.)
+        if (!m_agentMessages.isEmpty()) {
+            QJsonObject first = m_agentMessages.at(0).toObject();
+            if (first.value(QStringLiteral("role")).toString() == QLatin1String("system")) {
+                first[QStringLiteral("content")] = systemPrompt();
+                m_agentMessages[0] = first;
+            }
+        }
+    }
+    dispatchAfterClassify(m_runUserText);
+}
+
+// Saving is fire-and-forget: the extraction runs a model and may take a while.
+void BuddyProvider::saveExchangeToMem0(const QString &finalText, const QStringList &fallbackFacts)
+{
+    const QString user = m_runUserText.trimmed();
+    // Slash-command expansions and harness turns are not the user's voice, and a bare
+    // "ok" has nothing to remember.
+    if (user.size() < 12 || user.startsWith(QLatin1Char('[')))
+        return;
+    constexpr int kUserChars = 2000;
+    constexpr int kReplyChars = 1200;
+    QList<mem0::Message> msgs;
+    msgs.append({ QStringLiteral("user"), redact(user.left(kUserChars)) });
+    const QString reply = finalText.trimmed();
+    if (!reply.isEmpty())
+        msgs.append({ QStringLiteral("assistant"), redact(reply.left(kReplyChars)) });
+    const quint64 seq = ++m_memAddSeq;
+    if (!fallbackFacts.isEmpty())
+        m_memFallback.insert(seq, fallbackFacts);
+    m_mem->add(msgs, seq, QJsonObject{ { QStringLiteral("source"), QStringLiteral("noch") } });
+    addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
+                         { QStringLiteral("event"), QStringLiteral("save-sent") },
+                         { QStringLiteral("backend"), m_mem->backend() } });
+}
+
+void BuddyProvider::onMemAdded(quint64 token, bool ok, const QString &error)
+{
+    const QStringList fallback = m_memFallback.take(token);
+    if (ok)
+        return;
+    qWarning().noquote() << "Mem0: could not save the exchange:" << error;
+    // Mem0 is down or refused: keep the explicit "remember that ..." facts locally,
+    // so a stopped container never costs the user something they asked to be kept.
+    if (!fallback.isEmpty() && m_allowMemory)
+        storeLocalFacts(fallback, false);
 }
 
 // ---- safety settings -------------------------------------------------------

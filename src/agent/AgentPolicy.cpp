@@ -332,7 +332,9 @@ bool AgentPolicy::isPrivatePath(const QString &path) const
 {
     for (const QString &p : pathKeys(path, m_base))
         for (const QString &priv : m_private)
-            if (under(p, priv))
+            // The user's skills folder inside Noch's data folder is the one open corner: Buddy may
+            // read the skills there and, with the user's approval, write new ones (see isInstructionPath).
+            if (under(p, priv) && !under(p, priv + QStringLiteral("/skills")))
                 return true;
     return false;
 }
@@ -358,8 +360,14 @@ bool AgentPolicy::isInstructionPath(const QString &path)
     if (parts.isEmpty())
         return false;
     const QString leaf = parts.last();
-    if (leaf == QLatin1String("noch.md") || leaf == QLatin1String("agents.md") || leaf == QLatin1String("claude.md"))
+    if (leaf == QLatin1String("noch.md") || leaf == QLatin1String("agents.md") || leaf == QLatin1String("claude.md")
+            || leaf == QLatin1String("skill.md"))   // a skill steers Buddy like an instruction file does
         return true;
+    // Skills and commands of Claude Code's folder steer Buddy too.
+    for (int i = 0; i + 1 < parts.size(); ++i)
+        if (parts.at(i) == QLatin1String(".claude")
+                && (parts.at(i + 1) == QLatin1String("skills") || parts.at(i + 1) == QLatin1String("commands")))
+            return true;
     return parts.contains(QStringLiteral(".noch"));
 }
 

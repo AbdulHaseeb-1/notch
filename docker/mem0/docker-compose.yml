@@ -1,0 +1,44 @@
+# Noch's local memory stack: the Mem0 server + pgvector. Fact extraction and
+# embeddings use the chat provider configured in the Noch app (sent with each request).
+# Start with setup.ps1 (creates .env with random secrets), or:  docker compose up -d --build
+name: noch-mem0
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mem0}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run setup.ps1 or copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:-mem0}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mem0} -d ${POSTGRES_DB:-mem0}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # No published port: only the mem0 container can reach the database.
+
+  mem0:
+    build: .
+    image: noch-mem0:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      MEM0_TELEMETRY: "False"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # a provider on this PC (Ollama, LM Studio)
+    volumes:
+      - mem0_data:/data
+    ports:
+      # Loopback only: nothing else on the network can reach it.
+      - "127.0.0.1:${MEM0_PORT:-8765}:8000"
+
+volumes:
+  pg_data:
+  mem0_data:

@@ -32,3 +32,12 @@ inline QRegion regionFromShapes(const QVariantList &shapes, qreal grow = 0, qrea
     }
     return region;
 }
+
+// The mask a window gets from a list of shapes. An empty region would clear the window's
+// mask, and then Windows lets the window take mouse input over all of its area (the notch
+// window covers the whole screen), so "nothing clickable" is a rectangle outside the window.
+inline QRegion maskFromShapes(const QVariantList &shapes, qreal grow = 0, qreal scale = 1)
+{
+    const QRegion region = regionFromShapes(shapes, grow, scale);
+    return region.isEmpty() ? QRegion(QRect(-1, -1, 1, 1)) : region;
+}

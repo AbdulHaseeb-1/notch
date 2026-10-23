@@ -301,7 +301,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
         if (toolCalls.isEmpty() && !cutByLimit && m_agentIteration < m_maxSteps
             && structuredLevel() == StructuredLevel::JsonMode) {
             const QString content = msg.value(QStringLiteral("content")).toString();
-            const QList<TextToolCall> parsed = extractTextToolCalls(content);
+            const QList<TextToolCall> parsed = extractTextToolCalls(content, [this](const QString &n) { return m_connectors && m_connectors->hasTool(n); });
             if (!parsed.isEmpty()) {
                 for (int i = 0; i < parsed.size(); ++i) {
                     PendingToolCall tc;
@@ -355,7 +355,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     // not just Ollama JSON mode.
     if (toolCalls.isEmpty() && m_toolsDisabledForTurn && !cutByLimit
         && m_agentIteration < m_maxSteps && !turnText.isEmpty()) {
-        const QList<TextToolCall> parsed = extractTextToolCalls(turnText);
+        const QList<TextToolCall> parsed = extractTextToolCalls(turnText, [this](const QString &n) { return m_connectors && m_connectors->hasTool(n); });
         if (!parsed.isEmpty()) {
             for (int i = 0; i < parsed.size(); ++i) {
                 PendingToolCall tc;
@@ -391,7 +391,8 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
             continue;
         }
         QString note;
-        const ToolCallRepair rr = normalizeToolCall(tc.name, tc.input, tc.rawArguments, &note);
+        const ToolCallRepair rr = normalizeToolCall(tc.name, tc.input, tc.rawArguments, &note,
+                                                    m_connectors ? m_connectors->schemaFor(tc.name) : nullptr);
         ++m_totalToolCalls;
         if (rr == ToolCallRepair::Repaired) {
             ++m_repairedCalls;
@@ -785,6 +786,10 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
         // screen content ...) stay questions every time.
         m_approvalRule = (d.rule == QLatin1String("ask:shell") || d.rule == QLatin1String("ask:edit"))
             ? m_policy.suggestRule(effective.name, effective.input) : AgentPolicy::SavedRule();
+        // A connected app's write (send, create ...) can be allowed for good from the card; the
+        // grant is for that one tool and is listed, and revoked, in Settings > Connectors.
+        const bool connectorWrite = d.rule == QLatin1String("ask:connector-write");
+        m_pendingConnectorWrite = connectorWrite;
         QVariantMap step = (call.stepIndex >= 0 && call.stepIndex < m_toolSteps.size())
             ? m_toolSteps.at(call.stepIndex).toMap() : QVariantMap();
         setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("pending") },
@@ -798,15 +803,18 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
             { QStringLiteral("badge"), badgeForTool(effective.name, effective.input) },
             { QStringLiteral("icon"), iconForTool(effective.name, effective.input) },
             { QStringLiteral("title"), AgentPolicy::displaySafe(redact(summarizeToolCall(effective.name, effective.input)), 200) },
-            { QStringLiteral("detail"), AgentPolicy::displaySafe(redact(detailForToolCall(effective.name, effective.input)), 600) },
+            { QStringLiteral("detail"), AgentPolicy::displaySafe(redact(detailForToolCall(effective.name, effective.input)),
+                                                                 m_connectors && m_connectors->hasTool(effective.name) ? 2000 : 600) },
             { QStringLiteral("reason"), d.reason },
             { QStringLiteral("rule"), d.rule },
             { QStringLiteral("secondsLeft"), m_approvalSecondsLeft },
             // What "Always allow" would do: save this rule, or (no safe rule
             // exists) allow the tool until Noch is restarted.
-            { QStringLiteral("alwaysSaved"), m_approvalRule.valid() },
+            { QStringLiteral("alwaysSaved"), m_approvalRule.valid() || connectorWrite },
             { QStringLiteral("alwaysLabel"), m_approvalRule.valid() ? redact(m_approvalRule.label)
-                                                                    : tr("this tool until you restart Noch") },
+                                           : connectorWrite ? tr("%1 without asking (undo it in Settings > Connectors)")
+                                                                  .arg(connectors::prettyToolName(effective.name))
+                                                            : tr("this tool until you restart Noch") },
         };
         m_approvalTimer.start();
         setActiveToolState(call.name, tr("Waiting for your approval…"), call.input);
@@ -893,6 +901,14 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
             return;
         }
         executeAskUserTool(call);
+    } else if (call.name == QLatin1String("skill")) {
+        executeSkillTool(call);
+    } else if (m_connectors && m_connectors->hasTool(call.name)) {
+        if (!m_allowConnectors) {
+            finishCurrentToolCall(call, QStringLiteral("Error: connected apps are switched off in Settings > Connectors."), QString(), true);
+            return;
+        }
+        executeConnectorTool(call);
     } else {
         finishCurrentToolCall(call, QStringLiteral("Error: unknown tool '%1'.").arg(call.name), QString(), true);
     }
@@ -907,6 +923,16 @@ QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QStrin
             *flagged = false;
         return redact(output);
     }
+    // Noch's own skills are trusted text. A user's or a workspace's skill is guidance
+    // too, but it is checked like any other file content for injected commands.
+    if (call.name == QLatin1String("skill")) {
+        const skills::Skill *sk = m_skills.find(call.input.value(QStringLiteral("name")).toString());
+        if (sk && sk->builtin()) {
+            if (flagged)
+                *flagged = false;
+            return redact(output);
+        }
+    }
     bool invisible = false;
     QString out = AgentPolicy::stripInvisible(output, &invisible);
     out = redact(out);
@@ -914,7 +940,9 @@ QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QStrin
     // treats it as data (system prompt explains the tag) and flag obvious
     // injection attempts. Neutralise any attempt to close the fence early.
     out = AgentPolicy::neutralizeFence(out);
-    const bool external = call.name == QLatin1String("web_fetch") || call.name == QLatin1String("web_search");
+    // Mail, tickets, pages: what a connected app returns was written by other people.
+    const bool external = call.name == QLatin1String("web_fetch") || call.name == QLatin1String("web_search")
+        || (m_connectors && m_connectors->hasTool(call.name));
     const bool suspicious = AgentPolicy::looksLikePromptInjection(out);
     if (flagged)
         *flagged = suspicious || invisible;

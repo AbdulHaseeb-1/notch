@@ -151,7 +151,14 @@ Item {
     function think() {
         noteTimer.stop()
         toolsExpanded = false
-        present("thinking")
+        if (boxNeeded) {
+            present("thinking")
+        } else {
+            // Nothing to show but "working": the buddy's orb shows that. The box opens
+            // when something arrives (onBoxNeededChanged).
+            close()
+            thinkPending = true
+        }
     }
     function showAnswer(k, ttl, data, sim) {
         noteTimer.stop()
@@ -259,6 +266,7 @@ Item {
     // Shows `ph`, popping the bubble out of the orb first when it is hidden
     // (or on its way back in); when it is already up, it simply morphs.
     function present(ph) {
+        thinkPending = false
         if (!visible || closing) {
             popOut.stop()
             closing = false
@@ -327,6 +335,15 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
+    // Plain thinking (nothing to show but "working") is drawn on the buddy's orb, not in a box.
+    // The box opens as soon as a tool, an approval, a question or a live draft needs it.
+    readonly property bool boxNeeded: hasTools || activeToolSummary.length > 0
+                                      || awaitingApproval || awaitingQuestion || liveText.length > 0
+    property bool thinkPending: false
+    onBoxNeededChanged: if (thinkPending && boxNeeded) {
+        thinkPending = false
+        present("thinking")
+    }
     readonly property real thinkW: (awaitingApproval || awaitingQuestion || hasLive) ? chatW
                                  : (hasTools || activeToolSummary.length > 0)
                                  ? histW
@@ -506,9 +523,11 @@ Item {
     // thinkT drives the thinking dots: a slow, even fade that rolls across
     // three dots. Nothing bounces, scales or glows; the bubble itself stays still.
     property real thinkT: 0
+    // Paused on purpose: a turning animation inside the bubble window redraws the whole
+    // window every frame. The dots now sit still while the buddy thinks.
     NumberAnimation on thinkT {
         from: 0; to: 1; duration: 2200; loops: Animation.Infinite
-        running: tb.phase === "thinking" && tb.visible
+        running: false
     }
     function wave(i) {
         return 0.5 + 0.5 * Math.sin(thinkT * 2 * Math.PI - i * 0.9)

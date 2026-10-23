@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
@@ -97,6 +98,15 @@ public:
     // unbalanced quotes or is too long: such a command never gets a rule.
     static QString normalizeCommand(const QString &command);
 
+    // Tools of connected apps (Gmail, MCP servers): name -> true when the tool changes something
+    // in the app (send, create, delete ...). Reads run without asking, unless the run saw a
+    // prompt injection. A write asks every time, in every mode but Plan (where it is denied);
+    // only a saved "always allow" for that very tool, and only while the run is untainted,
+    // lets it through. Trusted mode does not: it covers the computer, not the user's accounts.
+    void setConnectorTools(const QHash<QString, bool> &writes) { m_connectorTools = writes; }
+    void setConnectorAlwaysAllow(const QSet<QString> &tools) { m_connectorAlways = tools; }
+    bool isConnectorTool(const QString &tool) const { return m_connectorTools.contains(tool); }
+
     // Session-scoped "always allow" grants from the approval card.
     void allowForSession(const QString &tool) { m_sessionAllow.insert(tool); }
     void clearSessionGrants() { m_sessionAllow.clear(); }
@@ -168,6 +178,8 @@ private:
     QString m_base;           // first root, original case
     QStringList m_private;    // lowercased lexical + resolved forms
     QSet<QString> m_sessionAllow;
+    QHash<QString, bool> m_connectorTools;
+    QSet<QString> m_connectorAlways;
     QList<SavedRule> m_savedRules;
     bool m_tainted = false;
     bool m_screenTainted = false;

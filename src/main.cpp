@@ -144,6 +144,7 @@ int main(int argc, char *argv[])
     auto *player = new MusicPlayer(&app);
     auto *appearance = new Appearance(&app);
     auto *buddyProvider = new BuddyProvider(&app);
+    buddyProvider->startConnectors();   // saved sign-ins and MCP servers (Settings > Connectors)
     auto *buddySfx = new BuddySfx(&app);
     auto *chatSessions = new ChatSessions(&app);
     chatSessions->setRoot(chatSessions->sessionsPath());   // loads the saved chats

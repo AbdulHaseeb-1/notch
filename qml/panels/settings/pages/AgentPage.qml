@@ -305,6 +305,333 @@ SettingsPage {
         }
     }
 
+    // ---- Agent Skills ----------------------------------------------------------------
+    Item {
+        id: skillsState
+        visible: false
+        height: 0
+        property var rows: []
+        property var notes: []
+        readonly property int onCount: {
+            let n = 0
+            for (let i = 0; i < rows.length; ++i)
+                if (rows[i].enabled)
+                    ++n
+            return n
+        }
+        function refresh() {
+            rows = BuddyAgent.skillList()
+            notes = BuddyAgent.skillNotes()
+        }
+        function setEnabled(name, on) {
+            const cur = String(panel.prefs.buddyDisabledSkills).split(",").map(s => s.trim()).filter(s => s.length > 0)
+            const at = cur.indexOf(name)
+            if (on && at >= 0)
+                cur.splice(at, 1)
+            else if (!on && at < 0)
+                cur.push(name)
+            panel.prefs.buddyDisabledSkills = cur.join(",")
+        }
+        Component.onCompleted: refresh()
+        Connections {
+            target: BuddyAgent
+            function onSkillsChanged() { skillsState.refresh() }
+        }
+    }
+
+    SettingsSectionHeader {
+        visible: panel.prefs.buddyAgentMode
+        title: qsTr("Skills")
+        rightText: !panel.prefs.buddyAllowSkills ? qsTr("Off")
+                 : qsTr("%1 of %2 on").arg(skillsState.onCount).arg(skillsState.rows.length)
+    }
+
+    SettingsGroupCard {
+        visible: panel.prefs.buddyAgentMode
+
+        SettingsToggleRow {
+            label: qsTr("Use skills")
+            sub: qsTr("A skill is a folder with a SKILL.md that teaches Buddy a better way to do one kind of task. Only each skill's name and description are shown to Buddy; it reads the rest when a task matches. A skill is advice only: it never gives Buddy a tool or permission, and everything it leads to still asks first as usual.")
+            checked: panel.prefs.buddyAllowSkills
+            onToggled: (c) => panel.prefs.buddyAllowSkills = c
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyAllowSkills && skillsState.rows.length > 0 }
+
+        Repeater {
+            model: panel.prefs.buddyAllowSkills ? skillsState.rows : []
+            delegate: Column {
+                id: skillRow
+                required property var modelData
+                required property int index
+                width: parent ? parent.width : 300
+                spacing: 8
+                SettingsToggleRow {
+                    label: "/" + skillRow.modelData.name + " · " + skillRow.modelData.sourceLabel
+                    sub: skillRow.modelData.description
+                         + (skillRow.modelData.overrides.length > 0 ? " " + qsTr("(replaces a %1 skill of the same name)").arg(skillRow.modelData.overrides) : "")
+                         + (!skillRow.modelData.modelInvocable ? " " + qsTr("(only you can run it)") : "")
+                         + (!skillRow.modelData.userInvocable ? " " + qsTr("(only Buddy can run it)") : "")
+                    checked: skillRow.modelData.enabled
+                    onToggled: (c) => skillsState.setEnabled(skillRow.modelData.name, c)
+                }
+                SettingsCardDivider { visible: skillRow.index < skillsState.rows.length - 1 }
+            }
+        }
+
+        Text {
+            visible: panel.prefs.buddyAllowSkills && skillsState.rows.length === 0
+            width: parent.width
+            text: qsTr("No skills found yet.")
+            color: Theme.textDim
+            font.family: Theme.font
+            font.pixelSize: Theme.fontBase
+        }
+
+        Text {
+            visible: panel.prefs.buddyAllowSkills && skillsState.notes.length > 0
+            width: parent.width
+            text: qsTr("Skipped: %1").arg(skillsState.notes.join("; "))
+            color: Theme.danger
+            font.family: Theme.font
+            font.pixelSize: Theme.fontSm
+            wrapMode: Text.WordWrap
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyAllowSkills }
+
+        Row {
+            visible: panel.prefs.buddyAllowSkills
+            width: parent.width
+            spacing: 12
+
+            SettingsPillButton {
+                id: skillsFolderBtn
+                anchors.verticalCenter: parent.verticalCenter
+                icon: "folder"
+                label: qsTr("Open skills folder")
+                primary: true
+                onClicked: Qt.openUrlExternally("file:///" + BuddyAgent.ensureSkillsFolder().replace(/\\/g, "/"))
+            }
+
+            SettingsPillButton {
+                id: skillsRescanBtn
+                anchors.verticalCenter: parent.verticalCenter
+                icon: "reset"
+                label: qsTr("Rescan")
+                onClicked: skillsState.refresh()
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(0, parent.width - skillsFolderBtn.width - skillsRescanBtn.width - 24)
+                text: qsTr("Add a folder with a SKILL.md here, or in .noch/skills of a workspace. Type /skills in the chat to see them, or /name to run one.")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+            }
+        }
+    }
+
+    SettingsSectionHeader {
+        visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowMemory
+        title: qsTr("Long-term memory (Mem0)")
+        rightText: !panel.prefs.buddyMemEnabled ? qsTr("Off")
+                 : panel.prefs.buddyMemBackend === "platform" ? qsTr("Mem0 Cloud")
+                 : panel.prefs.buddyMemBackend === "custom" ? qsTr("Custom server")
+                 : qsTr("Local · Docker")
+    }
+
+    SettingsGroupCard {
+        visible: panel.prefs.buddyAgentMode && panel.prefs.buddyAllowMemory
+
+        SettingsToggleRow {
+            label: qsTr("Remember across conversations")
+            sub: qsTr("Before Buddy answers, what it knows about you is looked up and added to its prompt. After each reply, the exchange is sent to Mem0, which keeps only lasting facts (preferences, projects, setup). If Mem0 is unreachable Buddy carries on with its local notes.")
+            checked: panel.prefs.buddyMemEnabled
+            onToggled: (c) => { panel.prefs.buddyMemEnabled = c; panel.memEdited() }
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyMemEnabled }
+
+        Column {
+            visible: panel.prefs.buddyMemEnabled
+            width: parent.width
+            spacing: 6
+
+            Text {
+                width: parent.width
+                text: qsTr("Where memories are kept")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                font.weight: Font.DemiBold
+            }
+            Segmented {
+                width: parent.width
+                height: 34
+                options: [
+                    { label: qsTr("Local"), value: "local" },
+                    { label: qsTr("Mem0 Cloud"), value: "platform" },
+                    { label: qsTr("Custom"), value: "custom" }
+                ]
+                value: panel.prefs.buddyMemBackend
+                onPicked: (v) => { panel.prefs.buddyMemBackend = v; panel.memEdited() }
+            }
+            Text {
+                width: parent.width
+                text: panel.prefs.buddyMemBackend === "platform"
+                      ? qsTr("Your conversations are sent to Mem0's servers (api.mem0.ai) under your Mem0 account. Get a key at app.mem0.ai.")
+                      : panel.prefs.buddyMemBackend === "custom"
+                        ? qsTr("Any server that speaks the Mem0 Platform API (/v3/memories/add/ and /search/), for example your own Mem0 deployment.")
+                        : qsTr("A Mem0 server in Docker on this computer (docker/mem0). Your memories stay on this PC. It uses the chat provider you set up under AI model for its two models, so there is no second key to enter. Run docker/mem0/setup.ps1 once to start it.")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Flow {
+            visible: panel.prefs.buddyMemEnabled && panel.prefs.buddyMemBackend !== "local"
+            width: parent.width
+            spacing: 12
+
+            readonly property bool pair: width >= 520
+            readonly property real halfW: pair ? Math.floor((width - spacing) / 2) : width
+
+            SettingsFieldBox {
+                visible: panel.prefs.buddyMemBackend === "custom"
+                width: parent.halfW
+                label: qsTr("Server address")
+                placeholder: "https://mem0.example.com"
+                hint: qsTr("Sent over https, or to this computer. The API key is never sent in clear text across a network.")
+                mono: true
+                text: panel.prefs.buddyMemUrl
+                onEdited: (v) => { panel.prefs.buddyMemUrl = v; panel.memEdited() }
+            }
+
+            SettingsFieldBox {
+                width: parent.halfW
+                label: qsTr("API key")
+                placeholder: panel.prefs.buddyMemBackend === "platform" ? "m0-..." : qsTr("Server key")
+                secret: true
+                mono: true
+                text: panel.prefs.buddyMemKey
+                onEdited: (v) => { panel.prefs.buddyMemKey = v; panel.memEdited() }
+            }
+        }
+
+        Flow {
+            visible: panel.prefs.buddyMemEnabled && panel.prefs.buddyMemBackend === "local"
+            width: parent.width
+            spacing: 12
+
+            readonly property bool pair: width >= 520
+            readonly property real halfW: pair ? Math.floor((width - spacing) / 2) : width
+
+            SettingsFieldBox {
+                width: parent.halfW
+                label: qsTr("Extraction model")
+                placeholder: panel.prefs.buddyModel.length > 0 ? panel.prefs.buddyModel : qsTr("Same as the chat model")
+                hint: qsTr("Reads each exchange and keeps the lasting facts. A small, cheap model is enough; leave blank to use the chat model.")
+                mono: true
+                text: panel.prefs.buddyMemLlmModel
+                onEdited: (v) => { panel.prefs.buddyMemLlmModel = v.trim(); panel.memEdited() }
+            }
+
+            SettingsFieldBox {
+                width: parent.halfW
+                label: qsTr("Embedding model")
+                placeholder: panel.prefs.buddyProvider === "ollama" ? "nomic-embed-text" : "text-embedding-3-small"
+                hint: qsTr("Used to search by meaning. It must be an embedding model your provider serves. Changing it starts a separate, empty memory.")
+                mono: true
+                text: panel.prefs.buddyMemEmbedModel
+                onEdited: (v) => { panel.prefs.buddyMemEmbedModel = v.trim(); panel.memEdited() }
+            }
+
+            SettingsFieldBox {
+                width: parent.halfW
+                label: qsTr("Embedding address (optional)")
+                placeholder: qsTr("Same as the chat provider")
+                hint: qsTr("Only if embeddings come from somewhere else, for example https://api.openai.com/v1.")
+                mono: true
+                text: panel.prefs.buddyMemEmbedBase
+                onEdited: (v) => { panel.prefs.buddyMemEmbedBase = v.trim(); panel.memEdited() }
+            }
+
+            SettingsFieldBox {
+                visible: panel.prefs.buddyMemEmbedBase.length > 0
+                width: parent.halfW
+                label: qsTr("Embedding API key")
+                placeholder: qsTr("Same as the chat provider")
+                secret: true
+                mono: true
+                text: panel.prefs.buddyMemEmbedKey
+                onEdited: (v) => { panel.prefs.buddyMemEmbedKey = v; panel.memEdited() }
+            }
+        }
+
+        SettingsFieldBox {
+            visible: panel.prefs.buddyMemEnabled && panel.prefs.buddyMemBackend === "local"
+            width: parent.width
+            label: qsTr("Server key (optional)")
+            placeholder: BuddyAgent.memHasKey() ? qsTr("Found: set up by the local stack") : qsTr("Not found: run docker/mem0/setup.ps1")
+            hint: qsTr("Leave blank to use the key setup.ps1 saved in %1.").arg(BuddyAgent.memLocalKeyPath())
+            secret: true
+            mono: true
+            text: panel.prefs.buddyMemKey
+            onEdited: (v) => { panel.prefs.buddyMemKey = v; panel.memEdited() }
+        }
+
+        SettingsFieldBox {
+            visible: panel.prefs.buddyMemEnabled
+            width: parent.width
+            label: qsTr("Memory name")
+            placeholder: "noch"
+            hint: qsTr("Memories are filed under this name. Change it to keep separate sets of memories.")
+            mono: true
+            text: panel.prefs.buddyMemUserId
+            onEdited: (v) => { panel.prefs.buddyMemUserId = v.trim(); panel.memEdited() }
+        }
+
+        SettingsCardDivider { visible: panel.prefs.buddyMemEnabled }
+
+        Row {
+            visible: panel.prefs.buddyMemEnabled
+            width: parent.width
+            spacing: 12
+
+            SettingsPillButton {
+                id: memTestBtn
+                anchors.verticalCenter: parent.verticalCenter
+                icon: "wifi"
+                label: panel.memTestState === "testing" ? qsTr("Testing…") : qsTr("Test memory")
+                primary: true
+                enabled: panel.memTestState !== "testing"
+                onClicked: panel.runMemTest()
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(0, parent.width - memTestBtn.width - 12)
+                text: panel.memTestMessage.length > 0
+                      ? panel.memTestMessage
+                      : qsTr("Searches the memory with a sample query to check the address and key.")
+                color: panel.memTestState === "ok" ? Theme.success
+                     : panel.memTestState === "failed" ? Theme.danger : Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+            }
+        }
+    }
+
     SettingsSectionHeader {
         visible: panel.prefs.buddyAgentMode
         title: qsTr("Request classifier (JEV)")

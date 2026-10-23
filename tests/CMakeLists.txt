@@ -44,7 +44,7 @@ set(NOCH_SPEECH_TO_TEXT_SOURCES
 )
 
 if(WIN32)
-    set(NOCH_WIN_LIBS user32)
+    set(NOCH_WIN_LIBS user32 crypt32)
 else()
     set(NOCH_WIN_LIBS "")
 endif()
@@ -143,6 +143,14 @@ noch_add_unit_test(tst_projectcontext
             ${NOCH_AGENT_POLICY_SOURCES}
     LIBS Qt6::Core Qt6::Network)
 
+noch_add_unit_test(tst_skills
+    SOURCES tests/tst_skills.cpp
+            src/agent/Skills.cpp src/agent/Skills.h
+            src/agent/ProjectContext.cpp src/agent/ProjectContext.h
+            ${NOCH_AGENT_POLICY_SOURCES}
+    LIBS Qt6::Core Qt6::Network
+    DEFS NOCH_BUILTIN_SKILLS_DIR="${PROJECT_SOURCE_DIR}/resources/skills")
+
 noch_add_unit_test(tst_savedrules
     SOURCES tests/tst_savedrules.cpp
             src/agent/SavedRules.cpp src/agent/SavedRules.h
@@ -159,15 +167,24 @@ noch_add_unit_test(tst_buddyagent
     SOURCES tests/tst_buddyagent.cpp tests/BuddyAgentFakes.h
             src/agent/BuddyProvider.cpp src/agent/BuddyProvider.h
             src/agent/BuddyProviderConfig.cpp src/agent/BuddyProviderInternal.h
+            src/agent/BuddyProviderConnectors.cpp
+            src/agent/Connector.cpp src/agent/Connector.h
+            src/agent/ConnectorRegistry.cpp src/agent/ConnectorRegistry.h
+            src/agent/GmailConnector.cpp src/agent/GmailConnector.h
+            src/agent/McpConnector.cpp src/agent/McpConnector.h
+            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
+            src/agent/SecretStore.cpp src/agent/SecretStore.h
             src/agent/BuddyProviderContext.cpp src/agent/BuddyProviderPlan.cpp
             src/agent/BuddyProviderPrompts.cpp src/agent/BuddyProviderProtocol.cpp
             src/agent/BuddyProviderRun.cpp src/agent/BuddyProviderStorage.cpp
             src/agent/BuddyProviderTools.cpp src/agent/BuddyProviderWeb.cpp
+            src/agent/BuddyProviderSkills.cpp src/agent/Skills.cpp src/agent/Skills.h
             src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
             src/agent/PlanValidator.cpp src/agent/PlanValidator.h
             src/agent/HookBus.cpp src/agent/HookBus.h
             src/agent/MemoryStore.cpp src/agent/MemoryStore.h src/agent/MemoryExtractor.h
             src/agent/TurnClassifier.cpp src/agent/TurnClassifier.h
+            src/agent/Mem0Client.cpp src/agent/Mem0Client.h
             ${NOCH_AGENT_POLICY_SOURCES}
             src/agent/UserQuestions.cpp src/agent/UserQuestions.h
             src/agent/RunJournal.cpp src/agent/RunJournal.h
@@ -183,6 +200,54 @@ noch_add_unit_test(tst_computeruse
     SOURCES tests/tst_computeruse.cpp
             ${NOCH_COMPUTER_USE_SOURCES}
     LIBS Qt6::Core Qt6::Gui ${NOCH_WIN_LIBS})
+
+noch_add_unit_test(tst_mem0client
+    SOURCES tests/tst_mem0client.cpp
+            src/agent/Mem0Client.cpp src/agent/Mem0Client.h
+    LIBS Qt6::Core Qt6::Network)
+
+# Connectors: encrypted secret storage, OAuth (PKCE + loopback), Gmail and MCP, against fake servers.
+set(NOCH_CONNECTOR_CORE_SOURCES
+    src/agent/Connector.cpp src/agent/Connector.h
+    src/agent/SecretStore.cpp src/agent/SecretStore.h
+    src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
+)
+if(WIN32)
+    set(NOCH_CRYPT_LIBS crypt32)
+else()
+    set(NOCH_CRYPT_LIBS "")
+endif()
+
+noch_add_unit_test(tst_secretstore
+    SOURCES tests/tst_secretstore.cpp src/agent/SecretStore.cpp src/agent/SecretStore.h
+    LIBS Qt6::Core ${NOCH_CRYPT_LIBS})
+
+noch_add_unit_test(tst_oauth
+    SOURCES tests/tst_oauth.cpp tests/FakeHttp.h
+            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
+    LIBS Qt6::Core Qt6::Gui Qt6::Network)
+
+noch_add_unit_test(tst_gmail
+    SOURCES tests/tst_gmail.cpp tests/FakeHttp.h
+            src/agent/GmailConnector.cpp src/agent/GmailConnector.h
+            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
+            ${NOCH_CONNECTOR_CORE_SOURCES}
+    LIBS Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
+
+noch_add_unit_test(tst_connectorregistry
+    SOURCES tests/tst_connectorregistry.cpp tests/FakeHttp.h tests/FakeMcp.h
+            src/agent/ConnectorRegistry.cpp src/agent/ConnectorRegistry.h
+            src/agent/GmailConnector.cpp src/agent/GmailConnector.h
+            src/agent/McpConnector.cpp src/agent/McpConnector.h
+            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
+            ${NOCH_CONNECTOR_CORE_SOURCES}
+    LIBS Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
+
+noch_add_unit_test(tst_mcp
+    SOURCES tests/tst_mcp.cpp tests/FakeHttp.h tests/FakeMcp.h
+            src/agent/McpConnector.cpp src/agent/McpConnector.h
+            ${NOCH_CONNECTOR_CORE_SOURCES}
+    LIBS Qt6::Core Qt6::Network ${NOCH_CRYPT_LIBS})
 
 noch_add_unit_test(tst_turnclassifier
     SOURCES tests/tst_turnclassifier.cpp

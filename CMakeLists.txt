@@ -33,6 +33,7 @@ set(NOCH_SOURCES
     src/agent/AgentPolicyShell.cpp
     src/agent/BuddyProvider.cpp
     src/agent/BuddyProviderConfig.cpp
+    src/agent/BuddyProviderConnectors.cpp
     src/agent/BuddyProvider.h
     src/agent/BuddyProviderInternal.h
     src/agent/BuddyProviderContext.cpp
@@ -43,6 +44,7 @@ set(NOCH_SOURCES
     src/agent/BuddyProviderStorage.cpp
     src/agent/BuddyProviderTools.cpp
     src/agent/BuddyProviderWeb.cpp
+    src/agent/BuddyProviderSkills.cpp
     src/agent/ComputerUse.cpp
     src/agent/ComputerUse.h
     src/agent/ComputerUseActions.cpp
@@ -52,6 +54,8 @@ set(NOCH_SOURCES
     src/agent/ComputerUseWin.cpp
     src/agent/ProjectContext.cpp
     src/agent/ProjectContext.h
+    src/agent/Skills.cpp
+    src/agent/Skills.h
     src/agent/RunJournal.cpp
     src/agent/RunJournal.h
     src/agent/SavedRules.cpp
@@ -73,6 +77,20 @@ set(NOCH_SOURCES
     src/agent/UserQuestions.h
     src/agent/TurnClassifier.cpp
     src/agent/TurnClassifier.h
+    src/agent/Mem0Client.cpp
+    src/agent/Mem0Client.h
+    src/agent/Connector.cpp
+    src/agent/Connector.h
+    src/agent/ConnectorRegistry.cpp
+    src/agent/ConnectorRegistry.h
+    src/agent/GmailConnector.cpp
+    src/agent/GmailConnector.h
+    src/agent/McpConnector.cpp
+    src/agent/McpConnector.h
+    src/agent/OAuthClient.cpp
+    src/agent/OAuthClient.h
+    src/agent/SecretStore.cpp
+    src/agent/SecretStore.h
 
     src/app/QmlSingletons.h
 
@@ -231,6 +249,7 @@ set(NOCH_QML_FILES
     qml/panels/settings/SettingsToggleRow.qml
 
     qml/panels/settings/pages/AgentPage.qml
+    qml/panels/settings/pages/ConnectorsPage.qml
     qml/panels/settings/pages/BuddyPage.qml
     qml/panels/settings/pages/DeepgramPage.qml
     qml/panels/settings/pages/GeneralPage.qml
@@ -302,13 +321,16 @@ file(GLOB NOCH_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/
 # a model dropped into %APPDATA%\noch\wakeword takes their place.
 file(GLOB NOCH_WAKEWORD_MODELS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS resources/wakeword/*.onnx)
 set(NOCH_MOONSHINE_VOCAB resources/moonshine/vocab.json)
+# Buddy's built-in Agent Skills (resources/skills/<name>/SKILL.md), read from the resources
+# by src/agent/Skills.cpp (see skills::builtinSkillsDir).
+file(GLOB_RECURSE NOCH_BUILTIN_SKILLS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS resources/skills/*)
 
 qt_add_qml_module(noch
     URI noch
     VERSION 1.0
     DEPENDENCIES QtQuick
     QML_FILES ${NOCH_QML_FILES}
-    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS} ${NOCH_MOONSHINE_VOCAB}
+    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS} ${NOCH_MOONSHINE_VOCAB} ${NOCH_BUILTIN_SKILLS}
 )
 
 # Buddy's ring shader (GPU ring in Settings > Look & glow), compiled to .qsb for
@@ -336,7 +358,7 @@ target_link_libraries(noch PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(noch PRIVATE user32 shell32 iphlpapi dwmapi ole32 powrprof)
+    target_link_libraries(noch PRIVATE user32 shell32 iphlpapi dwmapi ole32 powrprof crypt32)
 endif()
 
 set_target_properties(noch PROPERTIES

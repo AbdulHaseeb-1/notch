@@ -41,7 +41,9 @@ PlanValidation validatePlan(const QJsonArray &plan,
         const ToolSchema *schema = toolSchema(step.tool);
         if (step.tool.isEmpty()) {
             result.errors << where + QStringLiteral(": missing 'tool'.");
-        } else if (!schema) {
+        } else if (!schema && !(toolAvailable && toolAvailable(step.tool))) {
+            // Not in the registry and not offered in this run either. (A connector tool has no
+            // registry entry: it exists only while its app is connected, and is offered then.)
             result.errors << where + QStringLiteral(": unknown tool '%1'.").arg(step.tool);
         } else if (toolAvailable && !toolAvailable(step.tool)) {
             // M7: a plan naming a disabled/unloaded tool would fail every

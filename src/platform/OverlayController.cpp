@@ -29,7 +29,7 @@ void OverlayController::setWindowMask(QWindow *window, const QVariantList &regio
 {
     if (!window)
         return;
-    const QRegion next = regionFromShapes(regions);
+    const QRegion next = maskFromShapes(regions);
     if (window->mask() == next)
         return;
     window->setMask(next);
@@ -52,7 +52,7 @@ void OverlayController::setWindowPosition(QWindow *window, int x, int y)
 
 void OverlayController::setInteractiveRegions(const QVariantList &regions)
 {
-    const QRegion nextRegion = regionFromShapes(regions);
+    const QRegion nextRegion = maskFromShapes(regions);
 
     if (nextRegion == m_interactiveRegion)
         return;

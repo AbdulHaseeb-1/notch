@@ -80,6 +80,15 @@ void BuddyProvider::setAllowEditor(bool on)
     emit agentConfigChanged();
 }
 
+void BuddyProvider::setAllowConnectors(bool on)
+{
+    if (m_allowConnectors == on)
+        return;
+    m_allowConnectors = on;
+    syncConnectorPolicy();
+    emit agentConfigChanged();
+}
+
 void BuddyProvider::setAllowCodeSearch(bool on)
 {
     if (m_allowCodeSearch == on)
@@ -295,7 +304,7 @@ bool BuddyProvider::hasAnyToolEnabled() const
            && (m_allowBash || m_allowComputer || m_allowEditor || m_allowCodeSearch
                || m_allowMemory || m_allowWebSearch
                || m_allowTodoTask || m_allowAskUser || m_allowScreenshots
-               || musicAvailable());
+               || musicAvailable() || connectorsAvailable());
 }
 
 bool BuddyProvider::needsApiKey() const

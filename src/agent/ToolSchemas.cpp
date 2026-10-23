@@ -234,6 +234,25 @@ const QList<ToolSchema> &toolSchemas()
             out << s;
         }
 
+        // skill
+        {
+            ToolSchema s;
+            s.name = QStringLiteral("skill");
+            s.description = QStringLiteral("Load a skill's instructions by name.");
+            s.args = {
+                { QStringLiteral("name"), QStringLiteral("string"),
+                  QStringLiteral("The skill's name."), true },
+                { QStringLiteral("file"), QStringLiteral("string"),
+                  QStringLiteral("A file that comes with the skill, relative to its folder."), false },
+            };
+            s.aliases = {
+                { QStringLiteral("skill_name"), QStringLiteral("name") },
+                { QStringLiteral("skill"), QStringLiteral("name") },
+                { QStringLiteral("path"), QStringLiteral("file") },
+            };
+            out << s;
+        }
+
         // share_screenshot
         {
             ToolSchema s;

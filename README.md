@@ -44,6 +44,16 @@ you push the pointer to the top of the screen.
   files and folders from your Music folder on its own and asks before queueing
   anything outside it. The queue, the last track and the volume are remembered.
   A switch in Settings > Agent & tools turns the tool off.
+- **Skills** - teach Buddy better ways to work with Agent Skills, the format of
+  Claude Code and the Claude Agent SDK: a folder with a `SKILL.md` (a name, a
+  description, then instructions). Buddy sees only the names and descriptions and
+  loads a skill's instructions when a task matches, so many skills cost little.
+  Noch ships six (desktop control, files and shell, research, clarifying
+  questions, memory, and a skill-creator that helps you write your own); add yours
+  in the skills folder (Settings > Agent & tools > Skills > *Open skills folder*)
+  or in `.noch/skills` / `.claude/skills` of a workspace. `/skills` lists them,
+  `/<skill-name>` runs one. A skill is advice only: it never grants a tool or a
+  permission. See [docs/skills.md](docs/skills.md).
 - **Games and full-screen apps** - while a full-screen app (a game, a video, a
   presentation) is in front, the pill stays tucked away even when the pointer
   touches the top edge, so it never drops over the action. Ctrl + Alt + Space
@@ -81,6 +91,19 @@ derived from Lucide, ISC licence in `qml/icons/LICENSE-lucide.txt`).
 scale and take any tint. To add one, put it in the map in
 `tools/build_icons.py`, regenerate, and reconfigure CMake (the folder is
 globbed).
+
+**Long-term memory.** Buddy remembers lasting facts about you across conversations
+with [Mem0](https://mem0.ai): the default is a private Mem0 server in Docker on
+your own PC (`docker/mem0`, started with `setup.ps1`); Mem0 Cloud or your own
+server can be chosen in Settings, Agent & tools. See
+[`docker/mem0/README.md`](docker/mem0/README.md).
+
+**Connected apps.** Settings, Connectors signs Buddy in to your accounts once: Gmail
+(read mail, draft and send, with Google OAuth and your own client ID) and any app with an
+MCP server (GitHub, Notion, Slack ...). Then ask "read my unread emails" or "draft a reply
+to Anna". Reads run on their own; anything that sends or changes something asks you every
+time. Tokens are kept encrypted (Windows DPAPI). Setup steps for the Google client:
+[`docs/connectors.md`](docs/connectors.md).
 
 **Buddy agent safety.** Tool calls pass through a permission policy with
 approval cards, guardrails, context compaction, retries and local traces. See
@@ -163,6 +186,7 @@ imports and type names stay unchanged. `CMakeLists.txt` sets this up with
 | Music | `qml/panels/NowPlaying.qml` (the pill), `src/media/{MusicPlayer,MediaHub,MusicAgentBackend}.*`, `src/agent/MusicBackend.h` (Buddy's `music` tool) |
 | Palette | `qml/panels/PaletteCard.qml`, `qml/flyouts/PaletteFlyout.qml` |
 | Buddy | `qml/buddy/*`, `src/agent/{BuddyProvider,AgentPolicy,ComputerUse}*` |
+| Connected apps (Gmail, MCP) | `src/agent/{Connector,ConnectorRegistry,GmailConnector,McpConnector,OAuthClient,SecretStore}.*`, `qml/panels/settings/pages/ConnectorsPage.qml`, [docs/connectors.md](docs/connectors.md) |
 | Voice (incl. Deepgram live conversation, see [docs/deepgram.md](docs/deepgram.md)) | `src/voice/*` |
 | Agent trace | `qml/agent/*` |
 | Platform | `src/platform/*` |
@@ -193,6 +217,10 @@ The tests are registered by `tests/CMakeLists.txt` through the helper in
 `AgentPolicy` and `ComputerUse`) in sync across every test that needs them.
 
 `tst_agentpolicy` covers the permission policy, redaction and injection checks.
+`tst_secretstore` (DPAPI-encrypted secrets), `tst_oauth` (PKCE, the loopback redirect, code
+exchange and refresh against a fake sign-in service), `tst_gmail` (the Gmail connector against a fake
+Google: sign-in, search, read, drafts, send, token refresh, revocation) and `tst_mcp` (MCP over HTTP and
+stdio) cover the connectors; their rules in the gate are in `tst_agentpolicy` and `tst_buddyagent`.
 `tst_iconset` checks that every SVG icon parses into usable path data.
 `tst_stream` checks the SSE parser (Anthropic events and OpenAI chunks, any
 chunking, cut-off tool input, error events, completeness).
@@ -209,8 +237,8 @@ pipeline against the reference implementation's scores; needs ONNX Runtime, set
 and the model files, set `NOCH_ORT_LIBRARY` and `NOCH_MOONSHINE_DIR`, skipped otherwise)
 and `tst_speechout` (system, Google AI Studio Gemini TTS and Kokoro voices against a fake server) cover the
 wake word, transcription and spoken reports. `tst_userquestions`, `tst_runjournal`,
-`tst_savedrules`, `tst_projectcontext`, `tst_chatsessions` and `tst_voice` cover
-the question, undo, saved-rule, instruction/slash-command, chat-session and voice
+`tst_savedrules`, `tst_projectcontext`, `tst_skills`, `tst_chatsessions` and `tst_voice` cover
+the question, undo, saved-rule, instruction/slash-command, agent-skill, chat-session and voice
 modules (the last one with a fake microphone and a fake speech engine).
 `tst_buddyagent` also drives the official computer toolset and its fallbacks,
 batch trimming and cache markers, questions, undo, saved rules and session

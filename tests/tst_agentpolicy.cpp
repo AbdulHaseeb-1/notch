@@ -14,6 +14,15 @@ class TestAgentPolicy : public QObject
     static QJsonObject bash(const QString &c) { return QJsonObject{ { "command", c } }; }
     static QJsonObject edit(const QString &cmd, const QString &path)
     { return QJsonObject{ { "command", cmd }, { "path", path } }; }
+    // Gmail's tools as the registry reports them: name -> changes something in the app.
+    static AgentPolicy connectorPolicy()
+    {
+        AgentPolicy p;
+        p.setConnectorTools({ { "gmail_search_messages", false }, { "gmail_read_message", false },
+                              { "gmail_create_draft", true }, { "gmail_send_message", true },
+                              { "mcp_x_delete_everything", true } });
+        return p;
+    }
 
 private slots:
     void dangerousCommands_data()
@@ -253,6 +262,36 @@ private slots:
         QCOMPARE(p.evaluate("str_replace_editor", edit("create", cfg)).verdict, V::Deny);
         p.setMode(AgentPolicy::Mode::Bypass);
         QCOMPARE(p.evaluate("str_replace_editor", edit("create", cfg)).verdict, V::Deny);
+    }
+
+    void theSkillsFolderIsTheOneOpenCornerOfNochsData()
+    {
+        AgentPolicy p;
+        const QString data = QDir::homePath() + "/.local/share/noch";
+        p.setWorkspaceRoots({ QDir::homePath() + "/NochWorkspace" });
+        p.setPrivatePaths({ QDir::homePath() + "/.config/noch", data });
+        // Skills may be read and, with approval, written ...
+        QVERIFY(!p.isPrivatePath(data + "/skills/pdf/SKILL.md"));
+        QVERIFY(!p.isPrivatePath(data + "/skills/pdf/scripts/run.ps1"));
+        QCOMPARE(p.evaluate("str_replace_editor", edit("view", data + "/skills/pdf/SKILL.md")).verdict, V::Allow);
+        QCOMPARE(p.evaluate("str_replace_editor", edit("create", data + "/skills/pdf/SKILL.md")).verdict, V::Ask);
+        // ... even in Trusted mode a SKILL.md write asks, because it steers every later run.
+        p.setMode(AgentPolicy::Mode::Bypass);
+        QCOMPARE(p.evaluate("str_replace_editor", edit("create", data + "/skills/pdf/SKILL.md")).verdict, V::Ask);
+        // Everything else in the data folder (and a look-alike) stays private.
+        QVERIFY(!p.isPrivatePath(data + "/skills"));
+        QVERIFY(p.isPrivatePath(data + "/settings.json"));
+        QVERIFY(p.isPrivatePath(data + "/skillsX/SKILL.md"));
+        QCOMPARE(p.evaluate("str_replace_editor", edit("create", data + "/permission-rules.json")).verdict, V::Deny);
+    }
+
+    void skillToolIsReadOnlyAndAlwaysAllowed()
+    {
+        for (AgentPolicy::Mode m : { AgentPolicy::Mode::Default, AgentPolicy::Mode::Plan, AgentPolicy::Mode::Bypass }) {
+            AgentPolicy p;
+            p.setMode(m);
+            QCOMPARE(p.evaluate("skill", QJsonObject{ { "name", "research" } }).verdict, V::Allow);
+        }
     }
 
     void sessionGrantsDoNotCoverSecrets()
@@ -700,6 +739,80 @@ private slots:
         QCOMPARE(p.evaluate("computer", cuAct("key", "super+x")).verdict, V::Ask);
         p.setScreenTainted(false);
         QCOMPARE(p.evaluate("computer", cuAct("key", "super+x")).verdict, V::Allow);
+    }
+
+    // ---- connected apps (Gmail, MCP servers) --------------------------------------------
+
+    void connectorReadsRunFreelyInEveryMode()
+    {
+        AgentPolicy p = connectorPolicy();
+        for (auto mode : { AgentPolicy::Mode::Default, AgentPolicy::Mode::AcceptEdits,
+                           AgentPolicy::Mode::Plan, AgentPolicy::Mode::Bypass }) {
+            p.setMode(mode);
+            QCOMPARE(p.evaluate("gmail_search_messages", QJsonObject{ { "query", "is:unread" } }).verdict, V::Allow);
+            QCOMPARE(p.evaluate("gmail_read_message", QJsonObject{ { "message_id", "abc" } }).rule, QStringLiteral("connector-read"));
+        }
+    }
+
+    void connectorWritesAskEveryTimeEvenInTrustedMode()
+    {
+        AgentPolicy p = connectorPolicy();
+        const QJsonObject send{ { "to", "bob@example.com" }, { "subject", "s" }, { "body", "b" } };
+        for (auto mode : { AgentPolicy::Mode::Default, AgentPolicy::Mode::AcceptEdits, AgentPolicy::Mode::Bypass }) {
+            p.setMode(mode);
+            const auto d = p.evaluate("gmail_send_message", send);
+            QCOMPARE(d.verdict, V::Ask);
+            QCOMPARE(d.rule, QStringLiteral("ask:connector-write"));
+            QCOMPARE(p.evaluate("gmail_create_draft", send).verdict, V::Ask);
+        }
+        // A session grant (the old kind of "always allow") does not cover someone's mailbox either.
+        p.setMode(AgentPolicy::Mode::Default);
+        p.allowForSession("gmail_send_message");
+        QCOMPARE(p.evaluate("gmail_send_message", send).verdict, V::Ask);
+    }
+
+    void planModeCannotWriteToConnectedApps()
+    {
+        AgentPolicy p = connectorPolicy();
+        p.setMode(AgentPolicy::Mode::Plan);
+        QCOMPARE(p.evaluate("gmail_send_message", QJsonObject()).verdict, V::Deny);
+        QCOMPARE(p.evaluate("gmail_create_draft", QJsonObject()).rule, QStringLiteral("mode:plan"));
+    }
+
+    void savedAlwaysAllowSkipsTheCardForThatToolOnly()
+    {
+        AgentPolicy p = connectorPolicy();
+        p.setConnectorAlwaysAllow({ "gmail_create_draft" });
+        QCOMPARE(p.evaluate("gmail_create_draft", QJsonObject()).verdict, V::Allow);
+        QCOMPARE(p.evaluate("gmail_create_draft", QJsonObject()).rule, QStringLiteral("connector-always"));
+        QCOMPARE(p.evaluate("gmail_send_message", QJsonObject()).verdict, V::Ask);   // another tool: still asks
+        // A prompt injection in this run revokes it until the run ends.
+        p.setTainted(true);
+        QCOMPARE(p.evaluate("gmail_create_draft", QJsonObject()).verdict, V::Ask);
+        p.setTainted(false);
+        // Plan mode still wins.
+        p.setMode(AgentPolicy::Mode::Plan);
+        QCOMPARE(p.evaluate("gmail_create_draft", QJsonObject()).verdict, V::Deny);
+    }
+
+    void aTaintedRunAsksBeforeReadingConnectedApps()
+    {
+        AgentPolicy p = connectorPolicy();
+        p.setTainted(true);
+        const auto d = p.evaluate("gmail_search_messages", QJsonObject());
+        QCOMPARE(d.verdict, V::Ask);
+        QCOMPARE(d.rule, QStringLiteral("ask:tainted-connector"));
+        p.setMode(AgentPolicy::Mode::Bypass);   // Trusted mode is suspended by the taint too
+        QCOMPARE(p.evaluate("gmail_search_messages", QJsonObject()).verdict, V::Ask);
+    }
+
+    void toolsThatAreNotConnectedAreStillUnknown()
+    {
+        AgentPolicy p = connectorPolicy();
+        QCOMPARE(p.evaluate("gmail_delete_message", QJsonObject()).verdict, V::Deny);
+        QCOMPARE(p.evaluate("gmail_delete_message", QJsonObject()).rule, QStringLiteral("deny:unknown-tool"));
+        p.setConnectorTools({});   // disconnected
+        QCOMPARE(p.evaluate("gmail_search_messages", QJsonObject()).verdict, V::Deny);
     }
 };
 

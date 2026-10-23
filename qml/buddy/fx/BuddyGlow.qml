@@ -141,7 +141,9 @@ Item {
         // Two lights that circle the orb, so the colour moves round it.
         Item {
             anchors.fill: parent
-            RotationAnimator on rotation {
+            // A NumberAnimation, not a RotationAnimator: measured on this machine, the
+            // render-thread animator costs about twice the CPU and GPU for the same motion.
+            NumberAnimation on rotation {
                 from: 0
                 to: 360
                 duration: 14000

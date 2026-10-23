@@ -172,6 +172,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     // cache warm even when the model writes memories mid-run. P8: ranked by
     // relevance to this run's request.
     m_memoryIndexSnapshot = memoryIndex(text);
+    m_runUserText = text;
     {
         // Instruction files are read once per run for the same reason: an edit
         // mid-run must not change the system prompt and spoil the cache.
@@ -185,6 +186,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
                                  { "chars", ins.text.size() }, { "truncated", ins.truncated } });
         }
     }
+    refreshSkillsForRun();
     m_agentMessages = QJsonArray();
     m_pendingTools.clear();
     m_completedTools.clear();
@@ -267,7 +269,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     });
 
     emit statusChanged(QStringLiteral("thinking"));
-    dispatchAfterClassify(text);
+    recallThenDispatch(text);
 }
 
 void BuddyProvider::dispatchAgentTurn()
@@ -392,6 +394,9 @@ void BuddyProvider::cancel()
     ++m_runGeneration;
     m_classifyPending = false;
     m_classifier->cancel();
+    m_memPending = false;
+    m_memToolPending = false;
+    m_mem->cancelSearch();   // a save already on its way is left alone
     if (m_classification.valid) {
         m_classification = turnclass::Classification();
         emit lastClassificationChanged();

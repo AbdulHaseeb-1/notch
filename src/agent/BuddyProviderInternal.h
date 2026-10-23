@@ -440,6 +440,9 @@ inline const QMap<QString, ToolArgSpec> &toolArgSpecs()
         { QStringLiteral("ask_user_question"),
           { { QStringLiteral("questions") },
             { QStringLiteral("questions") } } },
+        { QStringLiteral("skill"),
+          { { QStringLiteral("name") },
+            { QStringLiteral("name"), QStringLiteral("file") } } },
         { QStringLiteral("share_screenshot"),
           { {},
             { QStringLiteral("caption"), QStringLiteral("display") } } },
@@ -487,10 +490,11 @@ QJsonValue coerceScalar(const QJsonValue &v, const QString &kind, bool *ok)
 // P1: Field-level validation against the registry. Returns a list of
 // specific problems ("missing required 'command'", "'insert_line' should be
 // an integer, got 'abc'"), empty when the call is valid.
-inline QStringList validateToolCall(const QString &toolName, const QJsonObject &input)
+inline QStringList validateToolCall(const QString &toolName, const QJsonObject &input,
+                                    const ToolSchema *schemaOverride = nullptr)
 {
     QStringList problems;
-    const ToolSchema *schema = toolSchema(toolName);
+    const ToolSchema *schema = schemaOverride ? schemaOverride : toolSchema(toolName);
     if (!schema)
         return problems;  // unknown tools keep the gate's deny path
 
@@ -540,11 +544,13 @@ inline QStringList validateToolCall(const QString &toolName, const QJsonObject &
     return problems;
 }
 
+// `schemaOverride`: the schema of a tool that is not in the static registry (a connector tool).
 inline ToolCallRepair normalizeToolCall(const QString &toolName, QJsonObject &input,
-                                 const QString &rawArguments, QString *noteOut)
+                                 const QString &rawArguments, QString *noteOut,
+                                 const ToolSchema *schemaOverride = nullptr)
 {
     bool fixed = false;
-    const ToolSchema *schema = toolSchema(toolName);
+    const ToolSchema *schema = schemaOverride ? schemaOverride : toolSchema(toolName);
 
     // 1. The arguments were not a JSON object: strip code fences and fix the
     // classic weak-model tell, trailing commas, then parse once more.
@@ -604,7 +610,7 @@ inline ToolCallRepair normalizeToolCall(const QString &toolName, QJsonObject &in
 
     // 4. Validate against the registry: field-level errors, not just
     // "missing X", so the model knows exactly what to fix.
-    const QStringList problems = validateToolCall(toolName, input);
+    const QStringList problems = validateToolCall(toolName, input, schema);
     if (!problems.isEmpty()) {
         if (noteOut) {
             *noteOut = QStringLiteral("Your '%1' tool call was not run:\n- %2\n")
@@ -635,11 +641,14 @@ struct TextToolCall {
     QJsonObject input;
 };
 
-inline QList<TextToolCall> callsFromEnvelope(const QJsonObject &obj)
+// `isExtra`: names that are tools although they are not in the static registry (connector tools).
+using KnownToolFn = std::function<bool(const QString &)>;
+
+inline QList<TextToolCall> callsFromEnvelope(const QJsonObject &obj, const KnownToolFn &isExtra = {})
 {
     QList<TextToolCall> out;
-    auto accept = [&out](const QString &name, const QJsonValue &input) {
-        if (name.isEmpty() || !toolSchema(name))
+    auto accept = [&out, &isExtra](const QString &name, const QJsonValue &input) {
+        if (name.isEmpty() || (!toolSchema(name) && !(isExtra && isExtra(name))))
             return;
         TextToolCall tc;
         tc.name = name;
@@ -664,7 +673,7 @@ inline QList<TextToolCall> callsFromEnvelope(const QJsonObject &obj)
     return out;
 }
 
-inline QList<TextToolCall> extractTextToolCalls(const QString &text)
+inline QList<TextToolCall> extractTextToolCalls(const QString &text, const KnownToolFn &isExtra = {})
 {
     if (text.trimmed().isEmpty())
         return {};
@@ -672,7 +681,7 @@ inline QList<TextToolCall> extractTextToolCalls(const QString &text)
     QJsonParseError err;
     const QJsonDocument whole = QJsonDocument::fromJson(text.trimmed().toUtf8(), &err);
     if (err.error == QJsonParseError::NoError && whole.isObject()) {
-        const QList<TextToolCall> found = callsFromEnvelope(whole.object());
+        const QList<TextToolCall> found = callsFromEnvelope(whole.object(), isExtra);
         if (!found.isEmpty())
             return found;
     }
@@ -685,7 +694,7 @@ inline QList<TextToolCall> extractTextToolCalls(const QString &text)
         const QRegularExpressionMatch m = it.next();
         const QJsonDocument doc = QJsonDocument::fromJson(m.captured(1).trimmed().toUtf8());
         if (doc.isObject()) {
-            const QList<TextToolCall> found = callsFromEnvelope(doc.object());
+            const QList<TextToolCall> found = callsFromEnvelope(doc.object(), isExtra);
             if (!found.isEmpty())
                 return found;
         }

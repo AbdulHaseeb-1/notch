@@ -127,6 +127,9 @@ QVariantMap BuddyProvider::resolveSlash(const QString &text) const
                             { QStringLiteral("prompt"), pc::expand(c, s.args) },
                             { QStringLiteral("source"), c.source }, { QStringLiteral("description"), c.description } };
     }
+    const QVariantMap skill = resolveSkillSlash(s.name, s.args);
+    if (!skill.isEmpty())
+        return skill;
     const QString suggestion = pc::suggestCommand(all, s.name);
     return QVariantMap{ { QStringLiteral("kind"), QStringLiteral("unknown") }, { QStringLiteral("name"), s.name },
                         { QStringLiteral("suggestion"), suggestion },
@@ -138,12 +141,15 @@ QVariantList BuddyProvider::slashCommands(const QString &prefix) const
 {
     const QString p = prefix.trimmed().toLower();
     QVariantList out;
+    QStringList taken;
     for (const pc::Command &c : pc::loadCommands(effectiveWorkspace(), userDataDir())) {
+        taken << c.name;
         if (!p.isEmpty() && !c.name.startsWith(p))
             continue;
         out.append(QVariantMap{ { QStringLiteral("name"), c.name }, { QStringLiteral("description"), c.description },
                                 { QStringLiteral("argumentHint"), c.argumentHint }, { QStringLiteral("source"), c.source } });
     }
+    out += skillSlashCommands(p, taken);
     return out;
 }
 
@@ -398,6 +404,13 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
     // otherwise (shell syntax, secrets, computer control ...) it can only be
     // a grant for this session, as it always was.
     bool saved = false;
+    const bool connectorGrant = approve && always && m_connectors && m_connectors->hasTool(call.name)
+        && !rule.valid() && m_pendingConnectorWrite;
+    if (connectorGrant) {
+        m_connectors->setAlwaysAllow(call.name, true);
+        syncConnectorPolicy();
+        saved = true;
+    }
     if (approve && always && rule.valid()) {
         m_savedRules.add(rule);
         saved = m_savedRules.contains(rule);
@@ -407,6 +420,7 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
         }
     }
     const bool sessionGrant = approve && always && !saved;
+    m_pendingConnectorWrite = false;
     addSpan(QJsonObject{ { "type", "approval" }, { "tool", call.name },
                          { "decision", !approve ? "rejected" : saved ? "approved-rule" : sessionGrant ? "approved-session" : "approved" } });
     if (approve) {
@@ -416,7 +430,8 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
             { QStringLiteral("status"), QStringLiteral("running") },
             { QStringLiteral("policy"), saved ? QStringLiteral("approved-rule")
                                               : sessionGrant ? QStringLiteral("approved-session") : QStringLiteral("approved") },
-            { QStringLiteral("policyNote"), saved ? tr("Saved: always allow “%1”").arg(redact(rule.label))
+            { QStringLiteral("policyNote"), connectorGrant ? tr("Saved: always allow “%1”").arg(connectors::prettyToolName(call.name))
+                                          : saved ? tr("Saved: always allow “%1”").arg(redact(rule.label))
                                                   : sessionGrant ? tr("Approved for this session") : tr("Approved by you") } });
         m_stepTimer.start();
         setActiveToolState(call.name, summarizeToolCall(call.name, call.input), call.input);
@@ -627,7 +642,7 @@ void BuddyProvider::finishTrace(const QString &outcome, const QString &detail)
 // review note instead of silently merging — a contradiction the user can
 // see beats a fact the model quietly overwrote. A completed plan is also
 // distilled into /memories/procedures/.
-void BuddyProvider::extractRunMemories()
+void BuddyProvider::extractRunMemories(const QString &finalText)
 {
     if (!m_allowMemory)
         return;
@@ -641,6 +656,24 @@ void BuddyProvider::extractRunMemories()
             userTexts << msg.value(QStringLiteral("content")).toString();
     }
     const QStringList candidates = extractFactCandidates(userTexts);
+    if (m_mem->ready()) {
+        // Mem0 extracts, merges and updates the facts itself; the local store only
+        // gets the explicit "remember that ..." facts if saving there fails.
+        saveExchangeToMem0(finalText, candidates);
+    } else {
+        storeLocalFacts(candidates, true);
+    }
+    if (!m_pendingProcedure.isEmpty()) {
+        if (!store.addFact(redact(m_pendingProcedure), true).isEmpty())
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
+                                 { QStringLiteral("event"), QStringLiteral("procedure-saved") } });
+        m_pendingProcedure.clear();
+    }
+}
+
+void BuddyProvider::storeLocalFacts(const QStringList &candidates, bool trace)
+{
+    MemoryStore store(memoriesPath());
     // M4: read the corpus once; every candidate searches this snapshot.
     const QList<MemoryFact> corpus = store.list();
     int added = 0, updated = 0, flagged = 0;
@@ -686,13 +719,7 @@ void BuddyProvider::extractRunMemories()
             ++added;
         }
     }
-    if (!m_pendingProcedure.isEmpty()) {
-        if (!store.addFact(redact(m_pendingProcedure), true).isEmpty())
-            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
-                                 { QStringLiteral("event"), QStringLiteral("procedure-saved") } });
-        m_pendingProcedure.clear();
-    }
-    if (added || updated) {
+    if (trace && (added || updated)) {
         addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
                              { QStringLiteral("event"), QStringLiteral("extracted") },
                              { QStringLiteral("added"), added },
@@ -703,8 +730,8 @@ void BuddyProvider::extractRunMemories()
 
 void BuddyProvider::emitFinal(const QString &text)
 {
-    extractRunMemories();
     const QString safe = redact(text);
+    extractRunMemories(safe);
     finishTrace(QStringLiteral("ok"));
     emit responseReady(safe);
 }

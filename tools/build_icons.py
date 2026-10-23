@@ -32,7 +32,7 @@ MAP = {
     "trash": "trash-2", "droplet": "droplet", "send": "send-horizontal", "spark": "sparkles",
     "chart": "chart-column", "doc": "file-text", "tasks": "list-checks",
     "terminal": "square-terminal", "computer": "monitor", "cursor": "mouse-pointer-2",
-    "memory": "brain", "advisor": "lightbulb", "tool-search": "package-search",
+    "memory": "brain", "mail": "mail", "advisor": "lightbulb", "tool-search": "package-search",
     "code-search": "file-search", "web-fetch": "link", "shield": "shield",
     "shield-check": "shield-check", "shield-alert": "shield-alert", "bolt": "zap",
     "alert": "circle-alert", "info": "info", "check-circle": "circle-check",

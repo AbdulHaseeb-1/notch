@@ -17,13 +17,16 @@
 #include <QVariantMap>
 
 #include "AgentPolicy.h"
+#include "ConnectorRegistry.h"
 #include "ComputerUse.h"
 #include "HookBus.h"
+#include "Mem0Client.h"
 #include "PlanValidator.h"
 #include "ProjectContext.h"
 #include "RunJournal.h"
 #include "SessionFormat.h"
 #include "SavedRules.h"
+#include "Skills.h"
 #include "MusicBackend.h"
 #include "StreamAccumulator.h"
 #include "TurnClassifier.h"
@@ -84,6 +87,15 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowScreenshots READ allowScreenshots WRITE setAllowScreenshots NOTIFY agentConfigChanged)
     // Lets Buddy control the music pill (the `music` tool): play, pause, skip, volume, Noch's queue.
     Q_PROPERTY(bool allowMusic READ allowMusic WRITE setAllowMusic NOTIFY agentConfigChanged)
+    // Agent Skills: folders of instructions Buddy loads on demand (the `skill` tool, /name).
+    // disabledSkills are the names switched off in Settings, comma separated.
+    Q_PROPERTY(bool allowSkills READ allowSkills WRITE setAllowSkills NOTIFY agentConfigChanged)
+    Q_PROPERTY(QString disabledSkills READ disabledSkills WRITE setDisabledSkills NOTIFY agentConfigChanged)
+
+    // Connected apps (Gmail, MCP servers): their tools are offered to the model while connected
+    // (see ConnectorRegistry.h and docs/connectors.md). allowConnectors is the master switch.
+    Q_PROPERTY(bool allowConnectors READ allowConnectors WRITE setAllowConnectors NOTIFY agentConfigChanged)
+    Q_PROPERTY(ConnectorRegistry *connectors READ connectors CONSTANT)
 
     // Live tool-execution telemetry & Anthropic Agent SDK response metadata for the UI
     // Permission mode: "default" | "acceptEdits" | "plan" | "bypass".
@@ -126,6 +138,20 @@ class BuddyProvider : public QObject
     // The last valid result for the current run: { valid, intent, risk, effort,
     // agent, tools, confidence, summary }; empty when the run was not classified.
     Q_PROPERTY(QVariantMap lastClassification READ lastClassification NOTIFY lastClassificationChanged)
+    // Long-term memory through Mem0 (see Mem0Client.h): "local" (the Docker stack in
+    // docker/mem0, the default), "platform" (api.mem0.ai) or "custom" (memUrl).
+    Q_PROPERTY(bool memEnabled READ memEnabled WRITE setMemEnabled NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memBackend READ memBackend WRITE setMemBackend NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memUrl READ memUrl WRITE setMemUrl NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memKey READ memKey WRITE setMemKey NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memUserId READ memUserId WRITE setMemUserId NOTIFY memConfigChanged)
+    // The local Mem0 server uses Buddy's own chat provider (address and key) for its models.
+    // These pick the models: extraction (blank = the chat model) and embeddings, and
+    // optionally a different address/key for embeddings (blank = the chat provider).
+    Q_PROPERTY(QString memLlmModel READ memLlmModel WRITE setMemLlmModel NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memEmbedModel READ memEmbedModel WRITE setMemEmbedModel NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memEmbedBase READ memEmbedBase WRITE setMemEmbedBase NOTIFY memConfigChanged)
+    Q_PROPERTY(QString memEmbedKey READ memEmbedKey WRITE setMemEmbedKey NOTIFY memConfigChanged)
     // Non-empty while a tool call waits for the user: { id, stepIndex, tool,
     // badge, icon, title, detail, reason, rule, secondsLeft }.
     Q_PROPERTY(QVariantMap pendingApproval READ pendingApproval NOTIFY pendingApprovalChanged)
@@ -189,10 +215,22 @@ public:
     void setAllowTodoTask(bool on);
     bool allowAskUser() const { return m_allowAskUser; }
     void setAllowAskUser(bool on);
+    bool allowSkills() const { return m_allowSkills; }
+    void setAllowSkills(bool on);
+    QString disabledSkills() const { return m_disabledSkills; }
+    void setDisabledSkills(const QString &names);
     bool allowScreenshots() const { return m_allowScreenshots; }
     void setAllowScreenshots(bool on);
     bool allowMusic() const { return m_allowMusic; }
     void setAllowMusic(bool on);
+    bool allowConnectors() const { return m_allowConnectors; }
+    void setAllowConnectors(bool on);
+    ConnectorRegistry *connectors() const { return m_connectors; }
+    // Connected apps whose tools Buddy may use right now.
+    bool connectorsAvailable() const { return m_allowConnectors && m_connectors->hasTools(); }
+    // Loads the saved connectors (Google client ID, MCP servers, sign-ins) from Noch's data
+    // folder and starts the MCP servers that were left connected. main() calls it once.
+    void startConnectors();
     // The music pill the `music` tool drives; not owned. Without one the tool is not offered.
     void setMusicBackend(MusicBackend *backend);
     bool musicAvailable() const { return m_allowMusic && m_musicBackend; }
@@ -293,6 +331,14 @@ public:
     Q_INVOKABLE QVariantMap projectInstructions() const;
     // /init: write a starter NOCH.md into the workspace unless it has instructions already.
     Q_INVOKABLE QVariantMap initProjectInstructions();
+    // Agent Skills, read fresh: [{ name, description, source, enabled, modelInvocable, userInvocable,
+    // argumentHint, overrides, path }] and the notes about folders that were skipped.
+    Q_INVOKABLE QVariantList skillList() const;
+    Q_INVOKABLE QStringList skillNotes() const;
+    // The /skills text (Markdown): what is installed, where, and how to add more.
+    Q_INVOKABLE QString skillsReport() const;
+    // The user's skills folder; created when missing so it can be opened.
+    Q_INVOKABLE QString ensureSkillsFolder() const;
     // Noch's own data folder (user-level NOCH.md and commands/). Tests point it elsewhere.
     Q_INVOKABLE QString userDataDir() const;
     void setUserDataDir(const QString &dir) { m_userDataDir = dir; }
@@ -330,6 +376,36 @@ public:
     // Tests tune the classifier's timeouts and resting period.
     TurnClassifier *classifierClient() const { return m_classifier; }
 
+    bool memEnabled() const { return m_mem->enabled(); }
+    void setMemEnabled(bool on);
+    QString memBackend() const { return m_mem->backend(); }
+    void setMemBackend(const QString &backend);
+    QString memUrl() const { return m_mem->customUrl(); }
+    void setMemUrl(const QString &url);
+    QString memKey() const { return m_memKeyTyped; }
+    void setMemKey(const QString &key);
+    QString memUserId() const { return m_mem->userId(); }
+    void setMemUserId(const QString &id);
+    QString memLlmModel() const { return m_memLlmModel; }
+    void setMemLlmModel(const QString &m);
+    QString memEmbedModel() const { return m_memEmbedModel; }
+    void setMemEmbedModel(const QString &m);
+    QString memEmbedBase() const { return m_memEmbedBase; }
+    void setMemEmbedBase(const QString &b);
+    QString memEmbedKey() const { return m_memEmbedKey; }
+    void setMemEmbedKey(const QString &k);
+    // { llm, embedder } built from the chat provider, or {} when it cannot serve Mem0
+    // (none, or Anthropic: no embeddings API).
+    QJsonObject memProviderJson() const;
+    // The address memories go to (for the settings hint), and whether a key is available.
+    Q_INVOKABLE QString memBaseUrl() const { return m_mem->base(); }
+    Q_INVOKABLE bool memHasKey() const { return !m_mem->effectiveKey().isEmpty(); }
+    Q_INVOKABLE QString memLocalKeyPath() const { return mem0::localKeyPath(); }
+    Q_INVOKABLE int memRestSeconds() const { return m_mem->restSecondsLeft(); }
+    // Search the memory with a sample query; answers memTestFinished(). Works whether or not it is on.
+    Q_INVOKABLE void testMem() { m_mem->test(); }
+    Mem0Client *memClient() const { return m_mem; }
+
 signals:
     void providerChanged();
     void apiKeyChanged();
@@ -350,6 +426,7 @@ signals:
     void sessionSummaryReady(const QString &sessionId, const QString &summary, int upTo);
     void sessionSummaryFailed(const QString &sessionId, const QString &error);
     void savedRulesChanged();
+    void skillsChanged();
     void streamTextChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
 
@@ -362,6 +439,8 @@ signals:
     void classifierConfigChanged();
     void lastClassificationChanged();
     void classifierTestFinished(bool ok, const QString &message);
+    void memConfigChanged();
+    void memTestFinished(bool ok, const QString &message);
 
 private slots:
     void onReplyFinished(QNetworkReply *reply);
@@ -407,7 +486,12 @@ private:
     bool m_allowAskUser = true;
     bool m_allowScreenshots = true;
     bool m_allowMusic = true;
+    bool m_allowSkills = true;
+    QString m_disabledSkills;
     MusicBackend *m_musicBackend = nullptr;
+    bool m_allowConnectors = true;
+    ConnectorRegistry *m_connectors = nullptr;
+    bool m_pendingConnectorWrite = false;   // the approval card on screen is for a connector write
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
@@ -429,6 +513,8 @@ private:
     int m_approvalSecondsLeft = 0;
     // The question being asked (ask_user_question) and its countdown.
     QString m_instructionsSection;   // system-prompt text from the instruction files, read once per run
+    skills::Catalog m_skills;        // the skills found at the start of this run (stable for the whole run)
+    QString m_skillsSection;         // their name + description list for the system prompt
     QString m_userDataDir;
     SavedRules m_savedRules;
     AgentPolicy::SavedRule m_approvalRule;   // what "Always allow" on the pending card would save
@@ -540,7 +626,30 @@ private:
     void dispatchAfterClassify(const QString &text);
     void onClassified(quint64 token, const turnclass::Classification &result, int ms, const QString &error);
     QString memoryIndex(const QString &query = QString()) const;
-    quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
+    // Long-term memory (Mem0). Recall runs between "the user sent a request" and the
+    // classifier / first model turn, fails open, and adds what it finds to the system
+    // prompt. The exchange is saved after the reply, in the background.
+    Mem0Client *m_mem = nullptr;
+    QString m_memKeyTyped;           // the key as typed; empty = Local's generated one
+    QString m_memLlmModel, m_memEmbedModel, m_memEmbedBase, m_memEmbedKey;
+    bool m_memPending = false;       // the first model turn waits for recall
+    QString m_runUserText;           // this run's request, for recall and saving
+    // memory_search waiting on Mem0: the call, the query and the local lines already found.
+    bool m_memToolPending = false;
+    PendingToolCall m_memToolCall;
+    QString m_memToolQuery;
+    QStringList m_memToolLocal;
+    quint64 m_memAddSeq = 0;
+    QHash<quint64, QStringList> m_memFallback;   // facts to keep locally if saving to Mem0 fails
+    void recallThenDispatch(const QString &text);
+    void onMemSearched(quint64 token, const QList<mem0::Hit> &hits, int ms, const QString &error);
+    void onMemAdded(quint64 token, bool ok, const QString &error);
+    void finishMemorySearch(const PendingToolCall &call, const QString &query,
+                            const QStringList &localLines, const QList<mem0::Hit> &remote,
+                            const QString &remoteError);
+    void storeLocalFacts(const QStringList &candidates, bool trace);
+    void saveExchangeToMem0(const QString &finalText, const QStringList &fallbackFacts);
+    quint64 m_runGeneration = 0;    // bumped by cancel(); stale deferred steps check it
     QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
     QList<ToolOutcome> m_completedTools;
 
@@ -584,8 +693,19 @@ private:
     void onApprovalTick();
     void onQuestionTick();
     void executeAskUserTool(const PendingToolCall &call);
+    void executeSkillTool(const PendingToolCall &call);
+    // The `skill` tool is offered when Skills are on and this run found one the model may load.
+    bool skillToolAvailable() const { return m_allowSkills && m_skills.anyListed(); }
+    skills::Catalog loadSkillCatalog() const;
+    void refreshSkillsForRun();
+    // /<skill-name>: { kind: "prompt" | "unknown" } or an empty map when no skill has that name.
+    QVariantMap resolveSkillSlash(const QString &name, const QString &args) const;
+    // Skills that can be run as /name and are not shadowed by `taken` command names.
+    QVariantList skillSlashCommands(const QString &prefix, const QStringList &taken) const;
     void executeScreenshotTool(const PendingToolCall &call);
     void executeMusicTool(const PendingToolCall &call);
+    void executeConnectorTool(const PendingToolCall &call);
+    void syncConnectorPolicy();
     QString saveScreenshot(const QImage &image, QString *error) const;
     void addAttachment(const QVariantMap &attachment);
     int compactContext();
@@ -630,7 +750,7 @@ private:
     // P8: end-of-run memory pipeline — extract atomic facts from the run's
     // user messages, BM25-dedupe against the store, ADD/UPDATE, and distill
     // completed plans into procedures.
-    void extractRunMemories();
+    void extractRunMemories(const QString &finalText = QString());
     void executeWebSearchTool(const PendingToolCall &call);
     void executeWebFetchTool(const PendingToolCall &call);
     void executeTodoTaskTool(const PendingToolCall &call);
