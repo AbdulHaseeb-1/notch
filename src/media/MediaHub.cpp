@@ -344,6 +344,14 @@ QString MediaHub::coverUrlRound() const
     return base + QStringLiteral("/round");
 }
 
+QString MediaHub::coverUrlSoft() const
+{
+    const QString base = coverUrl();
+    if (base.isEmpty())
+        return {};
+    return base + QStringLiteral("/soft");
+}
+
 bool MediaHub::canSeek() const
 {
     if (source() == QLatin1String("system"))

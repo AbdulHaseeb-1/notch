@@ -1,0 +1,15 @@
+# Static analysis for the C++ sources (src/ and tests/). Run it by hand, e.g.:
+#   clang-tidy -p build src/agent/BuddyProviderRun.cpp
+# Warnings only: nothing here is an error, so existing code is not held up.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-branch-clone,
+  performance-*,
+  -performance-unnecessary-value-param,
+  clang-analyzer-*,
+  -clang-analyzer-optin.*
+HeaderFilterRegex: 'src/.*'
+WarningsAsErrors: ''

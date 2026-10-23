@@ -20,6 +20,8 @@ Item {
     property real speed: 1            // 0.3 .. 2.5
     property bool running: true
     property real glow: 1             // 0 .. 1.5: how strong the soft halo layers are
+    // Draw the whole ring in one fragment shader (BuddyShaderRing) instead of the Shape layers below.
+    property bool shader: false
 
     readonly property color c0: Qt.color(stops[0])
     readonly property color c1: Qt.color(stops[1])
@@ -34,6 +36,35 @@ Item {
         const a = Qt.color(stops[i])
         const b = Qt.color(stops[(i + 1) % n])
         return Qt.rgba(a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f, 1)
+    }
+
+    // A soft halo is a stack of wider and wider, fainter and fainter strokes. Three
+    // or four of them show as steps, so this spreads the given (width, alpha)
+    // layers into up to a dozen thin ones that follow the same, smoothed, profile.
+    // `widths` are in any unit, `unit` is how many px one of them is (it only picks
+    // the number of layers); the result is [{ w, o }] in the same unit as `widths`.
+    function haloLayers(widths, alphas, unit) {
+        let wmax = 0
+        for (let k = 0; k < widths.length; ++k)
+            wmax = Math.max(wmax, widths[k])
+        const n = Math.max(5, Math.min(12, Math.round(wmax * unit / 1.6)))
+        const half = wmax / 2
+        const smooth = (x) => { const t = Math.max(0, Math.min(1, (x - 0.25) / 0.75)); return 1 - t * t * (3 - 2 * t) }
+        const cum = (u) => {
+            let c = 0
+            for (let k = 0; k < widths.length; ++k)
+                c += alphas[k] * smooth(u / (widths[k] / 2))
+            return c
+        }
+        const out = []
+        let prev = 0
+        for (let j = 0; j < n; ++j) {
+            const mid = half * ((n - j) / n + (n - j - 1) / n) / 2
+            const c = cum(mid)
+            out.push({ w: wmax * (n - j) / n, o: Math.max(0, c - prev) })
+            prev = c
+        }
+        return out
     }
 
     // Turns whatever is put inside it.
@@ -64,7 +95,7 @@ Item {
         property real r: root.midR
         anchors.fill: parent
         Repeater {
-            model: [{ w: 5.2, o: 0.07 }, { w: 3.0, o: 0.14 }, { w: 1.7, o: 0.30 }]
+            model: root.haloLayers([5.2, 3.0, 1.7], [0.07, 0.14, 0.30], comet.width_)
             BuddyArcRing {
                 required property var modelData
                 anchors.fill: parent
@@ -99,14 +130,14 @@ Item {
         property var palette: root.stops
         anchors.fill: parent
         Repeater {
-            model: full.glowWidths.length
+            model: root.haloLayers(full.glowWidths, full.glowAlpha, root.s)
             BuddyNeonRing {
-                required property int index
+                required property var modelData
                 anchors.fill: parent
                 midR: full.r
-                thickness: full.glowWidths[index] * root.s
+                thickness: modelData.w * root.s
                 stops: full.palette
-                opacity: Math.min(1, full.glowAlpha[index] * root.glow)
+                opacity: Math.min(1, modelData.o * root.glow)
             }
         }
         BuddyNeonRing {
@@ -120,6 +151,7 @@ Item {
 
     Loader {
         anchors.fill: parent
+        active: !root.shader
         sourceComponent: {
             switch (root.style) {
             case "aurora": return auroraC
@@ -131,6 +163,21 @@ Item {
             case "halo": return haloC
             default: return neonC
             }
+        }
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: root.shader
+        sourceComponent: BuddyShaderRing {
+            style: root.style
+            midR: root.midR
+            thickness: root.thickness
+            s: root.s
+            stops: root.stops
+            speed: root.speed
+            running: root.running
+            glow: root.glow
         }
     }
 

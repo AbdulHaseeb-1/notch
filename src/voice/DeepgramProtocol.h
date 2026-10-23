@@ -44,8 +44,8 @@ struct AgentConfig
     QString listenLanguage = QStringLiteral("en");
     QStringList keyterms;               // words to listen for (names, jargon)
     double eotThreshold = 0.7;          // Flux only: how sure it must be that you finished (0.5 .. 1.0)
-    double eagerEotThreshold = 0.0;     // Flux only: start thinking early; 0 = off
-    int eotTimeoutMs = 5000;            // Flux only: the longest silence before a turn ends
+    double eagerEotThreshold = 0.5;     // Flux only: start thinking early; 0 = off
+    int eotTimeoutMs = 3000;            // Flux only: the longest silence before a turn ends
 
     // think: the LLM. Managed by Deepgram unless endpointUrl is set.
     QString thinkProvider = QStringLiteral("anthropic");
@@ -55,6 +55,9 @@ struct AgentConfig
     QString endpointUrl;                // your own LLM endpoint (https)
     QString endpointKey;                // its API key
     bool askBuddy = true;               // let the agent hand tasks to Buddy's own tools
+    // Keep replies to a sentence or two and hand anything that needs thought or lookup to
+    // Buddy: the agent starts speaking sooner and finishes sooner.
+    bool quickReplies = true;
 
     // speak: text to speech
     QString speakModel = QStringLiteral("aura-2-thalia-en");
@@ -77,6 +80,8 @@ bool modelAcceptsTemperature(const QString &provider, const QString &model);
 QStringList knownProviders();
 QStringList listenModels();            // the choices Settings offers
 QString defaultPrompt();
+// The prompt as sent: the custom one (or the default) plus the quick-replies note when that is on.
+QString effectivePrompt(const AgentConfig &c);
 
 // Why this configuration cannot be used ("" if it can).
 QString configProblem(const AgentConfig &c);

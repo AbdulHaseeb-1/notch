@@ -191,6 +191,7 @@ void SmtcWorker::run()
     quint64 managerAttempt = 0;
     QString trackKey;
     bool hasCoverForTrack = false;
+    int coverRetries = 0;      // late-arriving art is retried a few times, not forever
     QString preferredSessionId;
     quint64 tick = 0;
     int lastKnownState = 0;
@@ -489,11 +490,15 @@ void SmtcWorker::run()
                     if (trackChangedNow) {
                         trackKey = key;
                         hasCoverForTrack = false;
+                        coverRetries = 0;
                         emit trackArrived(titleText, artistText, albumText,
                                           cls.appName, cls.appKind, cls.exe, activeAumid);
                     }
 
-                    if (trackChangedNow || (!hasCoverForTrack && tick % 2 == 0)) {
+                    constexpr int kMaxCoverRetries = 15;
+                    if (trackChangedNow || (!hasCoverForTrack && tick % 2 == 0 && coverRetries < kMaxCoverRetries)) {
+                        if (!trackChangedNow)
+                            ++coverRetries;
                         QImage cover;
                         ComPtr<IInspectableAbi> thumbnail;
                         if (SUCCEEDED(props->get_Thumbnail(
@@ -660,8 +665,14 @@ void SmtcMedia::applyTimeline(qint64 position, qint64 duration, bool canSeek, bo
     }
 }
 
-void SmtcMedia::applyCover(const QImage &cover)
+void SmtcMedia::applyCover(const QImage &image)
 {
+    // Players hand over their full artwork (often 3000 px+, tens of MB
+    // decoded); the UI never shows more than a small card, so keep it light
+    // like MusicPlayer::setCover does.
+    QImage cover = image;
+    if (!cover.isNull() && (cover.width() > 360 || cover.height() > 360))
+        cover = cover.scaled(360, 360, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     {
         QMutexLocker lock(&m_coverMutex);
         m_cover = cover;
@@ -736,7 +747,13 @@ QImage SmtcCoverProvider::requestImage(const QString &id, QSize *size,
         // Squares cropped into circles by QML still draw their corners over
         // the rounded frame, so the provider delivers pre-rounded pixels.
         image = roundedImageCorners(image, 0.5);
+    } else if (!image.isNull() && id.endsWith(QLatin1String("/soft"))) {
+        // Rounded square for the player card.
+        image = roundedImageCorners(image, 0.22);
     }
+    if (!image.isNull() && requestedSize.isValid() && requestedSize.width() > 0 && requestedSize.height() > 0
+            && (image.width() > requestedSize.width() || image.height() > requestedSize.height()))
+        image = image.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     if (size)
         *size = image.size();
     return image;

@@ -292,10 +292,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
 
     // Sandboxed or read-only tools.
     if (tool == QLatin1String("memory") || tool == QLatin1String("memory_search")
-            || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
-            || tool == QLatin1String("tool_search") || tool.startsWith(QLatin1String("tool_search_tool"))
-            || tool == QLatin1String("advisor") || tool.startsWith(QLatin1String("advisor_"))
-            || tool.startsWith(QLatin1String("transfer_to_")))
+            || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question"))
         return allow(QStringLiteral("safe-tool"));
 
     return deny(QStringLiteral("deny:unknown-tool"), QStringLiteral("Unknown tool '%1'.").arg(tool));

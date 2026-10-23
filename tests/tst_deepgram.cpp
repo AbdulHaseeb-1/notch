@@ -190,6 +190,23 @@ private slots:
         QVERIFY(!deepgram::isFluxModel("nova-3"));
     }
 
+    void quickRepliesAppendANoteToThePrompt()
+    {
+        deepgram::AgentConfig c;
+        c.apiKey = kKey;
+        c.prompt = QStringLiteral("Speak like a pirate.");
+        auto promptOf = [&] { return deepgram::buildSettings(c)["agent"].toObject()["think"].toObject()["prompt"].toString(); };
+        QVERIFY(c.quickReplies);                                    // on by default
+        QVERIFY(promptOf().startsWith(QStringLiteral("Speak like a pirate.")));
+        QVERIFY(promptOf().contains(QStringLiteral("Speed matters")));
+        QVERIFY(promptOf().contains(QStringLiteral("ask_buddy")));
+        c.askBuddy = false;                                         // nothing to hand tasks to: no such advice
+        QVERIFY(promptOf().contains(QStringLiteral("Speed matters")));
+        QVERIFY(!promptOf().contains(QStringLiteral("ask_buddy")));
+        c.quickReplies = false;
+        QCOMPARE(promptOf(), QStringLiteral("Speak like a pirate."));
+    }
+
     void keytermsGreetingPromptAndSpeed()
     {
         deepgram::AgentConfig c;
@@ -203,7 +220,7 @@ private slots:
         QCOMPARE(a["listen"].toObject()["provider"].toObject()["keyterms"].toArray().size(), 2);
         QCOMPARE(a["listen"].toObject()["provider"].toObject()["keyterms"].toArray().first().toString(), QStringLiteral("Noch"));
         QCOMPARE(a["greeting"].toString(), QStringLiteral("Hi, I'm Buddy."));
-        QCOMPARE(a["think"].toObject()["prompt"].toString(), QStringLiteral("Speak like a pirate."));
+        QVERIFY(a["think"].toObject()["prompt"].toString().startsWith(QStringLiteral("Speak like a pirate.")));
         QCOMPARE(a["speak"].toObject()["provider"].toObject()["speed"].toDouble(), 1.3);
         c.speakSpeed = 9.0;
         QCOMPARE(deepgram::buildSettings(c)["agent"].toObject()["speak"].toObject()["provider"].toObject()["speed"].toDouble(), 1.5);
@@ -473,6 +490,78 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(drained.count(), 2, 3000);
     }
 
+    void aStalledStreamRebuffersInsteadOfEnding()
+    {
+        StreamingPlayer player;
+        player.setDeviceDisabled(true);
+        player.setStreaming(true);
+        QSignalSpy drained(&player, &StreamingPlayer::drained);
+        player.write(tone(0.8, 300, 0.3, 24000));
+        // The stream stalls once the 0.8 s played out: the player waits for more instead of ending.
+        QTest::qWait(1100);
+        QCOMPARE(drained.count(), 0);
+        QVERIFY(!player.idle());
+        // The stream picks up again: playback resumes, and the answer ends once it is complete.
+        player.write(tone(0.8, 300, 0.3, 24000));
+        player.setStreaming(false);
+        QTRY_COMPARE_WITH_TIMEOUT(drained.count(), 1, 4000);
+        QVERIFY(player.idle());
+        // A stall costs a bigger cushion for the next answers ...
+        QVERIFY(player.prebufferMs() > StreamingPlayer::kPrebufferMs);
+        // ... and a clean answer shrinks it back, so a good line pays only the small delay.
+        for (int i = 0; i < 4 && player.prebufferMs() > StreamingPlayer::kPrebufferMs; ++i) {
+            player.setStreaming(true);
+            player.write(tone(0.9, 300, 0.3, 24000));
+            player.setStreaming(false);
+            QTRY_COMPARE_WITH_TIMEOUT(drained.count(), 2 + i, 4000);
+        }
+        QCOMPARE(player.prebufferMs(), int(StreamingPlayer::kPrebufferMs));
+    }
+
+    void theFirstSoundWaitsOnlyForTheSmallBuffer()
+    {
+        StreamingPlayer player;
+        player.setDeviceDisabled(true);
+        player.setStreaming(true);
+        QCOMPARE(player.prebufferMs(), 300);
+        // 200 ms is not enough to start: it is held back ...
+        player.write(tone(0.2, 300, 0.3, 24000));
+        QVERIFY(player.bufferedSeconds() >= 0.19);
+        // ... and the next 150 ms tips it over 300 ms, so it plays at once instead of waiting longer.
+        player.write(tone(0.15, 300, 0.3, 24000));
+        QTRY_VERIFY_WITH_TIMEOUT(player.bufferedSeconds() < 0.34, 300);
+    }
+
+    void thePlayerReferenceIsTheDeviceAudioAsMono16k()
+    {
+        // What goes to a 48 kHz stereo float device comes back as 16 kHz mono 16-bit, with no gap or
+        // click where two pieces meet.
+        QAudioFormat f;
+        f.setSampleRate(48000);
+        f.setChannelCount(2);
+        f.setSampleFormat(QAudioFormat::Float);
+        const int n = 4800;                                         // 100 ms
+        QByteArray buf(n * 2 * 4, '\0');
+        auto *s = reinterpret_cast<float *>(buf.data());
+        for (int i = 0; i < n; ++i)
+            s[2 * i] = s[2 * i + 1] = 0.5f * std::sin(2.0f * float(M_PI) * 500.0f * float(i) / 48000.0f);
+        StreamingPlayer::ReferenceState st;
+        const QByteArray a = StreamingPlayer::toReference16k(buf.constData(), 1000 * 8, f, &st);
+        const QByteArray b = StreamingPlayer::toReference16k(buf.constData() + 1000 * 8, qint64(n - 1000) * 8, f, &st);
+        QVERIFY(qAbs((a.size() + b.size()) / 2 - 1600) <= 1);
+        const QByteArray all = a + b;
+        const auto *o = reinterpret_cast<const qint16 *>(all.constData());
+        int peak = 0;
+        for (int i = 0; i < all.size() / 2; ++i)
+            peak = std::max(peak, int(std::abs(o[i])));
+        QVERIFY2(qAbs(peak - 16384) < 800, "the level survives the conversion");
+        // A step between neighbouring samples would be a click.
+        int biggestStep = 0;
+        for (int i = 1; i < all.size() / 2; ++i)
+            biggestStep = std::max(biggestStep, int(std::abs(o[i] - o[i - 1])));
+        QVERIFY2(biggestStep < 5000, "no click where the two pieces meet");
+    }
+
     void aTricklingStreamIsPrebufferedAndDoesNotStutter()
     {
         StreamingPlayer player;
@@ -581,7 +670,8 @@ private slots:
 
         r.server.sendBinary(tone(0.6, 250, 0.3, 24000));
         QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
-        r.speak();
+        // The agent's own voice coming back from the speakers is far quieter than the user; it must not interrupt.
+        r.mic->feed(tone(0.04, 300, 0.02));
         QTRY_COMPARE(r.server.binaries.size(), 2);
         // Silence goes up in its place, so the agent cannot hear (and answer) itself.
         QCOMPARE(r.server.binaries.last().size(), 1280);
@@ -594,6 +684,122 @@ private slots:
         r.speak();
         QTRY_COMPARE(r.server.binaries.size(), 3);
         QVERIFY(!allZero(r.server.binaries.last()));
+    }
+
+    void speakerModeLetsLoudSpeechInterrupt()
+    {
+        Rig r;
+        QVERIFY(r.startAndWaitListening());
+        r.server.sendBinary(tone(1.0, 250, 0.1, 24000));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
+        // A real voice over the agent, clearly louder than its echo: cut off, and the microphone opens.
+        for (int i = 0; i < 6; ++i)
+            r.mic->feed(tone(0.04, 300, 0.3));
+        QTRY_COMPARE_WITH_TIMEOUT(r.agent.state(), QStringLiteral("listening"), 3000);
+        QVERIFY(r.agent.player()->idle());
+        // From here the microphone is open: the user's voice goes up as it is.
+        QTest::qWait(200);                                   // let the frames sent so far reach the server
+        const int before = r.server.binaries.size();
+        r.speak();
+        QTRY_COMPARE(r.server.binaries.size(), before + 1);
+        QVERIFY(!allZero(r.server.binaries.last()));
+    }
+
+    void bargeInKeepsTheFirstWordsOfTheInterruption()
+    {
+        Rig r;
+        QVERIFY(r.startAndWaitListening());
+        r.server.sendBinary(tone(1.0, 250, 0.1, 24000));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
+        QTest::qWait(100);
+        const int base = r.server.binaries.size();
+        for (int i = 0; i < 6; ++i)
+            r.mic->feed(tone(0.04, 300, 0.3));
+        QTRY_COMPARE_WITH_TIMEOUT(r.agent.state(), QStringLiteral("listening"), 3000);
+        QTest::qWait(300);
+        int voiced = 0;
+        for (int i = base; i < r.server.binaries.size(); ++i)
+            voiced += allZero(r.server.binaries[i]) ? 0 : 1;
+        // The few frames it took to notice the interruption went up as speech too, not as silence.
+        QVERIFY2(voiced >= 6, qPrintable(QStringLiteral("only %1 of 6 frames carried the voice").arg(voiced)));
+    }
+
+    void holdMicShutsTheMicrophoneForAMoment()
+    {
+        Rig r;                                                      // speaker mode
+        QVERIFY(r.startAndWaitListening());
+        r.agent.holdMic(400);                                       // the app is about to make a sound
+        r.speak();
+        QTRY_COMPARE(r.server.binaries.size(), 1);
+        QVERIFY(allZero(r.server.binaries.last()));
+        QTest::qWait(500);
+        r.speak();
+        QTRY_COMPARE(r.server.binaries.size(), 2);
+        QVERIFY(!allZero(r.server.binaries.last()));
+    }
+
+    void echoCancelIsOnAndCanBeSwitchedOff()
+    {
+        Rig r;
+        QSignalSpy changed(&r.agent, &DeepgramAgent::configChanged);
+        QVERIFY(r.agent.echoCancel());
+        r.agent.setEchoCancel(false);
+        QVERIFY(!r.agent.echoCancel());
+        QCOMPARE(changed.count(), 1);
+        r.agent.setEchoCancel(false);
+        QCOMPARE(changed.count(), 1);
+    }
+
+    void theConversationNumbersAreCounted()
+    {
+        Rig r;
+        r.agent.setAudioMode(QStringLiteral("headphones"));
+        QVERIFY(r.startAndWaitListening());
+        QCOMPARE(r.agent.replies(), 0);
+        r.server.sendText(eventJson(QStringLiteral("LatencyReport"), { { QStringLiteral("total_latency"), 0.5 } }));
+        r.server.sendText(eventJson(QStringLiteral("LatencyReport"), { { QStringLiteral("total_latency"), 1.0 } }));
+        QTRY_COMPARE(r.agent.avgLatencyMs(), 750);
+        QCOMPARE(r.agent.latencyMs(), 1000);
+        // The user's last word, then the answer's first sound: that delay is measured here, buffer included.
+        r.server.sendText(convo(QStringLiteral("user"), QStringLiteral("open notepad")));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("thinking"));
+        QTest::qWait(150);
+        r.server.sendBinary(tone(0.5, 250, 0.3, 24000));
+        QTRY_VERIFY(r.agent.responseDelayMs() >= 140);
+        QCOMPARE(r.agent.avgResponseDelayMs(), r.agent.responseDelayMs());
+        r.server.sendText(convo(QStringLiteral("assistant"), QStringLiteral("Done.")));
+        QTRY_COMPARE(r.agent.replies(), 1);
+    }
+
+    void aStalledStreamIsCountedAndGrowsTheBuffer()
+    {
+        Rig r;
+        r.agent.setAudioMode(QStringLiteral("headphones"));
+        QVERIFY(r.startAndWaitListening());
+        const int base = r.agent.bufferMs();
+        QCOMPARE(base, int(StreamingPlayer::kPrebufferMs));
+        QCOMPARE(r.agent.stalls(), 0);
+        r.server.sendBinary(tone(0.4, 250, 0.3, 24000));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
+        // The rest of the answer does not arrive: the player runs dry in the middle of it.
+        QTRY_COMPARE_WITH_TIMEOUT(r.agent.stalls(), 1, 3000);
+        QVERIFY(r.agent.bufferMs() > base);
+        QCOMPARE(r.agent.state(), QStringLiteral("speaking"));      // still the same answer, not the end of it
+        r.server.sendText(eventJson(QStringLiteral("AgentAudioDone")));
+        QTRY_COMPARE_WITH_TIMEOUT(r.agent.state(), QStringLiteral("listening"), 3000);
+    }
+
+    void quickRepliesCanBeSwitchedDuringTheConversation()
+    {
+        Rig r;
+        QVERIFY(r.startAndWaitListening());
+        r.agent.setQuickReplies(false);
+        QTRY_COMPARE(r.sent("UpdatePrompt").size(), 1);
+        QVERIFY(!r.sent("UpdatePrompt").first()["prompt"].toString().contains(QStringLiteral("Speed matters")));
+        r.agent.setQuickReplies(true);
+        QTRY_COMPARE(r.sent("UpdatePrompt").size(), 2);
+        QVERIFY(r.sent("UpdatePrompt").last()["prompt"].toString().contains(QStringLiteral("Speed matters")));
+        QVERIFY(!r.agent.restartNeeded());
     }
 
     void headphoneModeNeverMutes()
@@ -1001,7 +1207,7 @@ private slots:
         QVERIFY(!r.agent.restartNeeded());
         r.agent.setPrompt(QStringLiteral("You are a calm librarian."));
         QTRY_COMPARE(r.sent("UpdatePrompt").size(), 1);
-        QCOMPARE(r.sent("UpdatePrompt").first()["prompt"].toString(), QStringLiteral("You are a calm librarian."));
+        QVERIFY(r.sent("UpdatePrompt").first()["prompt"].toString().startsWith(QStringLiteral("You are a calm librarian.")));
         r.agent.setSpeakModel(QStringLiteral("aura-2-zeus-en"));
         QTRY_COMPARE(r.sent("UpdateSpeak").size(), 1);
         QCOMPARE(r.sent("UpdateSpeak").first()["speak"].toObject()["provider"].toObject()["model"].toString(), QStringLiteral("aura-2-zeus-en"));
@@ -1065,6 +1271,32 @@ private slots:
         QCOMPARE(r.sent("InjectAgentMessage").first()["message"].toString(), QStringLiteral("I need your approval to continue."));
         QTRY_COMPARE(r.sent("InjectUserMessage").size(), 1);
         QCOMPARE(r.sent("InjectUserMessage").first()["content"].toString(), QStringLiteral("open notepad"));
+    }
+
+    void aLongHandoffIsAcknowledgedOutLoud()
+    {
+        Rig r;
+        r.agent.setAudioMode(QStringLiteral("headphones"));
+        QVERIFY(r.startAndWaitListening());
+        r.server.sendText(eventJson(QStringLiteral("FunctionCallRequest"), { { QStringLiteral("functions"), QJsonArray{
+            QJsonObject{ { "id", "slow1" }, { "name", "ask_buddy" }, { "arguments", "{\"request\":\"long job\"}" }, { "client_side", true } } } } }));
+        // Nothing is said for a while and Buddy is still working: the agent says so itself.
+        QTRY_COMPARE_WITH_TIMEOUT(r.sent("InjectAgentMessage").size(), 1, 6000);
+        QCOMPARE(r.sent("InjectAgentMessage").first()["message"].toString(), QStringLiteral("One moment."));
+        r.agent.answerBuddy(QStringLiteral("slow1"), QStringLiteral("Done."));
+    }
+
+    void aQuickHandoffNeedsNoAcknowledgement()
+    {
+        Rig r;
+        r.agent.setAudioMode(QStringLiteral("headphones"));
+        QVERIFY(r.startAndWaitListening());
+        r.server.sendText(eventJson(QStringLiteral("FunctionCallRequest"), { { QStringLiteral("functions"), QJsonArray{
+            QJsonObject{ { "id", "fast1" }, { "name", "ask_buddy" }, { "arguments", "{\"request\":\"quick\"}" }, { "client_side", true } } } } }));
+        QTest::qWait(300);
+        r.agent.answerBuddy(QStringLiteral("fast1"), QStringLiteral("Done."));
+        QTest::qWait(2800);
+        QCOMPARE(r.sent("InjectAgentMessage").size(), 0);
     }
 
     void microphoneFailureEndsTheConversation()

@@ -161,7 +161,6 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_continuedText.clear();
     m_continuations = 0;
     m_truncated = false;
-    m_handoffCount = 0;
     if (m_classification.valid) {
         m_classification = turnclass::Classification();
         emit lastClassificationChanged();
@@ -185,10 +184,6 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
             addSpan(QJsonObject{ { "type", "instructions" }, { "sources", names },
                                  { "chars", ins.text.size() }, { "truncated", ins.truncated } });
         }
-    }
-    if (m_activeAgent != QLatin1String("buddy")) {   // every run starts with Buddy
-        m_activeAgent = QStringLiteral("buddy");
-        emit activeAgentChanged();
     }
     m_agentMessages = QJsonArray();
     m_pendingTools.clear();
@@ -392,96 +387,6 @@ void BuddyProvider::runDirectWebSearch(const QString &query)
     processNextToolCall();
 }
 
-void BuddyProvider::runDirectToolSearch(const QString &query)
-{
-    const QString trimmed = query.trimmed();
-    if (trimmed.isEmpty()) {
-        emit errorOccurred(tr("Nothing to search."));
-        return;
-    }
-
-    cancel();
-    clearToolSteps();
-    m_turnTimer.start();
-    m_agentIteration = -1;
-    m_accumulatedText.clear();
-    m_pendingTools.clear();
-    m_completedTools.clear();
-
-    PendingToolCall tc;
-    tc.id = QStringLiteral("direct_tool_search_1");
-    tc.name = QStringLiteral("tool_search");
-    const bool looksRegex = trimmed.contains('^') || trimmed.contains('$') || trimmed.contains('*') || trimmed.contains('|');
-    tc.input = QJsonObject{
-        { QStringLiteral("query"), trimmed },
-        { QStringLiteral("mode"), looksRegex ? QStringLiteral("regex") : QStringLiteral("bm25") }
-    };
-
-    QVariantMap step;
-    step[QStringLiteral("id")] = tc.id;
-    step[QStringLiteral("index")] = 1;
-    step[QStringLiteral("tool")] = tc.name;
-    step[QStringLiteral("badge")] = badgeForTool(tc.name, tc.input);
-    step[QStringLiteral("icon")] = iconForTool(tc.name, tc.input);
-    step[QStringLiteral("title")] = summarizeToolCall(tc.name, tc.input);
-    step[QStringLiteral("detail")] = detailForToolCall(tc.name, tc.input);
-    step[QStringLiteral("output")] = QString();
-    step[QStringLiteral("status")] = QStringLiteral("running");
-    step[QStringLiteral("durationMs")] = 0;
-    tc.stepIndex = 0;
-    m_toolSteps.append(step);
-    m_pendingTools.append(tc);
-
-    emit statusChanged(QStringLiteral("thinking"));
-    emit toolStepsChanged();
-    processNextToolCall();
-}
-
-void BuddyProvider::runDirectAdvisor(const QString &question)
-{
-    const QString trimmed = question.trimmed();
-    if (trimmed.isEmpty()) {
-        emit errorOccurred(tr("Nothing to ask the Advisor."));
-        return;
-    }
-
-    cancel();
-    clearToolSteps();
-    m_turnTimer.start();
-    m_agentIteration = -1;
-    m_accumulatedText.clear();
-    m_pendingTools.clear();
-    m_completedTools.clear();
-
-    PendingToolCall tc;
-    tc.id = QStringLiteral("direct_advisor_1");
-    tc.name = QStringLiteral("advisor");
-    tc.input = QJsonObject{
-        { QStringLiteral("task"), trimmed },
-        { QStringLiteral("question"), trimmed },
-        { QStringLiteral("focus"), QStringLiteral("architecture") }
-    };
-
-    QVariantMap step;
-    step[QStringLiteral("id")] = tc.id;
-    step[QStringLiteral("index")] = 1;
-    step[QStringLiteral("tool")] = tc.name;
-    step[QStringLiteral("badge")] = badgeForTool(tc.name, tc.input);
-    step[QStringLiteral("icon")] = iconForTool(tc.name, tc.input);
-    step[QStringLiteral("title")] = summarizeToolCall(tc.name, tc.input);
-    step[QStringLiteral("detail")] = detailForToolCall(tc.name, tc.input);
-    step[QStringLiteral("output")] = QString();
-    step[QStringLiteral("status")] = QStringLiteral("running");
-    step[QStringLiteral("durationMs")] = 0;
-    tc.stepIndex = 0;
-    m_toolSteps.append(step);
-    m_pendingTools.append(tc);
-
-    emit statusChanged(QStringLiteral("thinking"));
-    emit toolStepsChanged();
-    processNextToolCall();
-}
-
 void BuddyProvider::cancel()
 {
     ++m_runGeneration;
@@ -500,10 +405,6 @@ void BuddyProvider::cancel()
     m_streamConsumed = false;
     m_continuedText.clear();
     setStreamText(QString(), false);
-    if (m_activeAgent != QLatin1String("buddy")) {   // no specialist outlives its run
-        m_activeAgent = QStringLiteral("buddy");
-        emit activeAgentChanged();
-    }
     finishTrace(QStringLiteral("cancelled"));
     if (m_activeProcess) {
         QProcess *proc = m_activeProcess;
@@ -515,13 +416,6 @@ void BuddyProvider::cancel()
     if (m_webSearchReply) {
         QNetworkReply *old = m_webSearchReply;
         m_webSearchReply = nullptr;
-        old->disconnect(this);
-        old->abort();
-        old->deleteLater();
-    }
-    if (m_advisorReply) {
-        QNetworkReply *old = m_advisorReply;
-        m_advisorReply = nullptr;
         old->disconnect(this);
         old->abort();
         old->deleteLater();

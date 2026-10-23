@@ -37,11 +37,26 @@ public:
     void setDeviceDisabled(bool off);
 
     // Queues audio. Starts the device on the first call after silence.
-    // The first audio after silence waits a moment (kPrebufferMs, or until that much has
-    // arrived) before it starts, so a stream that trickles in does not stutter.
+    // Playback waits for a jitter buffer (kPrebufferMs to start with, or kPrebufferMaxWaitMs,
+    // whichever comes first) before it starts, so a stream that trickles in plays without gaps.
+    // The buffer adapts: each time a stream runs dry mid-answer it grows by kPrebufferStepMs (up
+    // to kMaxPrebufferMs), and each clean answer shrinks it back, so a good connection pays only
+    // the small delay and a bad one gets the cushion it needs.
     void write(const QByteArray &pcm16);
-    static constexpr int kPrebufferMs = 160;
-    static constexpr int kPrebufferMaxWaitMs = 350;
+    static constexpr int kPrebufferMs = 300;
+    static constexpr int kMaxPrebufferMs = 700;
+    static constexpr int kPrebufferStepMs = 100;
+    static constexpr int kPrebufferMaxWaitMs = 600;
+    static constexpr int kRebufferMaxWaitMs = 600;
+    // The jitter buffer in use right now, in milliseconds.
+    int prebufferMs() const { return m_targetMs; }
+    // How many times a stream ran dry mid-answer (and the buffer grew) since the player was created.
+    int underruns() const { return m_underrunCount; }
+    // Says whether more audio is still to come for the current answer. While it is, a
+    // stream that runs dry (a network stall) is not the end: playback pauses on silence
+    // and builds a fresh jitter buffer before going on. Once the answer is complete, the
+    // last audio plays out and then drained() is emitted. Off by default.
+    void setStreaming(bool on);
     // Drops what is queued and playing. No drained().
     void flush();
     // Everything written so far has been played.
@@ -59,10 +74,23 @@ public:
     // sample, for interpolating across the boundary).
     static QByteArray resample(const QByteArray &pcm16, int inRate, const QAudioFormat &to, double volume,
                                double *phase, qint16 *last);
+    // What is handed to the device, as 16 kHz mono 16-bit: the reference an echo canceller needs.
+    // Channels are averaged and the rate is cut down by averaging, so nothing aliases back in.
+    // `state` carries the position between calls.
+    struct ReferenceState { double phase = 0.0; float acc = 0.0f; int count = 0; };
+    static QByteArray toReference16k(const char *data, qint64 bytes, const QAudioFormat &format, ReferenceState *state);
 
 signals:
     // The queue and the device buffer ran dry after playing audio.
     void drained();
+    // Audio has just started coming out of the speakers (after the jitter buffer filled).
+    void playbackStarted();
+    // The stream ran dry in the middle of an answer; `bufferMs` is the jitter buffer from now on.
+    void underrun(int bufferMs);
+    // 16 kHz mono 16-bit audio, as it is handed to the device (see toReference16k).
+    void reference(const QByteArray &pcm16);
+    // What was queued for the reference is gone (flush): it will not be heard.
+    void referenceReset();
     void levelChanged();
     void failed(const QString &message);
 
@@ -72,6 +100,7 @@ private:
     void pump();
     void setActive(bool on);
     void beginPlayback();
+    void rebuffer(qint64 now);
 
     QAudioSink *m_sink = nullptr;
     QIODevice *m_io = nullptr;
@@ -93,6 +122,11 @@ private:
     int m_deviceBufferBytes = 0;
     qint64 m_dryStart = -1;
     bool m_started = false;               // playback has begun (the prebuffer was reached)
+    bool m_streaming = false;             // more audio for this answer is still to come
+    int m_targetMs = kPrebufferMs;        // the jitter buffer in use (adaptive)
+    int m_underrunCount = 0;
+    ReferenceState m_ref;
+    bool m_underran = false;              // the stream ran dry during this answer
     qint64 m_prebufferDeadline = 0;
     qint64 m_simPendingMs = 0;            // disabled device: audio waiting for the prebuffer
     qint64 m_bufferedMs = 0;              // audio written since playback (re)started, in milliseconds

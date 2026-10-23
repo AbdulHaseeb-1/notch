@@ -47,9 +47,9 @@ struct ToolSchema {
         for (const ToolArgDef &a : args) out << a.name;
         return out;
     }
-    const ToolArgDef *findArg(const QString &name) const {
+    const ToolArgDef *findArg(const QString &argName) const {
         for (const ToolArgDef &a : args)
-            if (a.name == name) return &a;
+            if (a.name == argName) return &a;
         return nullptr;
     }
 };

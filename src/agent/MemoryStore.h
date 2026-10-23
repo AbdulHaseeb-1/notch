@@ -27,6 +27,8 @@ public:
     // M4: hard caps so one bloated memory file can't stall the UI forever.
     static constexpr qint64 kMaxFactBytes = 32 * 1024;  // addFact rejection
     static constexpr qint64 kMaxScanBytes = 64 * 1024;   // list() skips larger files
+    static constexpr qsizetype kMaxListed = 500;         // list() reads at most the newest N files
+    static constexpr qsizetype kMaxFacts = 500;          // addFact keeps the newest N auto facts
 
     // All facts (recursively), newest first.
     QList<MemoryFact> list() const;
@@ -60,5 +62,6 @@ public:
 private:
     QString m_root;
     QString pathFor(const QString &id) const;
+    void pruneFacts() const;
     static QString gistOf(const QString &text);
 };

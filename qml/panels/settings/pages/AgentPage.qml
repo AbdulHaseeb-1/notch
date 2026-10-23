@@ -10,15 +10,13 @@ SettingsPage {
     SettingsSectionHeader {
         title: qsTr("Anthropic Agent SDK & Tools")
         rightText: panel.prefs.buddyAgentMode
-                     ? qsTr("%1 of 9 tool suites armed")
+                     ? qsTr("%1 of 7 tool suites armed")
                          .arg((panel.prefs.buddyAllowBash ? 1 : 0)
                               + (panel.prefs.buddyAllowComputer ? 1 : 0)
                               + (panel.prefs.buddyAllowEditor ? 1 : 0)
                               + (panel.prefs.buddyAllowCodeSearch ? 1 : 0)
                               + (panel.prefs.buddyAllowMemory ? 1 : 0)
                               + (panel.prefs.buddyAllowWebSearch ? 1 : 0)
-                              + (panel.prefs.buddyAllowToolSearch ? 1 : 0)
-                              + (panel.prefs.buddyAllowAdvisor ? 1 : 0)
                               + (panel.prefs.buddyAllowTodoTask ? 1 : 0))
                      : qsTr("Disabled")
     }
@@ -26,7 +24,7 @@ SettingsPage {
     SettingsGroupCard {
         SettingsToggleRow {
             label: qsTr("Enable Agent SDK tool loop")
-            sub: qsTr("Allow Anthropic and all configured AI agents to autonomously run multi-turn tool calls, execute commands, consult the advisor, and use the computer.")
+            sub: qsTr("Allow Anthropic and all configured AI agents to autonomously run multi-turn tool calls, execute commands, and use the computer.")
             checked: panel.prefs.buddyAgentMode
             onToggled: (c) => panel.prefs.buddyAgentMode = c
         }
@@ -136,36 +134,6 @@ SettingsPage {
             sub: qsTr("Search the live web with source citations and extract structured text, links, and metadata from URLs.")
             checked: panel.prefs.buddyAllowWebSearch
             onToggled: (c) => panel.prefs.buddyAllowWebSearch = c
-        }
-
-        SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
-
-        SettingsToggleRow {
-            visible: panel.prefs.buddyAgentMode
-            label: qsTr("Tool search (tool_search BM25 & regex)")
-            sub: qsTr("Anthropic Tool Search: dynamically discover and inspect Agent SDK tool schemas using BM25 natural language or regex queries.")
-            checked: panel.prefs.buddyAllowToolSearch
-            onToggled: (c) => panel.prefs.buddyAllowToolSearch = c
-        }
-
-        SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
-
-        SettingsToggleRow {
-            visible: panel.prefs.buddyAgentMode
-            label: qsTr("Advisor consultation (advisor_20260301)")
-            sub: qsTr("Anthropic Advisor Tool: invoke strategic architectural review, debugging verification, security auditing, and execution planning.")
-            checked: panel.prefs.buddyAllowAdvisor
-            onToggled: (c) => panel.prefs.buddyAllowAdvisor = c
-        }
-
-        SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
-
-        SettingsToggleRow {
-            visible: panel.prefs.buddyAgentMode
-            label: qsTr("Tool diet (P6)")
-            sub: qsTr("Send only core tools (bash, editor, search, computer) upfront; load the rest on demand via tool_search. Saves context on every request.")
-            checked: panel.prefs.buddyToolDiet
-            onToggled: (c) => panel.prefs.buddyToolDiet = c
         }
 
         SettingsCardDivider { visible: panel.prefs.buddyAgentMode }
@@ -335,15 +303,6 @@ SettingsPage {
             checked: panel.prefs.buddyStreamReplies
             onToggled: (c) => panel.prefs.buddyStreamReplies = c
         }
-
-        SettingsCardDivider {}
-
-        SettingsToggleRow {
-            label: qsTr("Specialist handoffs")
-            sub: qsTr("Let Buddy hand research to a web-only specialist and code work to a files-and-shell specialist, each with a smaller toolset.")
-            checked: panel.prefs.buddyHandoffs
-            onToggled: (c) => panel.prefs.buddyHandoffs = c
-        }
     }
 
     SettingsSectionHeader {
@@ -357,7 +316,7 @@ SettingsPage {
 
         SettingsToggleRow {
             label: qsTr("Classify each request first")
-            sub: qsTr("A small model labels what you asked (question, research, code, desktop) before Buddy starts, so it can pick the right specialist and ask before changing anything on a plain question. Your request text is sent to the address below, not to your chat provider. If it is slow or fails, Buddy just carries on without it.")
+            sub: qsTr("A small model labels what you asked (question, research, code, desktop) before Buddy starts, so it can ask before changing anything on a plain question. Your request text is sent to the address below, not to your chat provider. If it is slow or fails, Buddy just carries on without it.")
             checked: panel.prefs.buddyClassifierEnabled
             onToggled: (c) => { panel.prefs.buddyClassifierEnabled = c; panel.classifierEdited() }
         }

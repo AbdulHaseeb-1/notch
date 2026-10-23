@@ -22,12 +22,13 @@ Item {
     property bool motionPaused: false
     property real lastTrackMs: 0
     property int farSide: 0
-    property bool solidRing: true
     // ---- look & glow (Settings, Buddy, Look & glow) --------------------------
     property string ringStyle: "neon"      // neon | aurora | comet | orbit | dashes | pulse | prism | halo
     property real ringThickness: 1.0       // 0.5 .. 2
     property real ringSpeed: 1.0           // 0.3 .. 2.5
+    property bool ringShader: true         // draw the ring with one GPU shader (Settings > Look & glow)
     property real glowStrength: 0.6        // 0 .. 1
+    property bool liveThinkCue: true       // a soft sound while the voice agent thinks
     property string glowMode: "bloom"      // bloom | floor | off
     property bool glowAlways: false
     property string voiceFx: "full"        // off | rings | wave | full
@@ -114,15 +115,21 @@ Item {
     readonly property real glowActivity: Math.max(neon, micLive ? 0.9 : (typingTo ? 0.35 : 0),
                                                   speakFxOn ? 0.85 : 0, busy ? 0.6 : 0)
     // Everything the click-through mask depends on, as one comparable string.
-    readonly property bool glowing: neon > 0.02 || busy || sparkAnim.running || burstAnim.running || fxActive
+    // orbGlow.lit stays true until the light has finished fading, so the mask below never
+    // shrinks (Win32 clips the window to it, with a hard 1-bit edge) while light is still showing.
+    readonly property bool glowing: neon > 0.02 || busy || sparkAnim.running || burstAnim.running || fxActive || orbGlow.lit
     // How far from the orb's rim the mask has to leave room for light.
-    readonly property real fxPad: glowMode !== "off" && (glowActivity > 0.05 || glowAlways) ? 36 * s : (fxActive ? 24 * s : 0)
+    readonly property real fxPad: orbGlow.lit ? Math.ceil(Math.max(orbGlow.extent - orbRadius, 0)) + Math.round(3 * s)
+                                              : (fxActive ? 24 * s
+                                                          : (orbGlow.rimLit ? Math.ceil(orbGlow.rimExtent - orbRadius) + Math.round(2 * s) : 0))
     readonly property string maskSig: [glowing, Math.round(fxPad), emoteChip.visible, Math.round(emoteChip.width),
                                        liveChip.visible, Math.round(liveChip.width),
                                        ctxMenu.visible, Math.round(ctxMenu.height), Math.round(ctxMenu.x), Math.round(ctxMenu.y),
                                        thought.maskSig].join("|")
 
     signal buddyMoved(real x, real y)
+    // The orb was carried to a new spot (dragOffsetX/Y); the host moves its window to follow.
+    signal dragMoved()
     signal toastRequested(string text)
     signal paletteRequested()
     signal clipboardRequested()
@@ -219,10 +226,14 @@ Item {
     // are never overwritten.
     property real dragOffsetX: 0
     property real dragOffsetY: 0
+    // The host carries the buddy by moving the window it sits in (it listens for dragMoved), so
+    // while it is carried the item itself stays where it was and nothing in the window is redrawn.
+    // Without a host that does this, the item follows the drag offset itself.
+    property bool nativeDrag: false
     readonly property real baseX: Math.round(anchor - width / 2)
     readonly property real baseY: Math.round(anchorY)
-    x: baseX + Math.round(dragOffsetX)
-    y: baseY + Math.round(dragOffsetY)
+    x: baseX + (nativeDrag ? 0 : Math.round(dragOffsetX))
+    y: baseY + (nativeDrag ? 0 : Math.round(dragOffsetY))
 
     BuddyRouter { id: router }
 
@@ -535,6 +546,18 @@ Item {
     property real ly: anchorY + orbRadius
 
     // ---- geometry for the click-through mask --------------------------------
+    // Whether the bubble is up, and the most room it can take from where it is now (in the
+    // desktop's coordinates). The host's window is sized to this while the bubble is up, so it
+    // is not resized again as the bubble grows with a streaming answer.
+    readonly property bool bubbleOpen: thought.visible
+    function bubbleReach() {
+        if (!desktop)
+            return null
+        const w = thought.reachW
+        const h = thought.reachH
+        return { x: x + thought.placeX(w) - 24, y: y + thought.placeY(h) - 24, width: w + 48, height: h + 48 }
+    }
+
     function regionsIn(item) {
         const out = []
         if (!visible || !desktop)
@@ -810,7 +833,7 @@ Item {
     // One step of the face's physics, `step` seconds long.
     function springStep(step) {
         const dt = Math.min(0.05, Math.max(0.004, step))
-        buddy.breathPhase += dt * (buddy.session === "thinking" ? 5.2 : 2.4)
+        buddy.breathPhase += dt * (buddy.session === "thinking" ? 3.2 : 2.4)
 
         // Live per-frame cursor tracking while cursor is moving
         if (buddy.cursorStill < 20 && !buddy.gazeLock && !buddy.dragging) {
@@ -931,24 +954,6 @@ Item {
         running: buddy.visible && !buddy.motionPaused
     }
 
-    // ---- ambient aura / thinking & speaking halo ----------------------------
-    Rectangle {
-        id: auraRing
-        anchors.centerIn: orb
-        width: orb.width + Math.round(10 * buddy.s) + Math.round(buddy.speakBounce * 8 * buddy.s)
-        height: width
-        radius: width / 2
-        color: "transparent"
-        border.width: buddy.solidRing && (buddy.session === "thinking" || buddy.busy
-                                          || buddy.mood === "speaking") ? 2 : 0
-        border.color: Theme.accent
-        opacity: (buddy.session === "thinking" || buddy.busy)
-                 ? (0.45 + 0.35 * Math.sin(buddy.breathPhase * 2.0))
-                 : (buddy.mood === "speaking" ? 0.55 * (1 - buddy.neon) : 0)
-        visible: buddy.solidRing && opacity > 0.01
-        Behavior on opacity { NumberAnimation { duration: 160 } }
-    }
-
     // ---- visual: expressive companion orb -----------------------------------
     Rectangle {
         id: orb
@@ -960,13 +965,6 @@ Item {
                       + (buddy.mo > 0.5 ? Math.sin(buddy.breathPhase) * 1.4 * buddy.s : 0))
         radius: buddy.orbRadius
         color: Theme.orb
-        border.width: !buddy.solidRing ? 0
-                    : (buddy.hovering || buddy.session !== "idle" || buddy.mood === "love" ? 2 : 1)
-        border.color: !buddy.solidRing ? "transparent"
-                    : (buddy.mood === "error" ? Theme.danger
-                    : (buddy.session === "thinking" || buddy.busy || buddy.mood === "speaking" ? Theme.accent
-                    : (buddy.hovering || buddy.session === "input" ? Theme.accent : Theme.borderStrong)))
-        Behavior on border.color { ColorAnimation { duration: 140 } }
 
         rotation: Math.max(-14, Math.min(14, buddy.gazeRoll * 0.55 + buddy.dragVelX * 0.18))
 
@@ -1095,6 +1093,7 @@ Item {
         BuddyRing {
             anchors.fill: parent
             style: buddy.ringStyle
+            shader: buddy.ringShader
             midR: buddy.orbRadius + 0.6 * buddy.s
             thickness: Math.max(1.6, 2.4 * buddy.s * buddy.ringThickness)
             s: buddy.s
@@ -1283,73 +1282,24 @@ Item {
     // ---- live conversation caption ----------------------------------------------------
     // What is going on in a live conversation, in a line under (or over) the orb: what
     // it is doing, what you just said, what it is saying. Click it to hang up.
-    Item {
+    BuddyLiveCaption {
         id: liveChip
         objectName: "liveChip"
-        readonly property bool shown: Live.active && !thought.visible && !ctxMenu.open
-        readonly property string caption: {
-            if (!Live.active)
-                return ""
-            if (Live.muted)
-                return qsTr("Muted")
-            switch (Live.state) {
-            case "connecting": return qsTr("Connecting…")
-            case "thinking": return Live.buddyBusy ? qsTr("Working on it…")
-                                  : (Live.userText.length > 0 ? Live.userText : qsTr("Thinking…"))
-            case "speaking": return Live.agentText.length > 0 ? Live.agentText : qsTr("Speaking…")
-            default: return Live.buddyBusy ? qsTr("Working on it…") : qsTr("Listening…")
-            }
-        }
-        visible: opacity > 0.01
-        opacity: shown ? 1 : 0
         z: 4
+        s: buddy.s
+        shown: Live.active && !thought.visible && !ctxMenu.open
+        active: Live.active
+        liveState: Live.state
+        muted: Live.muted
+        buddyBusy: Live.buddyBusy
+        userText: Live.userText
+        agentText: Live.agentText
+        level: Live.level
+        outputLevel: Live.outputLevel
+        speakColor: buddy.ringColors[0]
         x: Math.round((buddy.width - width) / 2)
         y: buddy.y > height + 12 ? -height - 6 : buddy.height + 6
-        width: Math.min(Math.round(300 * buddy.s), liveText.implicitWidth + 44)
-        height: Math.round(26 * buddy.s)
-        Behavior on opacity { NumberAnimation { duration: 160 } }
-        Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-
-        Rectangle {
-            anchors.fill: parent
-            radius: height / 2
-            color: Theme.surface
-            border.width: 1
-            border.color: Live.state === "listening" && !Live.muted ? Theme.danger : Theme.borderStrong
-        }
-        Rectangle {
-            id: liveDot
-            x: 11
-            anchors.verticalCenter: parent.verticalCenter
-            width: 8
-            height: 8
-            radius: 4
-            color: Live.muted ? Theme.textFaint
-                 : Live.state === "listening" ? Theme.danger
-                 : Live.state === "speaking" ? buddy.ringColors[0] : Theme.accent
-            // Pulses with the voice: your microphone while it listens, the agent's while it speaks.
-            scale: 1 + 0.5 * (Live.state === "speaking" ? Live.outputLevel : (Live.muted ? 0 : Live.level))
-        }
-        Text {
-            id: liveText
-            x: 26
-            width: parent.width - 36
-            anchors.verticalCenter: parent.verticalCenter
-            text: liveChip.caption
-            color: Theme.ink
-            elide: Text.ElideRight
-            maximumLineCount: 1
-            font.family: Theme.font
-            font.pixelSize: Theme.fontSm
-            font.weight: Font.DemiBold
-        }
-        MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            Accessible.role: Accessible.Button
-            Accessible.name: qsTr("End the conversation")
-            onClicked: Live.stop()
-        }
+        onEndRequested: Live.stop()
     }
 
     // The microphone is open for the wake word: always shown while it is, never hidden.
@@ -1709,7 +1659,7 @@ Item {
             cancelPending()
             Sessions.newChat()
             conversation = []
-            note(qsTr("New chat"), "spark")
+            note(qsTr("New chat"), "chat")
             break
         case "resume": {
             if (args.length === 0) {
@@ -1743,7 +1693,7 @@ Item {
         }
         case "compact":
             if (Sessions.requestSummary())
-                note(qsTr("Summarizing this chat…"), "spark")
+                note(qsTr("Summarizing this chat…"), "doc")
             else
                 note(qsTr("Nothing to summarize yet"), "check")
             break
@@ -1867,43 +1817,10 @@ Item {
             return
         }
 
-        // Direct tool search shortcut (tools: <query>, tool_search: <query>, regex_tools: <pattern>)
-        const toolSearchMatch = trimmed.match(/^(?:tools:|tool_search:|tool-search:|regex_tools:)\s*(.+)$/i)
-        if (toolSearchMatch && BuddyAgent && BuddyAgent.allowToolSearch) {
-            if (replyToPanel) {
-                resultPanel.kind = "chat"
-                resultPanel.title = trimmed
-                resultPanel.userPrompt = trimmed
-                resultPanel.payload = { response: "" }
-                resultPanel.simulated = false
-                resultPanel.phase = "loading"
-            }
-            awaitingReply = true
-            const useRegex = /^regex_tools:/i.test(trimmed)
-            BuddyAgent.runDirectToolSearch(toolSearchMatch[1], useRegex ? "regex" : "bm25")
-            return
-        }
-
-        // Direct Advisor consultation shortcut (advisor: <question>, advise: <question>)
-        const advisorMatch = trimmed.match(/^(?:advisor:|advise:|consult:)\s*(.+)$/i)
-        if (advisorMatch && BuddyAgent && BuddyAgent.allowAdvisor) {
-            if (replyToPanel) {
-                resultPanel.kind = "chat"
-                resultPanel.title = trimmed
-                resultPanel.userPrompt = trimmed
-                resultPanel.payload = { response: "" }
-                resultPanel.simulated = false
-                resultPanel.phase = "loading"
-            }
-            awaitingReply = true
-            BuddyAgent.runDirectAdvisor(advisorMatch[1], "general")
-            return
-        }
-
         // Direct desktop actions (timers, simple app launch, day plan) run locally,
         // unless Agent SDK mode is enabled and the prompt asks for multi-step/tool work.
         const localTask = router.resolve(trimmed)
-        const compoundAgentIntent = /\b(and|then|command|powershell|bash|terminal|shell|click|screenshot|screen|cursor|mouse|type|press|key|file|folder|directory|read|write|create|edit|script|memory|memories|remember|search|web|url|http|https|grep|glob|advisor|advise|consult|tool|clipboard|cpu|ram|system|todo|checklist)\b/i.test(trimmed)
+        const compoundAgentIntent = /\b(and|then|command|powershell|bash|terminal|shell|click|screenshot|screen|cursor|mouse|type|press|key|file|folder|directory|read|write|create|edit|script|memory|memories|remember|search|web|url|http|https|grep|glob|tool|clipboard|cpu|ram|system|todo|checklist)\b/i.test(trimmed)
         const local = !!localTask
                       && (localTask.kind === "timer" || localTask.kind === "apps" || localTask.kind === "tasks")
                       && !(BuddyAgent && BuddyAgent.enabled && BuddyAgent.agentMode
@@ -2238,6 +2155,57 @@ Item {
         property real prevDragX: 0
         property real prevDragY: 0
         property bool dragged: false
+        // Cursor speed while carried, smoothed (px/s). Drives the one-frame look-ahead.
+        property real carryVx: 0
+        property real carryVy: 0
+
+        // Puts the orb where the pointer is, read from the cursor itself rather than from
+        // the mouse events: events queue up behind the render thread and arrive in bursts,
+        // so a drag driven by them trails the pointer by a frame or two and stutters. This
+        // runs once per frame (dragTick) and, with `predict`, aims one frame ahead of the
+        // pointer's recent motion so the orb appears to stay under it. `dt` is the frame time
+        // in seconds; 0 places the orb on the pointer without touching the speed estimate.
+        function dragStep(dt, predict) {
+            const c = Overlay.cursorPos()
+            if (dt > 0) {
+                const k = Math.min(1, dt * 30)
+                carryVx += ((c.x - prevDragX) / dt - carryVx) * k
+                carryVy += ((c.y - prevDragY) / dt - carryVy) * k
+                // The lean and the gaze want px per 60 Hz frame, as the per-event deltas were.
+                buddy.dragVelX = carryVx / 60
+                buddy.dragVelY = carryVy / 60
+            }
+            prevDragX = c.x
+            prevDragY = c.y
+
+            let px = c.x
+            let py = c.y
+            if (predict && dt > 0) {
+                const lead = Math.min(dt, 0.034)
+                let lx = carryVx * lead
+                let ly = carryVy * lead
+                const len = Math.hypot(lx, ly)
+                if (len > 24) {
+                    lx *= 24 / len
+                    ly *= 24 / len
+                }
+                px += lx
+                py += ly
+            }
+
+            const maxW = buddy.desktop ? buddy.desktop.width : 1920
+            const maxH = buddy.desktop ? buddy.desktop.height : 1080
+            const targetX = Math.max(8, Math.min(maxW - buddy.width - 8, buddy.baseX + (px - startDesktopX)))
+            const targetY = Math.max(8, Math.min(maxH - buddy.height - 8, startOriginY + (py - startDesktopY)))
+            buddy.dragOffsetX = targetX - buddy.baseX
+            buddy.dragOffsetY = targetY - buddy.baseY
+            buddy.dragMoved()
+
+            // Eyes look into the direction of motion while being carried
+            buddy.targetYaw = Math.max(-buddy.yawMax, Math.min(buddy.yawMax, buddy.dragVelX * 3.2))
+            buddy.targetPitch = Math.max(-buddy.pitchMax, Math.min(buddy.pitchMax, -buddy.dragVelY * 3.2))
+            buddy.springing = true
+        }
 
         onEntered: {
             buddy.hovering = true
@@ -2263,14 +2231,17 @@ Item {
             ctxMenu.open = false
             buddy.wake()
             dozeTimer.restart()
+            // The drag reads the cursor itself (see dragStep), so the start point is taken the same way.
             const g = buddy.desktop
-                      ? buddyHit.mapToItem(buddy.desktop, mouse.x, mouse.y)
+                      ? Overlay.cursorPos()
                       : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
             startDesktopX = g.x
             startDesktopY = g.y
             startOriginY = buddy.baseY
             prevDragX = g.x
             prevDragY = g.y
+            carryVx = 0
+            carryVy = 0
             dragged = false
             buddy.dragOffsetX = 0
             buddy.dragOffsetY = 0
@@ -2293,40 +2264,27 @@ Item {
                 }
                 return
             }
-            const g = buddy.desktop
-                      ? buddyHit.mapToItem(buddy.desktop, mouse.x, mouse.y)
-                      : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
-            const dx = g.x - startDesktopX
-            const dy = g.y - startDesktopY
-            if (!dragged && Math.hypot(dx, dy) > 5) {
-                dragged = true
-                buddy.setMood("surprised", 0)
-            }
-            if (dragged) {
-                buddy.dragVelX = g.x - prevDragX
-                buddy.dragVelY = g.y - prevDragY
-                prevDragX = g.x
-                prevDragY = g.y
-
-                const maxW = buddy.desktop ? buddy.desktop.width : 1920
-                const maxH = buddy.desktop ? buddy.desktop.height : 1080
-                const targetX = Math.max(8, Math.min(maxW - buddy.width - 8, buddy.baseX + dx))
-                const targetY = Math.max(8, Math.min(maxH - buddy.height - 8, startOriginY + dy))
-                buddy.dragOffsetX = targetX - buddy.baseX
-                buddy.dragOffsetY = targetY - buddy.baseY
-
-                // Eyes look into the direction of motion while being carried
-                buddy.targetYaw = Math.max(-buddy.yawMax, Math.min(buddy.yawMax, buddy.dragVelX * 3.2))
-                buddy.targetPitch = Math.max(-buddy.pitchMax, Math.min(buddy.pitchMax, -buddy.dragVelY * 3.2))
-                buddy.springing = true
+            // Moving is not done here: the events only notice that a drag has begun. dragTick
+            // (below) puts the orb under the pointer once per frame from the real cursor.
+            if (!dragged) {
+                const g = buddy.desktop
+                          ? Overlay.cursorPos()
+                          : Qt.point(buddy.x + mouse.x, buddy.y + mouse.y)
+                if (Math.hypot(g.x - startDesktopX, g.y - startDesktopY) > 5) {
+                    dragged = true
+                    buddy.setMood("surprised", 0)
+                    dragStep(0, false)
+                }
             }
         }
         onReleased: (mouse) => {
             if (mouse.button === Qt.RightButton)
                 return
             if (dragged) {
-                const newAnchorX = Math.round(buddy.x + buddy.width / 2)
-                const newAnchorY = Math.round(buddy.y)
+                // Settle exactly on the pointer, not on the look-ahead.
+                dragStep(0, false)
+                const newAnchorX = Math.round(buddy.baseX + Math.round(buddy.dragOffsetX) + buddy.width / 2)
+                const newAnchorY = Math.round(buddy.baseY + Math.round(buddy.dragOffsetY))
                 buddy.dragOffsetX = 0
                 buddy.dragOffsetY = 0
                 dragged = false
@@ -2352,6 +2310,13 @@ Item {
             dragged = false
             buddy.setMood("neutral", 0)
         }
+    }
+
+    // While the orb is carried it follows the cursor once per vsync (see buddyHit.dragStep).
+    FrameAnimation {
+        id: dragTick
+        running: buddy.dragging
+        onTriggered: buddyHit.dragStep(frameTime, true)
     }
 
     // ---- real chat provider -------------------------------------------------
@@ -2559,6 +2524,23 @@ Item {
             else if (Live.state === "listening")
                 buddy.setMood("listening", 0)
             buddy.springing = true
+        }
+    }
+    // A soft sound while the voice agent thinks, so a short pause does not feel like a hang: after a
+    // beat, then now and then (three times at most). The microphone is held shut around it, so speaker
+    // mode does not hear it.
+    readonly property bool liveThinking: Live.active && Live.state === "thinking"
+    property int thinkCues: 0
+    onLiveThinkingChanged: thinkCues = 0
+    Timer {
+        interval: buddy.thinkCues === 0 ? 800 : 3500
+        repeat: true
+        running: buddy.liveThinkCue && buddy.liveThinking && buddy.thinkCues < 3
+        onTriggered: {
+            buddy.thinkCues += 1
+            Live.holdMic(1200)
+            if (BuddySound)
+                BuddySound.play("think")
         }
     }
     Connections {

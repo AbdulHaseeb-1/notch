@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Multimedia Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Multimedia Network ShaderTools)
 
 qt_standard_project_setup()
 
@@ -35,6 +35,8 @@ set(NOCH_SOURCES
     src/agent/BuddyProviderConfig.cpp
     src/agent/BuddyProvider.h
     src/agent/BuddyProviderInternal.h
+    src/agent/BuddyProviderContext.cpp
+    src/agent/BuddyProviderPlan.cpp
     src/agent/BuddyProviderPrompts.cpp
     src/agent/BuddyProviderProtocol.cpp
     src/agent/BuddyProviderRun.cpp
@@ -144,6 +146,8 @@ set(NOCH_SOURCES
     src/voice/SpeechOut.h
     src/voice/SpeechPlayer.cpp
     src/voice/SpeechPlayer.h
+    src/voice/EchoCanceller.cpp
+    src/voice/EchoCanceller.h
     src/voice/StreamingPlayer.cpp
     src/voice/StreamingPlayer.h
     src/voice/Transcriber.h
@@ -176,6 +180,14 @@ add_library(noch_includes INTERFACE)
 target_include_directories(noch_includes INTERFACE ${NOCH_SOURCE_INCLUDE_DIRS})
 
 target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
+
+# Warnings are reported, not fatal: the tree is not yet warning-free, so -Werror
+# would stop the build on existing code. Read the output and fix new ones.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(noch PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
+elseif(MSVC)
+    target_compile_options(noch PRIVATE /W4)
+endif()
 
 # The QML files are compiled into the executable's resources, so the built
 # noch.exe is self-contained - no qml/ folder needed beside it at run time.
@@ -241,13 +253,17 @@ set(NOCH_QML_FILES
     qml/buddy/BuddyBubble.qml
     qml/buddy/BuddyChartCard.qml
     qml/buddy/BuddyHelpCard.qml
+    qml/buddy/BuddyLiveCaption.qml
     qml/buddy/BuddyMenu.qml
     qml/buddy/BuddyNeonRing.qml
     qml/buddy/BuddyPanel.qml
     qml/buddy/BuddyQuestionCard.qml
+    qml/buddy/BuddyReasoningCard.qml
     qml/buddy/BuddyResearchCard.qml
     qml/buddy/BuddyRouter.qml
     qml/buddy/BuddyTasksCard.qml
+    qml/buddy/BuddyTodoCard.qml
+    qml/buddy/ToolIcons.js
 
     qml/buddy/components/BuddyAskField.qml
     qml/buddy/components/BuddyIconButton.qml
@@ -260,6 +276,7 @@ set(NOCH_QML_FILES
     qml/buddy/fx/BuddyGlow.qml
     qml/buddy/fx/BuddyListenFx.qml
     qml/buddy/fx/BuddyRing.qml
+    qml/buddy/fx/BuddyShaderRing.qml
     qml/buddy/fx/BuddySpeakFx.qml
 
     qml/agent/AgentControlOverlay.qml
@@ -297,6 +314,19 @@ qt_add_qml_module(noch
     DEPENDENCIES QtQuick
     QML_FILES ${NOCH_QML_FILES}
     RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS} ${NOCH_MOONSHINE_VOCAB}
+)
+
+# Buddy's ring shader (GPU ring in Settings > Look & glow), compiled to .qsb for
+# every graphics API and loaded as qrc:/shaders/*.qsb.
+qt_add_shaders(noch "noch_shaders"
+    PREFIX "/shaders"
+    BASE shaders
+    GLSL "150,300 es"
+    HLSL 50
+    MSL 12
+    FILES
+        shaders/buddyring.vert
+        shaders/buddyring.frag
 )
 
 # Lets the generated QML type registration find src/app/QmlSingletons.h.

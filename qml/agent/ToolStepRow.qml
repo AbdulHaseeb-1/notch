@@ -21,8 +21,6 @@ Item {
         color: row.isRunning ? Theme.glassFillActive
              : row.isError ? Theme.dangerSoft
              : row.isAttention ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.08) : "transparent"
-        border.width: row.isRunning ? 1 : 0
-        border.color: Theme.glassBorder
     }
 
     ToolStatusIcon {

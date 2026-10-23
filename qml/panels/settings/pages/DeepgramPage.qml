@@ -12,6 +12,30 @@ SettingsPage {
     readonly property var prefs: panel.prefs
     readonly property bool flux: Live.flux
 
+    // One "name ... value" line of the conversation numbers.
+    component StatRow: Item {
+        id: stat
+        property string label
+        property string value
+        width: parent ? parent.width : 300
+        height: 22
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: stat.label
+            color: Theme.textDim
+            font.family: Theme.font
+            font.pixelSize: Theme.fontSm
+        }
+        Text {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: stat.value
+            color: Theme.ink
+            font.family: Theme.font
+            font.pixelSize: Theme.fontSm
+        }
+    }
+
     // A draft of the prompt, saved a moment after typing stops, so a running conversation is
     // updated once and not on every key.
     property string promptDraft: prefs.buddyLivePrompt.length > 0 ? prefs.buddyLivePrompt : Live.defaultPrompt
@@ -263,11 +287,18 @@ SettingsPage {
                 width: parent.width
                 text: page.prefs.buddyLiveAudioMode === "headphones"
                       ? qsTr("The microphone stays open while Buddy talks, so you can interrupt it by speaking. Use this with headphones: through speakers it would hear itself.")
-                      : qsTr("The microphone is muted while Buddy talks, so it does not hear itself through your speakers. Use Interrupt (or end the conversation) to cut it off.")
+                      : qsTr("The microphone is held back while Buddy talks, so it does not hear itself through your speakers. Speak up over it to cut in, or use Interrupt.")
                 color: Theme.textFaint
                 font.family: Theme.font
                 font.pixelSize: Theme.fontSm
                 wrapMode: Text.WordWrap
+            }
+            SettingsToggleRow {
+                visible: page.prefs.buddyLiveAudioMode === "speakers"
+                label: qsTr("Cancel echo")
+                sub: qsTr("Takes Buddy's own voice out of the microphone, so speaking over it is heard reliably and the first words of your interruption are kept. It learns your room while Buddy talks, in a few seconds. Headphones need none of this.")
+                checked: page.prefs.buddyLiveEchoCancel
+                onToggled: (c) => page.prefs.buddyLiveEchoCancel = c
             }
 
             Text {
@@ -297,10 +328,67 @@ SettingsPage {
             }
 
             SettingsToggleRow {
+                label: qsTr("Soft sound while Buddy thinks")
+                sub: qsTr("A quiet cue when an answer takes more than a moment, so a short pause does not feel like the line went dead.")
+                checked: page.prefs.buddyLiveThinkCue
+                onToggled: (c) => page.prefs.buddyLiveThinkCue = c
+            }
+
+            SettingsToggleRow {
                 label: qsTr("Let Buddy do things")
                 sub: qsTr("The voice agent can hand tasks (open apps, music, files, web, mouse and keyboard, reminders) to Buddy's own agent. They run with your usual safety settings, and you still approve what needs approval.")
                 checked: page.prefs.buddyLiveAskBuddy
                 onToggled: (c) => page.prefs.buddyLiveAskBuddy = c
+            }
+
+            // How the conversation is going: the current one, or the last.
+            Column {
+                visible: Live.active || Live.replies > 0 || Live.stalls > 0
+                width: parent.width
+                spacing: 4
+
+                SettingsCardDivider {}
+
+                Text {
+                    text: qsTr("How it is going")
+                    color: Theme.textDim
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontSm
+                    font.weight: Font.DemiBold
+                    bottomPadding: 4
+                }
+                StatRow {
+                    label: qsTr("Until you hear Buddy")
+                    value: Live.responseDelayMs > 0
+                           ? qsTr("%1 ms (average %2 ms)").arg(Live.responseDelayMs).arg(Live.avgResponseDelayMs) : "-"
+                }
+                StatRow {
+                    label: qsTr("Deepgram's answer time")
+                    value: Live.latencyMs > 0
+                           ? qsTr("%1 ms (average %2 ms)").arg(Live.latencyMs).arg(Live.avgLatencyMs) : "-"
+                }
+                StatRow {
+                    label: qsTr("Playback buffer")
+                    value: qsTr("%1 ms").arg(Live.bufferMs)
+                }
+                StatRow {
+                    label: qsTr("Stalls this conversation")
+                    value: String(Live.stalls)
+                }
+                StatRow {
+                    visible: page.prefs.buddyLiveAudioMode === "speakers" && page.prefs.buddyLiveEchoCancel
+                    label: qsTr("Echo removed")
+                    value: Live.echoReductionDb < 3 ? qsTr("learning") : qsTr("%1 dB").arg(Math.round(Live.echoReductionDb))
+                }
+                Text {
+                    width: parent.width
+                    topPadding: 4
+                    text: qsTr("The buffer grows a little after the connection stalls and shrinks back when it runs clean. Many stalls mean a weak connection.")
+                    color: Theme.textFaint
+                    font.family: Theme.font
+                    font.pixelSize: Theme.fontSm
+                    wrapMode: Text.WordWrap
+                }
             }
         }
     }
@@ -491,6 +579,15 @@ SettingsPage {
 
         SettingsCardDivider {}
 
+        SettingsToggleRow {
+            label: qsTr("Quick replies")
+            sub: qsTr("Keeps answers to a sentence or two and hands anything that needs thought, lookup or work to Buddy, so the voice starts and finishes sooner. A small, fast model suits this best; a bigger one mostly adds delay on a voice call. Applies right away.")
+            checked: page.prefs.buddyLiveQuick
+            onToggled: (c) => page.prefs.buddyLiveQuick = c
+        }
+
+        SettingsCardDivider {}
+
         SettingsTextArea {
             width: parent.width
             label: qsTr("Instructions")
@@ -528,7 +625,7 @@ SettingsPage {
             width: parent.width
             label: qsTr("Greeting")
             placeholder: qsTr("Hi, I'm Buddy. What can I do?")
-            hint: qsTr("Spoken when a conversation starts. Leave empty to wait for you.")
+            hint: qsTr("Spoken when a conversation starts. A short one fills the quiet while the call connects; leave it empty to wait for you.")
             text: page.prefs.buddyLiveGreeting
             onEdited: (v) => page.prefs.buddyLiveGreeting = v
         }

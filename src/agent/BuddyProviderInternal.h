@@ -67,7 +67,7 @@ constexpr int kBufferedReplyTimeoutMs = 600000;   // buffered: the whole answer 
 // An earlier turn longer than the history cap keeps its opening and, most
 // importantly, its ending (what a follow-up like "continue" refers to),
 // cut on whitespace, with a visible marker instead of a mid-sentence chop.
-QString shortenForHistory(const QString &text, int cap = kHistoryMsgChars)
+inline QString shortenForHistory(const QString &text, int cap = kHistoryMsgChars)
 {
     if (text.size() <= cap)
         return text;
@@ -85,7 +85,7 @@ QString shortenForHistory(const QString &text, int cap = kHistoryMsgChars)
 // The model often repeats the last few words of a cut-off reply when asked
 // to continue. Drop that overlap (only when it starts on a word boundary and
 // is long enough not to be a coincidence) so the stitched answer reads once.
-QString dropContinuationOverlap(const QString &prev, const QString &next)
+inline QString dropContinuationOverlap(const QString &prev, const QString &next)
 {
     int pe = prev.size();
     while (pe > 0 && prev.at(pe - 1).isSpace())
@@ -106,7 +106,7 @@ QString dropContinuationOverlap(const QString &prev, const QString &next)
     return next;
 }
 
-QString decodeHtmlEntities(QString s)
+inline QString decodeHtmlEntities(QString s)
 {
     s.replace(QLatin1String("&amp;"), QLatin1String("&"));
     s.replace(QLatin1String("&lt;"), QLatin1String("<"));
@@ -119,7 +119,7 @@ QString decodeHtmlEntities(QString s)
     return s;
 }
 
-QString stripHtmlTags(QString html)
+inline QString stripHtmlTags(QString html)
 {
     static const QRegularExpression scriptRe(
         QStringLiteral("<(script|style|noscript|svg|head)[^>]*>.*?</\\1>"),
@@ -142,7 +142,7 @@ QString stripHtmlTags(QString html)
     return html.trimmed();
 }
 
-QString unwrapDuckDuckGoUrl(const QString &rawHref)
+inline QString unwrapDuckDuckGoUrl(const QString &rawHref)
 {
     QString href = decodeHtmlEntities(rawHref.trimmed());
     if (href.startsWith(QLatin1String("//")))
@@ -154,7 +154,7 @@ QString unwrapDuckDuckGoUrl(const QString &rawHref)
     return href;
 }
 
-QString parseDuckDuckGoHtml(const QString &html, int maxResults,
+inline QString parseDuckDuckGoHtml(const QString &html, int maxResults,
                             QList<QPair<QString, QString>> *outCitations = nullptr)
 {
     static const QRegularExpression linkRe(
@@ -194,7 +194,7 @@ QString parseDuckDuckGoHtml(const QString &html, int maxResults,
 
 // Sandboxes any Anthropic memory path (e.g., "/memories", "/memories/notes.md", "notes.md")
 // strictly inside `memoriesRoot` and rejects "../" escapes.
-bool resolveMemorySandboxPath(const QString &memoriesRoot, const QString &rawInput,
+inline bool resolveMemorySandboxPath(const QString &memoriesRoot, const QString &rawInput,
                               QString *outAbsPath, QString *outVirtualPath)
 {
     const QString rootClean = QDir::cleanPath(QFileInfo(memoriesRoot).absoluteFilePath());
@@ -234,7 +234,7 @@ bool resolveMemorySandboxPath(const QString &memoriesRoot, const QString &rawInp
 // last block that can carry one. Done on the copy that is sent, never on the
 // stored conversation, so a marker never lingers on a message it no longer
 // belongs to. Returns false when the message has nothing markable.
-bool markCacheBreakpoint(QJsonArray &messages, int index)
+inline bool markCacheBreakpoint(QJsonArray &messages, int index)
 {
     if (index < 0 || index >= messages.size())
         return false;
@@ -270,7 +270,7 @@ bool markCacheBreakpoint(QJsonArray &messages, int index)
     return false;
 }
 
-QString cleanBase(const QString &base)
+inline QString cleanBase(const QString &base)
 {
     QString b = base.trimmed();
     while (b.endsWith('/'))
@@ -278,7 +278,7 @@ QString cleanBase(const QString &base)
     return b;
 }
 
-QString joinPath(const QString &base, const QStringList &parts)
+inline QString joinPath(const QString &base, const QStringList &parts)
 {
     QString path = cleanBase(base);
     QString tail;
@@ -294,7 +294,7 @@ QString joinPath(const QString &base, const QStringList &parts)
     return path;
 }
 
-QString defaultBaseFor(const QString &provider)
+inline QString defaultBaseFor(const QString &provider)
 {
     if (provider == QLatin1String("ollama"))
         return QStringLiteral("http://localhost:11434");
@@ -307,7 +307,7 @@ QString defaultBaseFor(const QString &provider)
     return QString();
 }
 
-QStringList chatPathFor(const QString &provider)
+inline QStringList chatPathFor(const QString &provider)
 {
     if (provider == QLatin1String("ollama"))
         return { QStringLiteral("api"), QStringLiteral("chat") };
@@ -316,14 +316,14 @@ QStringList chatPathFor(const QString &provider)
     return { QStringLiteral("v1"), QStringLiteral("chat"), QStringLiteral("completions") };
 }
 
-QStringList modelsPathFor(const QString &provider)
+inline QStringList modelsPathFor(const QString &provider)
 {
     if (provider == QLatin1String("ollama"))
         return { QStringLiteral("api"), QStringLiteral("tags") };
     return { QStringLiteral("v1"), QStringLiteral("models") };
 }
 
-QString tidyTransportError(const QString &fallback, int status)
+inline QString tidyTransportError(const QString &fallback, int status)
 {
     QString msg = fallback.trimmed();
     const int cut = msg.lastIndexOf(QLatin1String(": "));
@@ -336,7 +336,7 @@ QString tidyTransportError(const QString &fallback, int status)
     return msg.isEmpty() ? QObject::tr("No answer from the provider.") : msg;
 }
 
-QString capOutput(const QString &raw, int maxChars = kMaxToolOutputChars)
+inline QString capOutput(const QString &raw, int maxChars = kMaxToolOutputChars)
 {
     const QString trimmed = raw.trimmed();
     if (trimmed.isEmpty())
@@ -360,7 +360,7 @@ enum class ToolCallRepair { Ok, Repaired, Unrepairable };
 
 // "tool:alias" -> canonical argument name. Only renames when the canonical
 // name is absent, so a real argument is never clobbered.
-const QMap<QString, QString> &toolArgAliases()
+inline const QMap<QString, QString> &toolArgAliases()
 {
     static const QMap<QString, QString> aliases{
         { QStringLiteral("bash:cmd"), QStringLiteral("command") },
@@ -395,7 +395,7 @@ struct ToolArgSpec {
 
 // Mirrors the schemas built in BuddyProviderPrompts.cpp. Tools without
 // required arguments accept an empty input.
-const QMap<QString, ToolArgSpec> &toolArgSpecs()
+inline const QMap<QString, ToolArgSpec> &toolArgSpecs()
 {
     static const QMap<QString, ToolArgSpec> specs{
         { QStringLiteral("bash"),
@@ -433,13 +433,6 @@ const QMap<QString, ToolArgSpec> &toolArgSpecs()
         { QStringLiteral("web_fetch"),
           { { QStringLiteral("url") },
             { QStringLiteral("url"), QStringLiteral("extract_mode") } } },
-        { QStringLiteral("tool_search"),
-          { { QStringLiteral("query") },
-            { QStringLiteral("query"), QStringLiteral("mode") } } },
-        { QStringLiteral("advisor"),
-          { { QStringLiteral("task"), QStringLiteral("question") },
-            { QStringLiteral("task"), QStringLiteral("question"),
-              QStringLiteral("focus"), QStringLiteral("draft_plan") } } },
         { QStringLiteral("todo_write"),
           { { QStringLiteral("action") },
             { QStringLiteral("action"), QStringLiteral("todos"),
@@ -494,7 +487,7 @@ QJsonValue coerceScalar(const QJsonValue &v, const QString &kind, bool *ok)
 // P1: Field-level validation against the registry. Returns a list of
 // specific problems ("missing required 'command'", "'insert_line' should be
 // an integer, got 'abc'"), empty when the call is valid.
-QStringList validateToolCall(const QString &toolName, const QJsonObject &input)
+inline QStringList validateToolCall(const QString &toolName, const QJsonObject &input)
 {
     QStringList problems;
     const ToolSchema *schema = toolSchema(toolName);
@@ -547,7 +540,7 @@ QStringList validateToolCall(const QString &toolName, const QJsonObject &input)
     return problems;
 }
 
-ToolCallRepair normalizeToolCall(const QString &toolName, QJsonObject &input,
+inline ToolCallRepair normalizeToolCall(const QString &toolName, QJsonObject &input,
                                  const QString &rawArguments, QString *noteOut)
 {
     bool fixed = false;

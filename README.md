@@ -207,8 +207,7 @@ chunking, cut-off tool input, error events, completeness).
 `tst_buddyagent` drives the real agent loop against a fake Anthropic/OpenAI
 server: deny, approve, reject, plan/bypass modes, 529 retry, redaction,
 compaction, loop guard, cancel during an approval, streamed text and tool
-calls, cancel mid-stream, stream error and truncation retries, specialist
-handoffs and their toolsets, session memory, and the per-run memory index.
+calls, cancel mid-stream, stream error and truncation retries, session memory, and the per-run memory index.
 `tst_computeruse` covers the computer-use actions, screenshot scaling, held keys
 and the simulated backend. `tst_wakeword` (phrase matching, utterance detection,
 pausing, failure handling, and the local detector's whole flow with a fake

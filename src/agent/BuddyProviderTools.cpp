@@ -15,8 +15,6 @@ using namespace noch::buddyprovider;
 
 QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input)
 {
-    if (name.startsWith(QLatin1String("transfer_to_")))
-        return QStringLiteral("handoff");
     if (name == QLatin1String("bash"))
         return QStringLiteral("terminal");
     if (name == QLatin1String("computer")) {
@@ -43,11 +41,6 @@ QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input
         return QStringLiteral("globe");
     if (name == QLatin1String("web_fetch"))
         return QStringLiteral("web-fetch");
-    if (name == QLatin1String("tool_search")
-            || name.startsWith(QLatin1String("tool_search_tool")))
-        return QStringLiteral("tool-search");
-    if (name == QLatin1String("advisor") || name.startsWith(QLatin1String("advisor_")))
-        return QStringLiteral("advisor");
     if (name == QLatin1String("todo_write")) {
         const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
         if (act.startsWith(QLatin1String("clipboard")))
@@ -56,13 +49,11 @@ QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input
             return QStringLiteral("activity");
         return QStringLiteral("tasks");
     }
-    return QStringLiteral("spark");
+    return QStringLiteral("bolt");
 }
 
 QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &input)
 {
-    if (name.startsWith(QLatin1String("transfer_to_")))
-        return QStringLiteral("HANDOFF");
     if (name == QLatin1String("bash"))
         return QStringLiteral("SHELL");
     if (name == QLatin1String("computer"))
@@ -87,11 +78,6 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
         return QStringLiteral("WEB SEARCH");
     if (name == QLatin1String("web_fetch"))
         return QStringLiteral("WEB FETCH");
-    if (name == QLatin1String("tool_search")
-            || name.startsWith(QLatin1String("tool_search_tool")))
-        return QStringLiteral("TOOL SEARCH");
-    if (name == QLatin1String("advisor") || name.startsWith(QLatin1String("advisor_")))
-        return QStringLiteral("ADVISOR");
     if (name == QLatin1String("todo_write")) {
         const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
         if (act.startsWith(QLatin1String("clipboard")))
@@ -105,10 +91,6 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
 
 QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject &input)
 {
-    if (name.startsWith(QLatin1String("transfer_to_"))) {
-        const AgentProfile *p = profileFor(name.mid(int(qstrlen("transfer_to_"))));
-        return QStringLiteral("Hand off to %1").arg(p ? p->title : name.mid(12));
-    }
     if (name == QLatin1String("bash")) {
         QString cmd = input.value(QStringLiteral("command")).toString().simplified();
         if (cmd.size() > 44)
@@ -169,7 +151,7 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
         return uq::summary(uq::parse(input).questions);
     if (name == QLatin1String("music")) {
         const QString action = input.value(QStringLiteral("action")).toString().trimmed().toLower();
-        if (action == QLatin1String("play_track"))
+        if (action == QLatin1String("play_track") || action == QLatin1String("play_online"))
             return QStringLiteral("Play \"%1\"").arg(input.value(QStringLiteral("query")).toString().simplified().left(40));
         if (action == QLatin1String("add"))
             return QStringLiteral("Add %1 to the music queue")
@@ -234,23 +216,6 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
         const QString mode = input.value(QStringLiteral("extract_mode")).toString(QStringLiteral("text"));
         return QStringLiteral("Fetch %1 (%2)").arg(host, mode);
     }
-    if (name == QLatin1String("tool_search")
-            || name.startsWith(QLatin1String("tool_search_tool"))) {
-        const QString q = input.value(QStringLiteral("query")).toString(
-            input.value(QStringLiteral("pattern")).toString()).simplified();
-        const QString mode = input.value(QStringLiteral("mode")).toString(
-            name.contains(QLatin1String("regex")) ? QStringLiteral("regex") : QStringLiteral("bm25")).toUpper();
-        return QStringLiteral("%1 search: \"%2\"").arg(mode, q.left(30));
-    }
-    if (name == QLatin1String("advisor") || name.startsWith(QLatin1String("advisor_"))) {
-        const QString focus = input.value(QStringLiteral("focus")).toString(QStringLiteral("strategy"));
-        QString q = input.value(QStringLiteral("question")).toString(input.value(QStringLiteral("task")).toString()).simplified();
-        if (q.size() > 32)
-            q = q.left(29) + QStringLiteral("…");
-        return q.isEmpty()
-            ? QStringLiteral("Consult Advisor (%1)").arg(focus)
-            : QStringLiteral("%1 · %2").arg(focus.left(1).toUpper() + focus.mid(1), q);
-    }
     if (name == QLatin1String("todo_write")) {
         const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
         if (act == QLatin1String("clipboard_read"))
@@ -267,8 +232,6 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
 
 QString BuddyProvider::detailForToolCall(const QString &name, const QJsonObject &input)
 {
-    if (name.startsWith(QLatin1String("transfer_to_")))
-        return input.value(QStringLiteral("reason")).toString().simplified().left(200);
     if (name == QLatin1String("bash"))
         return QStringLiteral("$ ") + input.value(QStringLiteral("command")).toString().trimmed();
     if (name == QLatin1String("computer")) {
@@ -332,17 +295,6 @@ QString BuddyProvider::detailForToolCall(const QString &name, const QJsonObject 
         return QStringLiteral("url: %1  extract: %2")
             .arg(input.value(QStringLiteral("url")).toString(),
                  input.value(QStringLiteral("extract_mode")).toString(QStringLiteral("text")));
-    }
-    if (name == QLatin1String("tool_search")
-            || name.startsWith(QLatin1String("tool_search_tool"))) {
-        const QString q = input.value(QStringLiteral("query")).toString(input.value(QStringLiteral("pattern")).toString());
-        const QString mode = input.value(QStringLiteral("mode")).toString(QStringLiteral("bm25"));
-        return QStringLiteral("mode: %1  query: \"%2\"").arg(mode, q);
-    }
-    if (name == QLatin1String("advisor") || name.startsWith(QLatin1String("advisor_"))) {
-        const QString focus = input.value(QStringLiteral("focus")).toString(QStringLiteral("architecture"));
-        const QString q = input.value(QStringLiteral("question")).toString(input.value(QStringLiteral("task")).toString());
-        return QStringLiteral("focus: %1  question: \"%2\"").arg(focus, q);
     }
     if (name == QLatin1String("todo_write")) {
         const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
@@ -411,11 +363,14 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
 
     proc->setProcessChannelMode(QProcess::MergedChannels);
 
+    // Long jobs (installs, builds, archives) need more than a quick lookup:
+    // the model may ask for up to five minutes.
+    const int timeoutSec = qBound(5, call.input.value(QStringLiteral("timeout_seconds")).toInt(30), 300);
     QTimer *timeoutTimer = new QTimer(proc);
     timeoutTimer->setSingleShot(true);
-    timeoutTimer->setInterval(25000);
+    timeoutTimer->setInterval(timeoutSec * 1000);
 
-    connect(timeoutTimer, &QTimer::timeout, this, [this, proc, call, bashGen, takeOutput]() {
+    connect(timeoutTimer, &QTimer::timeout, this, [this, proc, call, bashGen, takeOutput, timeoutSec]() {
         if (bashGen != m_runGeneration || m_activeProcess != proc)
             return;
         m_activeProcess = nullptr;
@@ -424,7 +379,8 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
         proc->kill();
         proc->deleteLater();
         finishCurrentToolCall(call,
-            QStringLiteral("Command timed out after 25s.\n") + partial,
+            QStringLiteral("Command timed out after %1s and was stopped. For a long job pass a larger "
+                           "'timeout_seconds' (max 300).\n").arg(timeoutSec) + partial,
             QString(), true);
     });
 
@@ -464,10 +420,15 @@ void BuddyProvider::executeBashTool(const PendingToolCall &call)
 
     timeoutTimer->start();
 #ifdef Q_OS_WIN
+    // Windows PowerShell writes a pipe in the OEM code page; the output is
+    // decoded as UTF-8 above, so switch the console encoding first or any
+    // accented or non-Latin name comes back garbled.
     proc->start(QStringLiteral("powershell.exe"),
                 { QStringLiteral("-NoProfile"), QStringLiteral("-NonInteractive"),
                   QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
-                  QStringLiteral("-Command"), command });
+                  QStringLiteral("-Command"),
+                  QStringLiteral("[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);"
+                                 "$OutputEncoding=[Console]::OutputEncoding;") + command });
 #else
     proc->start(QStringLiteral("/bin/sh"), { QStringLiteral("-c"), command });
 #endif
@@ -486,7 +447,7 @@ void BuddyProvider::executeComputerTool(const PendingToolCall &call)
     const quint64 gen = m_runGeneration;
     addSpan(QJsonObject{ { "type", "computer" }, { "action", act.name },
                          { "x", act.hasCoord ? act.coord.x() : -1 }, { "y", act.hasCoord ? act.coord.y() : -1 } });
-    setActiveToolState(QStringLiteral("computer"), ComputerUse::describe(act));
+    setActiveToolState(QStringLiteral("computer"), ComputerUse::describe(act), call.input);
     m_computer->perform(act, [this, call, gen, act](const ComputerUse::Result &r) {
         if (gen != m_runGeneration)
             return;
@@ -722,7 +683,7 @@ void BuddyProvider::executeMusicTool(const PendingToolCall &call)
             settle(QStringLiteral("Added %1 track(s) to Noch's queue.").arg(added));
         });
     } else {
-        fail(QStringLiteral("unknown action '%1'. Use status, play, pause, next, previous, volume, mute, unmute, queue, play_track or add.")
+        fail(QStringLiteral("unknown action '%1'. Use status, play, pause, next, previous, volume, mute, unmute, queue, play_track, play_online or add.")
                  .arg(action.left(30)));
     }
 }
@@ -794,18 +755,39 @@ void BuddyProvider::executeEditorTool(const PendingToolCall &call)
         return;
     }
 
+    // An edit holds the file as text plus an undo copy; refuse files the
+    // model could not usefully view either (same bound as `view`).
+    constexpr qint64 kMaxEditBytes = 2 * 1024 * 1024;
+    const auto tooLargeToEdit = [&](const QFile &f) {
+        if (f.size() <= kMaxEditBytes)
+            return false;
+        finishCurrentToolCall(call,
+            QStringLiteral("Error: '%1' is %2 bytes; refuse to edit more than 2 MiB. Use a shell command for large files.")
+                .arg(absPath).arg(f.size()), QString(), true);
+        return true;
+    };
+
     if (cmd == QLatin1String("str_replace")) {
         QFile f(absPath);
         if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
             finishCurrentToolCall(call, QStringLiteral("Error: cannot read '%1'.").arg(absPath), QString(), true);
             return;
         }
+        if (tooLargeToEdit(f))
+            return;
         QString content = QString::fromUtf8(f.readAll());
         f.close();
         const QString oldStr = call.input.value(QStringLiteral("old_str")).toString();
         const QString newStr = call.input.value(QStringLiteral("new_str")).toString();
         if (oldStr.isEmpty() || !content.contains(oldStr)) {
-            finishCurrentToolCall(call, QStringLiteral("Error: 'old_str' not found in '%1'.").arg(absPath), QString(), true);
+            finishCurrentToolCall(call, QStringLiteral("Error: 'old_str' not found in '%1'. View the file again and copy the text exactly, including whitespace.").arg(absPath), QString(), true);
+            return;
+        }
+        const int occurrences = content.count(oldStr);
+        if (occurrences > 1) {
+            finishCurrentToolCall(call,
+                QStringLiteral("Error: 'old_str' matches %1 places in '%2'. Include more surrounding lines so it matches exactly one.")
+                    .arg(occurrences).arg(absPath), QString(), true);
             return;
         }
         m_fileUndoBackups[absPath] = content;
@@ -828,6 +810,8 @@ void BuddyProvider::executeEditorTool(const PendingToolCall &call)
             finishCurrentToolCall(call, QStringLiteral("Error: cannot read '%1'.").arg(absPath), QString(), true);
             return;
         }
+        if (tooLargeToEdit(f))
+            return;
         const QString originalContent = QString::fromUtf8(f.readAll());
         f.close();
         m_fileUndoBackups[absPath] = originalContent;
@@ -879,13 +863,27 @@ void BuddyProvider::executeCodeSearchTool(const PendingToolCall &call)
         return;
     }
 
-    const QString rootPath = rawPath.isEmpty() ? QDir::currentPath() : QFileInfo(rawPath).absoluteFilePath();
+    // Resolve exactly like the permission gate did (against the workspace, not
+    // the process cwd, which can be Noch's own install or data folder). The
+    // gate lets an empty path through, so the default must be the workspace too.
+    const QString rootPath = rawPath.isEmpty() ? effectiveWorkspace() : m_policy.absolutePath(rawPath);
     if (!QFileInfo::exists(rootPath)) {
         finishCurrentToolCall(call, QStringLiteral("Error: search path '%1' does not exist.").arg(rootPath), QString(), true);
         return;
     }
+    if (rawPath.isEmpty() && (m_policy.isPrivatePath(rootPath)
+            || !AgentPolicy::credentialPathReason(rootPath, m_policy.baseDir()).isEmpty())) {
+        finishCurrentToolCall(call, QStringLiteral("Error: pass an explicit 'path' to search."), QString(), true);
+        return;
+    }
 
-    const auto shouldSkipDir = [](const QString &path) -> bool {
+    // Only directories below the search root are skipped, so a root that
+    // happens to live inside a folder called "build" still works.
+    const QString rootClean = QDir::fromNativeSeparators(QDir::cleanPath(rootPath));
+    const auto shouldSkipDir = [rootClean](const QString &fullPath) -> bool {
+        QString path = fullPath;
+        if (path.startsWith(rootClean))
+            path = path.mid(rootClean.size());
         return path.contains(QLatin1String("/.git/")) || path.contains(QLatin1String("/node_modules/"))
             || path.contains(QLatin1String("/build/")) || path.contains(QLatin1String("/.vs/"));
     };

@@ -47,8 +47,6 @@
 //   - "memory"             — Anthropic Memory tool (/memories persistent cross-session workspace: view, create, str_replace, insert, delete, rename)
 //   - "web_search"         — Anthropic Web Search (live web search queries with source citations)
 //   - "web_fetch"          — Anthropic Web Fetch (fetch URL content, links, and metadata)
-//   - "tool_search"        — Anthropic Tool Search (BM25 natural language & Regex tool discovery + dynamic schema loading)
-//   - "advisor"            — Anthropic Advisor Tool (high-reasoning strategic consultation, architecture review & verification)
 //   - "todo_write"         — Anthropic Task & Desktop Context Tool (structured TodoWrite checklist, clipboard & system inspection)
 //
 // Safety layer (see AgentPolicy.h and docs/agent-safety.md):
@@ -78,13 +76,9 @@ class BuddyProvider : public QObject
     Q_PROPERTY(bool allowCodeSearch READ allowCodeSearch WRITE setAllowCodeSearch NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowMemory READ allowMemory WRITE setAllowMemory NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowWebSearch READ allowWebSearch WRITE setAllowWebSearch NOTIFY agentConfigChanged)
-    Q_PROPERTY(bool allowToolSearch READ allowToolSearch WRITE setAllowToolSearch NOTIFY agentConfigChanged)
-    Q_PROPERTY(bool allowAdvisor READ allowAdvisor WRITE setAllowAdvisor NOTIFY agentConfigChanged)
     Q_PROPERTY(bool allowTodoTask READ allowTodoTask WRITE setAllowTodoTask NOTIFY agentConfigChanged)
     // Clarifying questions: Buddy may pause to ask a multiple-choice question.
     Q_PROPERTY(bool allowAskUser READ allowAskUser WRITE setAllowAskUser NOTIFY agentConfigChanged)
-    // P6 tool diet: only core tools upfront, rest loaded on demand via tool_search.
-    Q_PROPERTY(bool toolDiet READ toolDiet WRITE setToolDiet NOTIFY agentConfigChanged)
     // Lets Buddy put a screenshot of the screen into the chat for the user to see
     // (share_screenshot). The image stays on this computer: the model is only told it was shown.
     Q_PROPERTY(bool allowScreenshots READ allowScreenshots WRITE setAllowScreenshots NOTIFY agentConfigChanged)
@@ -122,11 +116,6 @@ class BuddyProvider : public QObject
     Q_PROPERTY(ComputerUse *computer READ computer CONSTANT)
     Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
     Q_PROPERTY(bool streaming READ streaming NOTIFY streamTextChanged)
-    // Handoffs (OpenAI Agents SDK style): Buddy can transfer the run to a
-    // specialist with its own instructions and a restricted toolset.
-    Q_PROPERTY(bool handoffs READ handoffs WRITE setHandoffs NOTIFY agentConfigChanged)
-    Q_PROPERTY(QString activeAgent READ activeAgent NOTIFY activeAgentChanged)
-    Q_PROPERTY(QString activeAgentTitle READ activeAgentTitle NOTIFY activeAgentChanged)
     // JEV request classifier (see TurnClassifier.h): a small typed model that labels
     // each request before the agent loop starts. It has its own endpoint, key and
     // model, independent of the chat provider above. Off by default.
@@ -155,6 +144,7 @@ class BuddyProvider : public QObject
     // Images Buddy put into this reply: [{ url, path, caption, width, height }].
     Q_PROPERTY(QVariantList attachments READ attachments NOTIFY attachmentsChanged)
     Q_PROPERTY(QString activeTool READ activeTool NOTIFY activeToolChanged)
+    Q_PROPERTY(QString activeToolIcon READ activeToolIcon NOTIFY activeToolChanged)
     Q_PROPERTY(QString activeToolBadge READ activeToolBadge NOTIFY activeToolChanged)
     Q_PROPERTY(QString activeToolSummary READ activeToolSummary NOTIFY activeToolChanged)
     Q_PROPERTY(int agentIteration READ agentIteration NOTIFY activeToolChanged)
@@ -183,12 +173,6 @@ public:
 
     bool agentMode() const { return m_agentMode; }
     void setAgentMode(bool on);
-    bool toolDiet() const { return m_toolDiet; }
-    void setToolDiet(bool on);
-    // P6: is this tool's schema sent to the model right now? Core tools and
-    // tool_search always; deferred tools only once loaded via tool_search
-    // (or always, when the diet is off).
-    bool toolSchemaVisible(const QString &toolName) const;
     bool allowBash() const { return m_allowBash; }
     void setAllowBash(bool on);
     bool allowComputer() const { return m_allowComputer; }
@@ -201,10 +185,6 @@ public:
     void setAllowMemory(bool on);
     bool allowWebSearch() const { return m_allowWebSearch; }
     void setAllowWebSearch(bool on);
-    bool allowToolSearch() const { return m_allowToolSearch; }
-    void setAllowToolSearch(bool on);
-    bool allowAdvisor() const { return m_allowAdvisor; }
-    void setAllowAdvisor(bool on);
     bool allowTodoTask() const { return m_allowTodoTask; }
     void setAllowTodoTask(bool on);
     bool allowAskUser() const { return m_allowAskUser; }
@@ -231,8 +211,6 @@ public:
     void setShowThinking(bool on);
     QString streamText() const { return m_streamText; }
     bool streaming() const { return m_streamingNow; }
-    bool handoffs() const { return m_handoffs; }
-    void setHandoffs(bool on);
     bool officialComputerTools() const { return m_officialComputer; }
     void setOfficialComputerTools(bool on);
     QString computerDetail() const { return m_computerDetail; }
@@ -246,19 +224,6 @@ public:
     static QString computerModeName(ComputerMode m);
     ComputerMode computerMode() const;
     QString computerToolMode() const { return computerModeName(computerMode()); }
-    QString activeAgent() const { return m_activeAgent; }
-    QString activeAgentTitle() const;
-    // Specialist registry (static): id -> title, icon, allowed tools, instructions.
-    struct AgentProfile {
-        QString id;
-        QString title;
-        QString icon;
-        QStringList tools;      // empty = every enabled tool
-        QString handoffDescription;
-        QString instructions;
-    };
-    static const QList<AgentProfile> &agentProfiles();
-    static const AgentProfile *profileFor(const QString &id);
     QVariantMap pendingApproval() const { return m_pendingApproval; }
     QVariantMap pendingQuestion() const { return m_pendingQuestion; }
     QVariantMap lastRunChanges() const { return m_lastRunChanges; }
@@ -271,6 +236,7 @@ public:
     QVariantList toolSteps() const { return m_toolSteps; }
     QVariantList attachments() const { return m_attachments; }
     QString activeTool() const { return m_activeTool; }
+    QString activeToolIcon() const { return m_activeToolIcon; }
     QString activeToolBadge() const { return m_activeToolBadge; }
     QString activeToolSummary() const { return m_activeToolSummary; }
     int agentIteration() const { return m_agentIteration; }
@@ -284,8 +250,6 @@ public:
                                  bool spoken = false);
     Q_INVOKABLE void runDirectCommand(const QString &command);
     Q_INVOKABLE void runDirectWebSearch(const QString &query);
-    Q_INVOKABLE void runDirectToolSearch(const QString &query);
-    Q_INVOKABLE void runDirectAdvisor(const QString &question);
     Q_INVOKABLE QString memoriesPath() const;
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void probe();
@@ -387,7 +351,6 @@ signals:
     void sessionSummaryFailed(const QString &sessionId, const QString &error);
     void savedRulesChanged();
     void streamTextChanged();
-    void activeAgentChanged();
     void toolExecuted(const QString &toolName, const QString &summary);
 
     void responseReady(const QString &text);
@@ -440,20 +403,11 @@ private:
     bool m_allowCodeSearch = true;
     bool m_allowMemory = true;
     bool m_allowWebSearch = true;
-    bool m_allowToolSearch = true;
-    bool m_allowAdvisor = true;
     bool m_allowTodoTask = true;
     bool m_allowAskUser = true;
     bool m_allowScreenshots = true;
     bool m_allowMusic = true;
     MusicBackend *m_musicBackend = nullptr;
-    // P6 tool diet: when on, only core tools (bash, editor, glob_grep,
-    // computer) plus tool_search are sent upfront; deferred tools are
-    // advertised by one-liner and loaded via tool_search on demand.
-    // P6 tool diet: only core tools + tool_search are advertised up
-    // front; deferred tools (web, memory, advisor...) load on demand.
-    // Default ON: ~25% fewer tokens per request. Toggle in settings.
-    bool m_toolDiet = true;
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
@@ -510,6 +464,7 @@ private:
     QVariantList m_toolSteps;
     QVariantList m_attachments;
     QString m_activeTool;
+    QString m_activeToolIcon;
     QString m_activeToolBadge;
     QString m_activeToolSummary;
     int m_agentIteration = 0;
@@ -538,13 +493,10 @@ private:
     int m_totalOutputTokens = 0;
     QString m_lastModelUsed;
     QString m_lastStopReason;
-    bool m_advisorUsedInTurn = false;
-    QString m_advisorFocusInTurn;
-    QString m_advisorInsightInTurn;
+    QString m_reasoningInTurn;   // the model reasoning summary, shown when show-thinking is on
     QElapsedTimer m_turnTimer;
     QElapsedTimer m_stepTimer;
     QHash<QString, QString> m_fileUndoBackups;
-    QSet<QString> m_unlockedDeferredTools;
     // ---- P5 plan-then-act ------------------------------------------------
     // A validated plan the model produced for this run. Steps execute in
     // order; 2 consecutive failures trigger a bounded replan (max 2).
@@ -578,11 +530,7 @@ private:
     bool m_streamingNow = false;
     QString m_streamText;
     QTimer m_streamEmitTimer;
-    // handoffs
-    bool m_handoffs = true;
-    QString m_activeAgent = QStringLiteral("buddy");
     QString m_memoryIndexSnapshot;   // memoryIndex() taken at run start
-    int m_handoffCount = 0;
     bool m_spokenRun = false;        // this run's reply is read aloud: short, plain prose
     // JEV classifier: runs between "the user sent a request" and the first model
     // turn. Fails open; a valid, confident result only narrows the run.
@@ -591,10 +539,6 @@ private:
     bool m_classifyPending = false;               // the first model turn waits for the classifier
     void dispatchAfterClassify(const QString &text);
     void onClassified(quint64 token, const turnclass::Classification &result, int ms, const QString &error);
-    void applyClassification();
-    void setActiveAgent(const QString &id);
-    bool toolAllowedForActiveAgent(const QString &tool) const;
-    void executeHandoff(const PendingToolCall &call);
     QString memoryIndex(const QString &query = QString()) const;
     quint64 m_runGeneration = 0;     // bumped by cancel(); stale deferred steps check it
     QString m_stepStatusOverride;   // set just before finishCurrentToolCall for "denied"
@@ -603,7 +547,6 @@ private:
     QPointer<QNetworkReply> m_chatReply;
     QPointer<QNetworkReply> m_probeReply;
     QPointer<QNetworkReply> m_webSearchReply;
-    QPointer<QNetworkReply> m_advisorReply;
     // Summaries of chat turns, one request at a time.
     struct SummaryJob {
         QString id;
@@ -690,8 +633,6 @@ private:
     void extractRunMemories();
     void executeWebSearchTool(const PendingToolCall &call);
     void executeWebFetchTool(const PendingToolCall &call);
-    void executeToolSearchTool(const PendingToolCall &call);
-    void executeAdvisorTool(const PendingToolCall &call);
     void executeTodoTaskTool(const PendingToolCall &call);
 
     static QString summarizeToolCall(const QString &name, const QJsonObject &input);
@@ -707,5 +648,6 @@ private:
     static QString trimBase(const QString &base);
     void finishProbe(bool transportOk, int status, const QByteArray &body,
                      const QString &fallback);
-    void setActiveToolState(const QString &tool, const QString &summary);
+    void setActiveToolState(const QString &tool, const QString &summary,
+                            const QJsonObject &input = QJsonObject());
 };

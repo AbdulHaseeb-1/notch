@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "ToolIcons.js" as ToolIcons
 
 // The buddy's thought bubble. It pops out of the orb as a trail of little
 // thought dots followed by the bubble itself, then morphs through every step
@@ -42,7 +43,7 @@ Item {
     // it is written, the model's reasoning); approvals and questions still show.
     readonly property bool showThinking: BuddyAgent ? BuddyAgent.showThinking : true
     readonly property var toolSteps: (BuddyAgent && showThinking) ? BuddyAgent.toolSteps : []
-    readonly property string activeTool: (BuddyAgent && showThinking) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolIcon: (BuddyAgent && showThinking) ? BuddyAgent.activeToolIcon : ""
     readonly property string activeToolBadge: (BuddyAgent && showThinking) ? BuddyAgent.activeToolBadge : ""
     readonly property string activeToolSummary: (BuddyAgent && showThinking) ? BuddyAgent.activeToolSummary : ""
     readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
@@ -74,46 +75,18 @@ Item {
     // Buddy is asking the user a multiple-choice question (ask_user_question).
     readonly property var pendingQuestion: (BuddyAgent) ? BuddyAgent.pendingQuestion : ({})
     readonly property bool awaitingQuestion: pendingQuestion && pendingQuestion.id !== undefined
-    // Specialist currently in charge (handoffs), "" for Buddy itself.
-    readonly property string specialist: (BuddyAgent
-                                          && BuddyAgent.activeAgent !== "buddy")
-                                         ? String(BuddyAgent.activeAgentTitle).replace(" specialist", "") : ""
     // Live streamed answer text while the model is still writing.
     readonly property string liveText: (BuddyAgent && showThinking && BuddyAgent.streaming)
                                        ? String(BuddyAgent.streamText).replace(/\*\*|`/g, "") : ""
     readonly property bool hasLive: liveText.length > 0 && phase === "thinking"
     readonly property real liveH: hasLive ? Math.min(liveBody.implicitHeight, 168) + 22 : 0
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
-    readonly property bool hasAdvisor: showThinking && !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
+    readonly property bool hasReasoning: showThinking && !!(responseMeta && String(responseMeta.reasoning || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
     readonly property bool hasCitations: citations && citations.length > 0
     readonly property bool hasSdkTelemetry: !!(responseMeta && String(responseMeta.model || "").length > 0)
-    readonly property var distinctToolIcons: {
-        const seen = []
-        if (!toolSteps)
-            return seen
-        for (let i = 0; i < toolSteps.length && seen.length < 5; ++i) {
-            const ic = String(toolSteps[i].icon || "terminal")
-            if (seen.indexOf(ic) < 0)
-                seen.push(ic)
-        }
-        return seen
-    }
+    readonly property var distinctToolIcons: ToolIcons.distinct(toolSteps, 5)
     property bool toolsExpanded: false
-
-    function toolIcon(name) {
-        if (name === "bash") return "terminal"
-        if (name === "computer") return "computer"
-        if (name === "str_replace_editor") return "doc"
-        if (name === "glob_grep") return "code-search"
-        if (name === "memory") return "memory"
-        if (name === "web_search") return "globe"
-        if (name === "web_fetch") return "web-fetch"
-        if (name === "tool_search") return "tool-search"
-        if (name === "advisor") return "advisor"
-        if (name === "todo_write") return "tasks"
-        return "spark"
-    }
 
     function formatDuration(ms) { return Theme.formatDuration(ms) }
 
@@ -280,7 +253,7 @@ Item {
     }
     function kindIcon(k) {
         return k === "chart" ? "chart" : k === "research" ? "doc"
-             : k === "tasks" ? "tasks" : k === "help" ? "list" : "spark"
+             : k === "tasks" ? "tasks" : k === "help" ? "list" : "bolt"
     }
 
     // Shows `ph`, popping the bubble out of the orb first when it is hidden
@@ -320,6 +293,10 @@ Item {
     readonly property real errW: fitW(0.20, 300, 380)
     readonly property real footH: 32
     readonly property real maxH: Math.max(150, bounds.height - 16)
+    // The most room the bubble is ever likely to want, for whoever has to hold a window (or
+    // anything else) ready for it so that nothing has to be resized while the bubble grows.
+    readonly property real reachW: Math.min(screenW - 16, Math.max(inputW, chatW, cardW, histW))
+    readonly property real reachH: Math.min(maxH, 720)
 
     readonly property real toolDrawerH: hasTools && toolsExpanded
         ? Math.min(Math.max(120, maxH * 0.42), toolDrawerCol.implicitHeight)
@@ -350,10 +327,10 @@ Item {
                                                kind === "chart" ? 330
                                              : kind === "research" ? 336
                                              : kind === "tasks" ? 290 : 312)
-    readonly property real thinkW: (awaitingApproval || awaitingQuestion || hasLive || (hasTools && specialist.length > 0)) ? chatW
+    readonly property real thinkW: (awaitingApproval || awaitingQuestion || hasLive) ? chatW
                                  : (hasTools || activeToolSummary.length > 0)
                                  ? histW
-                                 : (longThink ? 84 + thinkLabel.implicitWidth + 16 : 84)
+                                 : (longThink ? 62 + thinkLabel.implicitWidth + 18 : 64)
     readonly property real thinkH: (hasTools
                                  ? (rowH + Math.min(toolSteps.length, 4) * 31 + 10)
                                  : rowH)
@@ -526,22 +503,15 @@ Item {
     }
 
     // ---- ambient motion -----------------------------------------------------------------
-    // thinkT drives the thinking dots and the thought trail; breathT a calm
-    // ~4 s breathing of the whole bubble while it thinks.
+    // thinkT drives the thinking dots: a slow, even fade that rolls across
+    // three dots. Nothing bounces, scales or glows; the bubble itself stays still.
     property real thinkT: 0
-    property real breathT: 0
     NumberAnimation on thinkT {
-        from: 0; to: 1; duration: 1700; loops: Animation.Infinite
+        from: 0; to: 1; duration: 2200; loops: Animation.Infinite
         running: tb.phase === "thinking" && tb.visible
     }
-    NumberAnimation on breathT {
-        from: 0; to: 1; duration: 4200; loops: Animation.Infinite
-        running: tb.phase === "thinking" && tb.visible
-    }
-    readonly property real breath: phase === "thinking"
-                                   ? 1 + 0.024 * mo * Math.sin(breathT * 2 * Math.PI) : 1
     function wave(i) {
-        return Math.max(0, Math.sin(thinkT * 2 * Math.PI - i * 0.95))
+        return 0.5 + 0.5 * Math.sin(thinkT * 2 * Math.PI - i * 0.9)
     }
 
     property real shakeX: 0
@@ -801,9 +771,6 @@ Item {
                                        + (tb.centered ? Math.sin(modelData.f * Math.PI) * 2.5 * tb.s : 0)
             readonly property real cy: tb.tailStartY + (tb.tailEndY - tb.tailStartY) * modelData.f
                                        + (tb.centered ? 0 : -tb.vDir * Math.sin(modelData.f * Math.PI) * 3 * tb.s)
-            // While thinking, a pulse travels from the orb out to the bubble.
-            readonly property real pulse: tb.phase === "thinking"
-                                          ? Math.max(0, Math.sin(tb.thinkT * 2 * Math.PI - index * 1.1)) : 0
             width: Math.round(modelData.size * tb.s)
             height: width
             radius: width / 2
@@ -811,12 +778,8 @@ Item {
             y: Math.round(cy - height / 2)
             visible: prog > 0.001
             opacity: Math.min(1, prog * 1.6)
-            scale: Math.max(0, prog) * (1 + 0.22 * pulse * tb.mo)
+            scale: Math.max(0, prog)
             color: tb.buddySurface
-            border.width: 1
-            border.color: tb.phase === "thinking"
-                          ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35 + 0.5 * pulse)
-                          : Theme.borderStrong
             antialiasing: true
         }
     }
@@ -837,8 +800,8 @@ Item {
                 origin.y: tb.centered ? (tb.above ? body.height : 0)
                                       : (tb.above ? body.height - Math.min(body.height, tb.rowH) / 2
                                                   : Math.min(body.height, tb.rowH) / 2)
-                xScale: (0.3 + 0.7 * tb.bp) * tb.breath * (1 + tb.arrival)
-                yScale: (0.3 + 0.7 * tb.bp) * tb.breath * (1 + tb.arrival)
+                xScale: (0.3 + 0.7 * tb.bp) * (1 + tb.arrival)
+                yScale: (0.3 + 0.7 * tb.bp) * (1 + tb.arrival)
             },
             Translate { x: tb.shakeX }
         ]
@@ -850,14 +813,6 @@ Item {
             anchors.fill: parent
             radius: Math.min(height / 2, 22)
             color: tb.buddySurface
-            border.width: tb.phase === "input" ? 0 : 1
-            border.color: tb.phase === "thinking"
-                          ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.30 + 0.30 * Math.sin(tb.breathT * 2 * Math.PI) * tb.mo)
-                          : (tb.phase === "error" ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.55)
-                          : (tb.revealing ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.45)
-                          : (field.activeFocus && tb.phase === "input"
-                             ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.55) : Theme.border)))
-            Behavior on border.color { ColorAnimation { duration: 220 } }
             antialiasing: true
         }
 
@@ -895,20 +850,10 @@ Item {
                     Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 }
 
-                Glyph {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 15
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: "spark"
-                    size: 15
-                    color: field.activeFocus ? Theme.accent : Theme.textFaint
-                    Behavior on color { ColorAnimation { duration: 160 } }
-                }
-
                 TextInput {
                     id: field
                     anchors.left: parent.left
-                    anchors.leftMargin: 38
+                    anchors.leftMargin: 15
                     anchors.right: micBtn.left
                     anchors.rightMargin: 2
                     anchors.verticalCenter: parent.verticalCenter
@@ -1033,8 +978,6 @@ Item {
                         height: 18
                         radius: 9
                         color: Theme.glassFill
-                        border.width: 0
-                        border.color: Theme.glassBorder
                         Text {
                             id: histCount
                             anchors.centerIn: parent
@@ -1054,8 +997,6 @@ Item {
                         radius: 13
                         color: tb.clearArmed ? Theme.dangerSoft
                                              : (clearHit.containsMouse ? Theme.glassFillHover : "transparent")
-                        border.width: 1
-                        border.color: tb.clearArmed ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.5) : Theme.glassBorder
                         Behavior on color { ColorAnimation { duration: 140 } }
                         Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         Row {
@@ -1096,13 +1037,6 @@ Item {
                             }
                         }
                     }
-                    Rectangle {
-                        anchors.bottom: parent.bottom
-                        x: 12
-                        width: parent.width - 24
-                        height: 1
-                        color: Theme.glassBorder
-                    }
                 }
 
                 ListView {
@@ -1139,8 +1073,6 @@ Item {
                             anchors.margins: 2
                             radius: Theme.radiusMd
                             color: hrow.lit ? Theme.glassFillHover : "transparent"
-                            border.width: hrow.lit ? 1 : 0
-                            border.color: Theme.glassBorder
                         }
                         Rectangle {
                             id: kindTile
@@ -1150,8 +1082,6 @@ Item {
                             height: 32
                             radius: Theme.radiusMd
                             color: hrow.lit ? Theme.glassFillActive : Theme.glassFill
-                            border.width: 0
-                            border.color: Theme.glassBorder
                             Glyph {
                                 anchors.centerIn: parent
                                 name: tb.kindIcon(hrow.modelData.kind)
@@ -1269,13 +1199,11 @@ Item {
                                 id: tdot
                                 required property int index
                                 readonly property real lift: tb.wave(index)
-                                width: 6.5
-                                height: 6.5
-                                radius: 3.25
-                                color: Theme.accent
-                                opacity: 0.32 + 0.68 * lift
-                                scale: 0.82 + 0.22 * lift
-                                transform: Translate { y: -3.0 * tb.mo * tdot.lift }
+                                width: 5
+                                height: 5
+                                radius: 2.5
+                                color: Theme.textDim
+                                opacity: 0.22 + 0.58 * lift * (0.4 + 0.6 * tb.mo)
                                 antialiasing: true
                             }
                         }
@@ -1291,7 +1219,7 @@ Item {
                         Glyph {
                             id: activeToolIcon
                             anchors.verticalCenter: parent.verticalCenter
-                            name: tb.toolIcon(tb.activeTool)
+                            name: tb.activeToolIcon
                             size: 15
                             color: Theme.ink
                         }
@@ -1328,41 +1256,11 @@ Item {
 
                         Row {
                             id: stepCountText
-                            visible: tb.hasTools || tb.specialist.length > 0
+                            visible: tb.hasTools
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: 8
 
-                            // Which specialist owns the run after a handoff.
-                            Rectangle {
-                                visible: tb.specialist.length > 0
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: specialistRow.implicitWidth + 14
-                                height: 20
-                                radius: 10
-                                color: Theme.tile
-                                border.width: 0
-                                border.color: Theme.border
-                                Row {
-                                    id: specialistRow
-                                    anchors.centerIn: parent
-                                    spacing: 4
-                                    Glyph {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        name: "handoff"
-                                        size: 11
-                                        color: Theme.accent
-                                    }
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: tb.specialist
-                                        color: Theme.ink
-                                        font.family: Theme.font
-                                        font.pixelSize: Theme.fontXs
-                                        font.weight: Font.DemiBold
-                                    }
-                                }
-                            }
                             Text {
                                 visible: tb.hasTools
                                 anchors.verticalCenter: parent.verticalCenter
@@ -1375,7 +1273,7 @@ Item {
                     }
 
                     Item {
-                        x: 84
+                        x: 62
                         width: thinkLabel.implicitWidth
                         height: parent.height
                         visible: tb.showThinking && !tb.hasTools && tb.activeToolSummary.length === 0
@@ -1386,10 +1284,9 @@ Item {
                             id: thinkLabel
                             anchors.verticalCenter: parent.verticalCenter
                             text: tb.thinkPhrases[tb.thinkStep]
-                            color: Theme.textDim
+                            color: Theme.textFaint
                             font.family: Theme.font
                             font.pixelSize: Theme.fontBase
-                            font.weight: Font.Medium
                             onTextChanged: phraseFade.restart()
                             NumberAnimation {
                                 id: phraseFade
@@ -1398,16 +1295,6 @@ Item {
                             }
                         }
                     }
-                }
-
-                // Hairline above the live tool timeline
-                Rectangle {
-                    visible: tb.hasTools
-                    x: 14
-                    y: tb.rowH - 2
-                    width: parent.width - 28
-                    height: 1
-                    color: Theme.glassBorder
                 }
 
                 // Live tool timeline (last four steps)
@@ -1440,8 +1327,6 @@ Item {
                     height: tb.liveH
                     radius: Theme.radiusMd
                     color: Theme.glassFill
-                    border.width: 0
-                    border.color: Theme.glassBorder
                     clip: true
 
                     Text {
@@ -1593,139 +1478,16 @@ Item {
                         width: chatFlick.width
                         spacing: 8
 
-                        // Anthropic Advisor Strategy Callout Card
-                        Rectangle {
-                            visible: tb.hasAdvisor
+                        BuddyReasoningCard {
                             width: parent.width
-                            height: advisorInner.implicitHeight + 14
-                            radius: 9
-                            color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.08)
-                            border.width: 0
-                            border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.28)
-
-                            Column {
-                                id: advisorInner
-                                x: 10
-                                y: 7
-                                width: parent.width - 20
-                                spacing: 3
-
-                                Row {
-                                    spacing: 5
-                                    Glyph {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        name: "advisor"
-                                        size: 11.5
-                                        stroke: 1.8
-                                        color: Theme.accent
-                                    }
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: qsTr("ADVISOR STRATEGY · %1")
-                                              .arg(String(tb.responseMeta && tb.responseMeta.advisorFocus ? tb.responseMeta.advisorFocus : "GENERAL").toUpperCase())
-                                        color: Theme.accent
-                                        font.family: Theme.font
-                                        font.pixelSize: Theme.fontXs
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: 0.5
-                                    }
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    text: String(tb.responseMeta && tb.responseMeta.advisorInsight ? tb.responseMeta.advisorInsight : "")
-                                          .replace(/[#*`]/g, "").trim()
-                                    color: Theme.inkSoft
-                                    font.family: Theme.font
-                                    font.pixelSize: Theme.fontSm
-                                    wrapMode: Text.WordWrap
-                                    maximumLineCount: 3
-                                    elide: Text.ElideRight
-                                    lineHeight: 1.15
-                                }
-                            }
+                            shown: tb.hasReasoning
+                            reasoning: tb.responseMeta && tb.responseMeta.reasoning ? String(tb.responseMeta.reasoning) : ""
                         }
 
-                        // Anthropic TodoWrite Live Checklist Card
-                        Rectangle {
-                            visible: tb.hasAgentTodos
+                        BuddyTodoCard {
                             width: parent.width
-                            height: agentTodoCol.implicitHeight + 14
-                            radius: 9
-                            color: Theme.tile
-                            border.width: 0
-                            border.color: Theme.borderSoft
-
-                            Column {
-                                id: agentTodoCol
-                                x: 10
-                                y: 7
-                                width: parent.width - 20
-                                spacing: 4
-
-                                Row {
-                                    spacing: 5
-                                    Glyph {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        name: "tasks"
-                                        size: 11
-                                        stroke: 1.8
-                                        color: Theme.accent
-                                    }
-                                    Text {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        text: qsTr("AGENT TASKS (%1)").arg(tb.agentTodos.length)
-                                        color: Theme.textDim
-                                        font.family: Theme.font
-                                        font.pixelSize: Theme.fontXs
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: 0.5
-                                    }
-                                }
-
-                                Repeater {
-                                    model: tb.agentTodos
-                                    Row {
-                                        id: todoRow
-                                        required property var modelData
-                                        width: agentTodoCol.width
-                                        spacing: 6
-                                        readonly property bool done: modelData.status === "completed"
-                                        readonly property bool active: modelData.status === "in_progress"
-
-                                        Rectangle {
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            width: 13
-                                            height: 13
-                                            radius: 4
-                                            color: todoRow.done ? Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.18)
-                                                 : (todoRow.active ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18) : "transparent")
-                                            border.width: 1
-                                            border.color: todoRow.done ? Theme.success : (todoRow.active ? Theme.accent : Theme.borderStrong)
-
-                                            Glyph {
-                                                visible: todoRow.done || todoRow.active
-                                                anchors.centerIn: parent
-                                                name: todoRow.done ? "check" : "bolt"
-                                                size: 8.5
-                                                stroke: 2.0
-                                                color: todoRow.done ? Theme.success : Theme.accent
-                                            }
-                                        }
-
-                                        Text {
-                                            width: parent.width - 20
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: String(todoRow.modelData.content || "")
-                                            color: parent.done ? Theme.textDim : Theme.ink
-                                            font.family: Theme.font
-                                            font.pixelSize: Theme.fontSm
-                                            font.strikeout: parent.done
-                                            elide: Text.ElideRight
-                                        }
-                                    }
-                                }
-                            }
+                            shown: tb.hasAgentTodos
+                            todos: tb.agentTodos
                         }
 
                         Flow {
@@ -1899,7 +1661,6 @@ Item {
                                             const parts = []
                                             if (m.model) parts.push(String(m.model))
                                             if (Number(m.turns || 0) > 1) parts.push(m.turns + " turns")
-                                            if (Number(m.handoffs || 0) > 0) parts.push(m.handoffs === 1 ? "1 handoff" : m.handoffs + " handoffs")
                                             if (Number(m.totalTokens || 0) > 0) parts.push(m.totalTokens + " tok")
                                             if (Number(m.durationMs || 0) > 0) parts.push(tb.formatDuration(m.durationMs))
                                             return parts.join(" · ")
@@ -2206,8 +1967,6 @@ Item {
                         height: 28
                         radius: 14
                         color: closeHit.pressed ? Theme.press : (closeHit.containsMouse ? Theme.hover : "transparent")
-                        border.width: 1
-                        border.color: Theme.borderSoft
                         Text {
                             anchors.centerIn: parent
                             text: qsTr("Close")

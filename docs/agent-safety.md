@@ -32,7 +32,7 @@ Modelled on the Claude Agent SDK permission flow
 4. **Read-only fast path.** Read-only shell commands (`ls`, `dir`, `cat`,
    `git status/log/diff`, `Get-ChildItem`, … with no redirects, substitution
    or `tee`), editor `view`, observing computer actions (screenshot, zoom,
-   cursor position, wait), memory, search, todo and advisor run without asking.
+   cursor position, wait), memory, search and todo run without asking.
    Opaque commands (`bash -c`, `python -c`, encoded PowerShell, a variable as
    the program) always ask, even in Trusted mode, because the gate cannot see
    what they will run.
@@ -133,24 +133,6 @@ Several cases fall back or fail safe:
 - A stream that closes before the model finished (no `message_stop` or
   `[DONE]`, and no stop reason) is retried and never used as the answer.
 - Cancel aborts the request and clears the live text.
-
-## Handoffs and specialists
-
-Following the OpenAI Agents SDK, handoffs are tools: Buddy is offered
-`transfer_to_research` and `transfer_to_code`.
-
-| Agent | Tools |
-| --- | --- |
-| Buddy | everything the user enabled |
-| Research specialist | `web_search`, `web_fetch`, `memory`, `todo_write`, `advisor` |
-| Code specialist | `glob_grep`, `str_replace_editor`, `bash`, `todo_write`, `memory` |
-
-A specialist can only hand back with `transfer_to_buddy`. Its toolset is
-enforced twice: in the request, where other tools are not offered, and in the
-gate, where an out-of-set call is denied with rule `agent:toolset`. The
-permission policy still applies to everything a specialist runs. Each handoff
-is a span in the trace. Every run, and every cancel, starts back at Buddy. The
-whole feature can be turned off with *Specialist handoffs*.
 
 ## Chats and session memory
 

@@ -419,7 +419,7 @@ void BuddyProvider::resolveApproval(bool approve, bool always)
             { QStringLiteral("policyNote"), saved ? tr("Saved: always allow “%1”").arg(redact(rule.label))
                                                   : sessionGrant ? tr("Approved for this session") : tr("Approved by you") } });
         m_stepTimer.start();
-        setActiveToolState(call.name, summarizeToolCall(call.name, call.input));
+        setActiveToolState(call.name, summarizeToolCall(call.name, call.input), call.input);
         executeToolCall(call);
         return;
     }
@@ -508,7 +508,7 @@ void BuddyProvider::executeAskUserTool(const PendingToolCall &call)
     };
     setStepFields(call.stepIndex, { { QStringLiteral("status"), QStringLiteral("pending") },
                                     { QStringLiteral("policyNote"), tr("Waiting for your answer") } });
-    setActiveToolState(call.name, tr("Waiting for your answer…"));
+    setActiveToolState(call.name, tr("Waiting for your answer…"), call.input);
     m_questionTimer.start();
     emit pendingQuestionChanged();
 }
@@ -547,7 +547,7 @@ void BuddyProvider::answerQuestion(const QVariantList &answers)
     clearPendingQuestion();
     addSpan(QJsonObject{ { "type", "question" }, { "decision", "answered" }, { "questions", count } });
     setStepFields(call.stepIndex, { { QStringLiteral("policyNote"), tr("You answered") } });
-    setActiveToolState(call.name, tr("Got your answer…"));
+    setActiveToolState(call.name, tr("Got your answer…"), call.input);
     finishCurrentToolCall(call, text, QString(), false);
 }
 

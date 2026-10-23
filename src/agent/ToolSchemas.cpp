@@ -17,12 +17,18 @@ const QList<ToolSchema> &toolSchemas()
                   QStringLiteral("PowerShell command line to run on Windows."), true },
                 { QStringLiteral("working_dir"), QStringLiteral("string"),
                   QStringLiteral("Optional working directory path."), false },
+                { QStringLiteral("timeout_seconds"), QStringLiteral("integer"),
+                  QStringLiteral("Optional time limit in seconds (default 30, max 300) for long jobs."), false },
             };
             s.aliases = {
+                { QStringLiteral("timeout"), QStringLiteral("timeout_seconds") },
                 { QStringLiteral("cmd"), QStringLiteral("command") },
                 { QStringLiteral("cwd"), QStringLiteral("working_dir") },
                 { QStringLiteral("dir"), QStringLiteral("working_dir") },
                 { QStringLiteral("workingdir"), QStringLiteral("working_dir") },
+            };
+            s.coercions = {
+                { QStringLiteral("timeout_seconds"), QStringLiteral("int") },
             };
             out << s;
         }
@@ -192,38 +198,6 @@ const QList<ToolSchema> &toolSchemas()
             s.aliases = {
                 { QStringLiteral("link"), QStringLiteral("url") },
                 { QStringLiteral("uri"), QStringLiteral("url") },
-            };
-            out << s;
-        }
-
-        // tool_search
-        {
-            ToolSchema s;
-            s.name = QStringLiteral("tool_search");
-            s.description = QStringLiteral("Search and inspect available and deferred tools on demand.");
-            s.args = {
-                { QStringLiteral("query"), QStringLiteral("string"),
-                  QStringLiteral("Search query."), true },
-                { QStringLiteral("mode"), QStringLiteral("string"),
-                  QStringLiteral("Search mode."), false },
-            };
-            out << s;
-        }
-
-        // advisor
-        {
-            ToolSchema s;
-            s.name = QStringLiteral("advisor");
-            s.description = QStringLiteral("Consult a high-reasoning strategic advisor for planning, debugging, or review.");
-            s.args = {
-                { QStringLiteral("task"), QStringLiteral("string"),
-                  QStringLiteral("The task or problem."), true },
-                { QStringLiteral("question"), QStringLiteral("string"),
-                  QStringLiteral("Specific question. Defaults to the task when omitted."), false },
-                { QStringLiteral("focus"), QStringLiteral("string"),
-                  QStringLiteral("Focus area."), false },
-                { QStringLiteral("draft_plan"), QStringLiteral("string"),
-                  QStringLiteral("Draft plan for review."), false },
             };
             out << s;
         }

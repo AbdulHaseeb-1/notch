@@ -66,14 +66,17 @@ QString defaultPrompt()
     return QStringLiteral(
         "You are Buddy, a friendly voice assistant that lives on the user's Windows desktop. "
         "You are speaking out loud, so answer in one to three short sentences of plain speech: "
-        "no lists, no markdown, no code, no URLs read letter by letter. Be warm and direct, and "
-        "never say you are an AI model unless asked.\n\n"
+        "no lists, no markdown, no code, no URLs read letter by letter. Be warm and direct, lead "
+        "with the answer instead of a preamble, skip filler like \"Great question\", and never say "
+        "you are an AI model unless asked. If the user cuts in, drop what you were saying and "
+        "answer what they just said.\n\n"
         "You can do things on the user's computer through the ask_buddy function: opening or "
         "installing apps, playing music, controlling the mouse and keyboard, working with files, "
         "searching the web, setting reminders, anything beyond a quick chat. Whenever the user asks "
         "for an action or for facts you could not know offhand (the weather, today's news, what is "
         "on their screen), call ask_buddy with the request in plain words and every detail they "
-        "gave, say one short sentence such as \"On it\" while it runs, then tell them the result "
+        "gave. First say one very short sentence such as \"On it\" in that same turn, then call "
+        "the function, then tell them the result "
         "in your own words. Do not pretend an action happened before ask_buddy has answered. "
         "If you did not hear a clear request, ask them to repeat it.\n\n"
         "Sometimes ask_buddy (or answer_buddy) comes back saying Buddy needs the user: a yes or no "
@@ -82,6 +85,21 @@ QString defaultPrompt()
         "call answer_buddy with what they said, in their own words (\"the second one\", \"yes, go "
         "ahead\", \"no\"). Never answer for them and never guess. If what they said does not answer "
         "it, ask again. After answer_buddy, tell them the result as you would after ask_buddy.");
+}
+
+QString effectivePrompt(const AgentConfig &c)
+{
+    QString base = c.prompt.trimmed().isEmpty() ? defaultPrompt() : c.prompt.trimmed();
+    if (!c.quickReplies)
+        return base.left(25000);
+    QString note = QStringLiteral(
+        "\n\nSpeed matters on a voice call: start answering at once and keep it to a sentence or two, "
+        "never a monologue.");
+    if (c.askBuddy)
+        note += QStringLiteral(
+            " Do not work things out at length yourself: for anything that needs facts you cannot know "
+            "offhand, several steps, or real work, say a very short \"On it\" and hand it to ask_buddy.");
+    return base.left(25000 - int(note.size())) + note;
 }
 
 QString configProblem(const AgentConfig &c)
@@ -165,8 +183,7 @@ QJsonObject buildSettings(const AgentConfig &c, QString *error)
         const bool anthropic = lower(c.thinkProvider) == QLatin1String("anthropic");
         thinkProvider[QStringLiteral("temperature")] = std::clamp(c.temperature, 0.0, anthropic ? 1.0 : 2.0);
     }
-    QString prompt = c.prompt.trimmed().isEmpty() ? defaultPrompt() : c.prompt.trimmed();
-    prompt = prompt.left(25000);
+    const QString prompt = effectivePrompt(c);
     QJsonObject think{ { QStringLiteral("provider"), thinkProvider }, { QStringLiteral("prompt"), prompt } };
 
     const QString endpoint = c.endpointUrl.trimmed();

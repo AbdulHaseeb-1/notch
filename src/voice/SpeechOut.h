@@ -179,6 +179,7 @@ private:
     QStringList m_streamChunks;
     QString m_streamCurrent;
     QByteArray m_streamOdd;
+    bool m_streamWaiting = false;   // the next sentence is held back until the player has room
     bool m_streaming = false;
     QStringList m_kokoroVoices;
     QString m_kokoroVoicesProblem;

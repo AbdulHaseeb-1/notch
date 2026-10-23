@@ -174,11 +174,30 @@ bool Session::open(const QByteArray &model, QString *error)
             *error = QObject::tr("ONNX Runtime is not loaded.");
         return false;
     }
+    // Reopening (a changed model folder) must not strand the old graph.
+    if (d->session) {
+        api->ReleaseSession(d->session);
+        d->session = nullptr;
+    }
+    if (d->memory) {
+        api->ReleaseMemoryInfo(d->memory);
+        d->memory = nullptr;
+    }
     QString failure;
     OrtSessionOptions *opts = nullptr;
     auto fail = [&](const QString &why) {
         if (opts)
             api->ReleaseSessionOptions(opts);
+        // A half-opened session (names or memory info failed) must not stay
+        // behind looking open.
+        if (d->session) {
+            api->ReleaseSession(d->session);
+            d->session = nullptr;
+        }
+        if (d->memory) {
+            api->ReleaseMemoryInfo(d->memory);
+            d->memory = nullptr;
+        }
         if (error)
             *error = why;
         return false;

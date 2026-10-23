@@ -3,12 +3,15 @@ import QtQuick
 // Human-in-the-loop approval for one paused tool call
 // (Claude Agent SDK canUseTool / OpenAI Agents SDK needsApproval):
 //
-//   [shield]  Allow Buddy to run this?                         1:54
-//             BASH · Run `npm install`
-//   ┌ mono detail ───────────────────────────────────────────────────┐
+//   ● Allow Buddy to run this?                                 1:54
+//     BASH · Run `npm install`
+//   mono detail (recessed, no outline)
 //   reason from the policy
-//                                    [Deny]  [Always allow]  [Allow once]
+//                                    Deny   Always allow  [Allow once]
 //
+// Flat and dark: no outlines, a single quiet dot instead of a warning badge,
+// text buttons with one light primary.
+
 // `request` is BuddyProvider.pendingApproval. Emits decided(approve, always).
 // Enter = allow once, Esc = deny when the card has focus.
 Rectangle {
@@ -22,9 +25,8 @@ Rectangle {
     implicitHeight: col.implicitHeight + 22
     height: implicitHeight
     radius: Theme.radiusMd
-    color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.07)
-    border.width: 1
-    border.color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.24)
+    color: Qt.rgba(1, 1, 1, 0.035)
+    border.width: 0
     focus: visible
     activeFocusOnTab: true
     Accessible.role: Accessible.Dialog
@@ -59,40 +61,28 @@ Rectangle {
     component ActBtn: Rectangle {
         id: b
         property string label
-        property string icon
         property bool primary: false
         property bool keyed: false
         signal clicked()
-        width: lbl.implicitWidth + (icon.length ? 34 : 22)
+        width: lbl.implicitWidth + (primary ? 26 : 20)
         height: 28
-        radius: Theme.radiusSm + 1
-        color: primary ? (ma.pressed ? Theme.stone200 : ma.containsMouse ? Theme.stone50 : Theme.stone100)
-                       : (ma.pressed ? Theme.glassFillActive : ma.containsMouse ? Theme.glassFillHover : Theme.glassFill)
-        border.width: (primary && !keyed) ? 0 : 1
-        border.color: keyed ? Theme.accent : Theme.glassBorderStrong
+        radius: height / 2
+        color: primary ? (ma.pressed ? Theme.stone200 : ma.containsMouse || keyed ? Theme.stone50 : Theme.stone100)
+                       : (ma.pressed ? Theme.glassFillActive
+                          : ma.containsMouse || keyed ? Theme.glassFillHover : "transparent")
+        Behavior on color { ColorAnimation { duration: 110 } }
         Accessible.role: Accessible.Button
         Accessible.name: b.label
         scale: ma.pressed ? 0.97 : 1
         Behavior on scale { NumberAnimation { duration: 90 } }
-        Row {
+        Text {
+            id: lbl
             anchors.centerIn: parent
-            spacing: 5
-            Glyph {
-                visible: b.icon.length > 0
-                anchors.verticalCenter: parent.verticalCenter
-                name: b.icon
-                size: 12
-                color: b.primary ? Theme.inverse : Theme.inkSoft
-            }
-            Text {
-                id: lbl
-                anchors.verticalCenter: parent.verticalCenter
-                text: b.label
-                color: b.primary ? Theme.inverse : Theme.ink
-                font.family: Theme.font
-                font.pixelSize: Theme.fontSm
-                font.weight: Font.DemiBold
-            }
+            text: b.label
+            color: b.primary ? Theme.inverse : (b.keyed || ma.containsMouse ? Theme.ink : Theme.textDim)
+            font.family: Theme.font
+            font.pixelSize: Theme.fontSm
+            font.weight: Font.DemiBold
         }
         MouseArea {
             id: ma
@@ -114,31 +104,26 @@ Rectangle {
             width: parent.width
             height: 30
 
+            // One quiet dot that slowly breathes: "waiting on you".
             Rectangle {
                 id: shield
-                width: 28
-                height: 28
-                radius: Theme.radiusSm + 2
+                width: 6
+                height: 6
+                radius: 3
+                x: 2
                 anchors.verticalCenter: parent.verticalCenter
-                color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.14)
-                Glyph {
-                    anchors.centerIn: parent
-                    name: "shield-alert"
-                    size: 15
-                    color: Theme.warning
-                }
-                // A slow, cheap breathing cue so the card reads as "waiting on you".
+                color: card.urgent ? Theme.warning : Theme.textDim
                 SequentialAnimation on opacity {
                     running: card.visible
                     loops: Animation.Infinite
-                    NumberAnimation { to: 0.6; duration: 900; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 1.0; duration: 900; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 0.35; duration: 1100; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1.0; duration: 1100; easing.type: Easing.InOutSine }
                 }
             }
 
             Column {
                 anchors.left: shield.right
-                anchors.leftMargin: 10
+                anchors.leftMargin: 12
                 anchors.right: timer.left
                 anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
@@ -199,8 +184,6 @@ Rectangle {
             height: detailText.implicitHeight + 12
             radius: Theme.radiusSm
             color: Theme.glassDeep
-            border.width: 1
-            border.color: Theme.glassBorder
             Text {
                 id: detailText
                 x: 8
@@ -247,11 +230,11 @@ Rectangle {
 
         Row {
             anchors.right: parent.right
-            spacing: 6
+            spacing: 2
 
-            ActBtn { label: qsTr("Deny"); icon: "close"; keyed: card.focusIdx === 0; onClicked: card.decided(false, false) }
+            ActBtn { label: qsTr("Deny"); keyed: card.focusIdx === 0; onClicked: card.decided(false, false) }
             ActBtn { label: qsTr("Always allow"); keyed: card.focusIdx === 1; onClicked: card.decided(true, true) }
-            ActBtn { label: qsTr("Allow once"); icon: "check"; primary: true; keyed: card.focusIdx === 2; onClicked: card.decided(true, false) }
+            ActBtn { label: qsTr("Allow once"); primary: true; keyed: card.focusIdx === 2; onClicked: card.decided(true, false) }
         }
     }
 }

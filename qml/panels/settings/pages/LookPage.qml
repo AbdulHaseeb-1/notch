@@ -74,6 +74,7 @@ SettingsPage {
                         BuddyRing {
                             anchors.fill: parent
                             style: tile.modelData.id
+                            shader: page.prefs.buddyRingShader
                             midR: 15.5
                             thickness: 1.8
                             s: 0.55
@@ -123,6 +124,12 @@ SettingsPage {
             value: (page.prefs.buddyRingSpeed - 0.3) / 2.2
             display: Number(page.prefs.buddyRingSpeed).toFixed(1) + "x"
             onMoved: (v) => page.prefs.buddyRingSpeed = Math.round((0.3 + 2.2 * v) * 10) / 10
+        }
+        SettingsToggleRow {
+            label: qsTr("GPU ring")
+            sub: qsTr("Draw the ring and its glow with one shader instead of many vector layers. Lighter on the GPU; the looks match but are not pixel-identical.")
+            checked: page.prefs.buddyRingShader
+            onToggled: (c) => page.prefs.buddyRingShader = c
         }
         Flow {
             width: parent.width

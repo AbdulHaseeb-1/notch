@@ -52,7 +52,7 @@ Item {
         { id: "model", group: qsTr("Agent"), label: qsTr("AI model"), icon: "cpu",
           keys: "provider openai anthropic ollama custom api key model endpoint temperature test connection" },
         { id: "agent", group: qsTr("Agent"), label: qsTr("Agent & tools"), icon: "terminal",
-          keys: "tools bash shell computer use editor code search memory web fetch advisor tasks steps screenshots detail handoffs stream thinking jev classifier classify intent request" },
+          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking jev classifier classify intent request" },
         { id: "safety", group: qsTr("Agent"), label: qsTr("Safety"), icon: "shield-check",
           keys: "permission mode approve approval auto-approve bypass trusted plan ask rules always allow workspace redact secrets traces instructions commands" }
     ]

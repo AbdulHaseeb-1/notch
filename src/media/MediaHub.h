@@ -36,6 +36,7 @@ class MediaHub final : public QObject
     Q_PROPERTY(QString coverUrl READ coverUrl NOTIFY changed)
     // The same artwork with transparent rounded corners, for round frames.
     Q_PROPERTY(QString coverUrlRound READ coverUrlRound NOTIFY changed)
+    Q_PROPERTY(QString coverUrlSoft READ coverUrlSoft NOTIFY changed)
     Q_PROPERTY(qreal coverAspect READ coverAspect NOTIFY visualsChanged)
     Q_PROPERTY(QColor accentColor READ accentColor NOTIFY visualsChanged)
     Q_PROPERTY(QColor ambientColor READ ambientColor NOTIFY visualsChanged)
@@ -69,6 +70,7 @@ public:
     bool hasCover() const;
     QString coverUrl() const;
     QString coverUrlRound() const;
+    QString coverUrlSoft() const;
     qreal coverAspect() const { return m_coverAspect; }
     QColor accentColor() const { return m_accentColor; }
     QColor ambientColor() const { return m_ambientColor; }

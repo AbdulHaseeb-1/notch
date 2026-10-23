@@ -19,6 +19,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <memory>
 
 namespace {
 
@@ -753,15 +754,31 @@ void MusicPlayer::loadThumbnail(const QString &url, const QString &forPage)
     req.setTransferTimeout(15000);
     m_thumbReply = m_nam.get(req);
     QNetworkReply *reply = m_thumbReply;
-    connect(reply, &QNetworkReply::finished, this, [this, reply, forPage] {
+    // A picture is a few hundred KB; stop reading (and drop the download) past
+    // 8 MiB instead of buffering whatever a metadata URL points at.
+    constexpr qsizetype kMaxThumbBytes = 8 * 1024 * 1024;
+    auto body = std::make_shared<QByteArray>();
+    auto tooBig = std::make_shared<bool>(false);
+    connect(reply, &QNetworkReply::readyRead, this, [reply, body, tooBig] {
+        if (*tooBig)
+            return;
+        body->append(reply->readAll());
+        if (body->size() > kMaxThumbBytes) {
+            *tooBig = true;
+            body->clear();
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, body, tooBig, forPage] {
         if (m_thumbReply == reply)
             m_thumbReply = nullptr;
         reply->deleteLater();
-        if (reply->error() != QNetworkReply::NoError)
+        if (*tooBig || reply->error() != QNetworkReply::NoError)
             return;
         if (!hasTrack() || m_tracks.at(m_index).path != forPage)
             return;                         // the track changed while it downloaded
-        const QImage image = QImage::fromData(reply->readAll());
+        body->append(reply->readAll());
+        const QImage image = QImage::fromData(*body);
         if (!image.isNull())
             setCover(image);
     });
@@ -866,9 +883,12 @@ CoverImageProvider::CoverImageProvider(MusicPlayer *player)
 QImage CoverImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
 {
     const bool round = id.endsWith(QLatin1String("/round"));
+    const bool soft = id.endsWith(QLatin1String("/soft"));
     QImage image = m_player ? m_player->coverImage() : QImage();
     if (!image.isNull() && round)
         image = roundedImageCorners(image, 0.5);
+    else if (!image.isNull() && soft)
+        image = roundedImageCorners(image, 0.22);
     if (image.isNull()) {
         image = QImage(1, 1, QImage::Format_ARGB32);
         image.fill(Qt::transparent);

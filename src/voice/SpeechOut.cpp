@@ -7,6 +7,7 @@
 #include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -93,6 +94,10 @@ SpeechOut::SpeechOut(QObject *parent)
     : QObject(parent)
 {
     defaultCommand(&m_program, &m_args);
+    // Nobody reads the voice command's output; discard it so a chatty command
+    // can neither fill the pipe and stall nor pile up in the process buffer.
+    m_proc.setStandardOutputFile(QProcess::nullDevice());
+    m_proc.setStandardErrorFile(QProcess::nullDevice());
 #ifdef Q_OS_WIN
     // PowerShell is a console program: do not flash a console window.
     m_proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *a) { a->flags |= CREATE_NO_WINDOW; });
@@ -533,6 +538,21 @@ void SpeechOut::streamNextChunk()
         if (m_stream.idle()) {
             m_streaming = false;
             setSpeaking();
+        }
+        return;
+    }
+    // Sentences arrive much faster than they are spoken. Keep only a few seconds
+    // ahead of the speakers instead of queueing a whole long reply as raw audio.
+    constexpr double kMaxAheadSeconds = 12.0;
+    if (m_stream.bufferedSeconds() > kMaxAheadSeconds) {
+        if (!m_streamWaiting) {
+            m_streamWaiting = true;
+            const quint64 waitGen = m_generation;
+            QTimer::singleShot(250, this, [this, waitGen] {
+                m_streamWaiting = false;
+                if (waitGen == m_generation)
+                    streamNextChunk();
+            });
         }
         return;
     }

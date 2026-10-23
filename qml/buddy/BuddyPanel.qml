@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import "ToolIcons.js" as ToolIcons
 
 // The buddy's result card: a repositionable, resizable companion panel that
 // hosts AI chat responses with live streaming reveal, expressive mini-avatar
@@ -70,7 +71,7 @@ Item {
     property int thinkStep: 0
 
     readonly property var toolSteps: (BuddyAgent && showThinking) ? BuddyAgent.toolSteps : []
-    readonly property string activeTool: (BuddyAgent && showThinking) ? BuddyAgent.activeTool : ""
+    readonly property string activeToolIcon: (BuddyAgent && showThinking) ? BuddyAgent.activeToolIcon : ""
     readonly property string activeToolBadge: (BuddyAgent && showThinking) ? BuddyAgent.activeToolBadge : ""
     readonly property string activeToolSummary: (BuddyAgent && showThinking) ? BuddyAgent.activeToolSummary : ""
     readonly property var responseMeta: (BuddyAgent) ? BuddyAgent.responseMeta : ({})
@@ -79,21 +80,11 @@ Item {
     // Screenshots Buddy put into this reply (share_screenshot).
     readonly property var attachments: (BuddyAgent) ? BuddyAgent.attachments : []
     readonly property bool hasTools: toolSteps && toolSteps.length > 0
-    readonly property bool hasAdvisor: showThinking && !!(responseMeta && responseMeta.advisorUsed && String(responseMeta.advisorInsight || "").length > 0)
+    readonly property bool hasReasoning: showThinking && !!(responseMeta && String(responseMeta.reasoning || "").length > 0)
     readonly property bool hasAgentTodos: agentTodos && agentTodos.length > 0
     readonly property bool hasCitations: citations && citations.length > 0
     readonly property bool hasSdkTelemetry: !!(responseMeta && String(responseMeta.model || "").length > 0)
-    readonly property var distinctToolIcons: {
-        const seen = []
-        if (!toolSteps)
-            return seen
-        for (let i = 0; i < toolSteps.length && seen.length < 6; ++i) {
-            const ic = String(toolSteps[i].icon || "terminal")
-            if (seen.indexOf(ic) < 0)
-                seen.push(ic)
-        }
-        return seen
-    }
+    readonly property var distinctToolIcons: ToolIcons.distinct(toolSteps, 6)
     property bool toolsExpanded: false
 
     function formatDuration(ms) { return Theme.formatDuration(ms) }
@@ -327,9 +318,6 @@ Item {
                 height: 26
                 radius: 13
                 color: Theme.orb
-                border.width: 1.5
-                border.color: panel.responseLoved ? Theme.love
-                            : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.borderStrong)
 
                 Row {
                     anchors.centerIn: parent
@@ -371,8 +359,6 @@ Item {
                     text: panel.phase === "loading"
                           ? (panel.awaitingQuestion ? qsTr("Waiting for your answer") : panel.awaitingApproval ? qsTr("Paused on one step")
                              : panel.hasLive ? qsTr("Answering live")
-                             : (BuddyAgent.activeAgent !== "buddy" && BuddyAgent.activeAgentTitle.length > 0)
-                               ? qsTr("%1 is on it").arg(BuddyAgent.activeAgentTitle)
                              : panel.thinkPhrases[panel.thinkStep])
                         : (panel.isStreaming ? qsTr("Speaking…")
                         : (BuddyAgent && BuddyAgent.model ? BuddyAgent.model : qsTr("Companion")))
@@ -392,17 +378,7 @@ Item {
                 width: chipLabel.implicitWidth + 18
                 height: 22
                 radius: 11
-                color: panel.phase === "error"
-                       ? Theme.dangerSoft
-                       : (panel.phase === "loading" || panel.isStreaming
-                          ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.16)
-                          : Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.16))
-                border.width: 1
-                border.color: panel.phase === "error"
-                              ? Theme.danger
-                              : (panel.phase === "loading" || panel.isStreaming
-                                 ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.45)
-                                 : Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.45))
+                color: panel.phase === "error" ? Theme.dangerSoft : Theme.glassFill
 
                 Text {
                     id: chipLabel
@@ -411,7 +387,7 @@ Item {
                         : (panel.phase === "loading" ? (panel.awaitingApproval || panel.awaitingQuestion ? qsTr("Needs you") : panel.hasLive ? qsTr("Writing…") : qsTr("Thinking…"))
                         : (panel.isStreaming ? qsTr("Live") : qsTr("Ready")))
                     color: panel.phase === "error" ? Theme.danger
-                        : (panel.phase === "loading" || panel.isStreaming ? Theme.accent : Theme.success)
+                        : (panel.phase === "loading" || panel.isStreaming ? Theme.textDim : Theme.textFaint)
                     font.family: Theme.font
                     font.pixelSize: Theme.fontXs
                     font.weight: Font.DemiBold
@@ -448,12 +424,6 @@ Item {
                 }
             }
 
-            Rectangle {
-                anchors.bottom: parent.bottom
-                width: parent.width
-                height: 1
-                color: Theme.borderSoft
-            }
         }
 
         // ---- body -----------------------------------------------------------
@@ -470,6 +440,12 @@ Item {
                 visible: opacity > 0.01
                 enabled: panel.phase === "loading"
                 Behavior on opacity { NumberAnimation { duration: 160 } }
+
+                property real t: 0
+                NumberAnimation on t {
+                    from: 0; to: 1; duration: 2200; loops: Animation.Infinite
+                    running: panel.phase === "loading" && panel.visible
+                }
 
                 // Show user's prompt bubble at the top while thinking
                 Rectangle {
@@ -511,54 +487,24 @@ Item {
                                   + (panel.userPrompt.length > 0 ? (panel.compactLoading ? 24 : 18) : 0))
                     spacing: panel.compactLoading ? 8 : 14
 
-                    // Animated expressive thinking orb (folded away while an
-                    // approval card needs the room)
-                    Item {
+                    // Three dots that fade in turn (folded away while an
+                    // approval card needs the room). Nothing bounces or glows.
+                    Row {
                         visible: !panel.compactLoading
                         anchors.horizontalCenter: parent.horizontalCenter
-                        width: 56
-                        height: 56
-
-                        Rectangle {
-                            anchors.centerIn: parent
-                            width: 56
-                            height: 56
-                            radius: 28
-                            color: "transparent"
-                            border.width: 2
-                            border.color: Theme.accent
-                            opacity: 0.35
-                            SequentialAnimation on scale {
-                                running: panel.phase === "loading" && panel.visible
-                                loops: Animation.Infinite
-                                NumberAnimation { to: 1.22; duration: 750; easing.type: Easing.OutQuad }
-                                NumberAnimation { to: 0.96; duration: 750; easing.type: Easing.InQuad }
-                            }
-                        }
-
-                        Rectangle {
-                            anchors.centerIn: parent
-                            width: 44
-                            height: 44
-                            radius: 22
-                            color: Theme.orb
-                            border.width: 1.5
-                            border.color: Theme.accent
-
-                            Row {
-                                anchors.centerIn: parent
-                                anchors.verticalCenterOffset: -3
-                                spacing: 7
-                                Repeater {
-                                    model: 2
-                                    Rectangle {
-                                        width: 5
-                                        height: panel.miniBlink ? 1 : 11
-                                        radius: 2.5
-                                        color: Theme.accent
-                                        Behavior on height { NumberAnimation { duration: 80 } }
-                                    }
-                                }
+                        spacing: 7
+                        Repeater {
+                            model: 3
+                            Rectangle {
+                                id: loadDot
+                                required property int index
+                                readonly property real lift: 0.5 + 0.5 * Math.sin(loadArea.t * 2 * Math.PI - index * 0.9)
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: Theme.textDim
+                                opacity: 0.22 + 0.58 * lift
+                                antialiasing: true
                             }
                         }
                     }
@@ -579,33 +525,6 @@ Item {
                         font.family: Theme.font
                         font.pixelSize: Theme.fontMd
                         font.weight: Font.DemiBold
-                    }
-
-                    // Rhythmic wave bars
-                    Row {
-                        visible: !panel.compactLoading
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        spacing: 5
-                        height: 16
-                        Repeater {
-                            model: [0, 110, 220, 330, 440]
-                            Rectangle {
-                                id: waveBar
-                                required property int modelData
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 4
-                                height: 6
-                                radius: 2
-                                color: Theme.accent
-                                SequentialAnimation on height {
-                                    running: panel.phase === "loading" && panel.visible
-                                    loops: Animation.Infinite
-                                    PauseAnimation { duration: waveBar.modelData }
-                                    NumberAnimation { to: 15; duration: 300; easing.type: Easing.InOutSine }
-                                    NumberAnimation { to: 5; duration: 300; easing.type: Easing.InOutSine }
-                                }
-                            }
-                        }
                     }
 
                     // Live tool timeline while loading (last four steps)
@@ -636,8 +555,6 @@ Item {
                                                       - (loadTools.visible ? loadTools.height + loadCol.spacing : 0)))
                         radius: Theme.radiusMd
                         color: Theme.glassFill
-                        border.width: 0
-                        border.color: Theme.glassBorder
                         clip: true
                         Text {
                             id: panelLive
@@ -702,8 +619,6 @@ Item {
                         height: 42
                         radius: 21
                         color: Theme.dangerSoft
-                        border.width: 1
-                        border.color: Theme.danger
 
                         Row {
                             anchors.centerIn: parent
@@ -858,18 +773,18 @@ Item {
                         }
                     }
 
-                    // Anthropic Advisor Strategy Callout Card
+                    // The model's own reasoning, when show-thinking is on
                     Rectangle {
-                        visible: panel.hasAdvisor
+                        visible: panel.hasReasoning
                         width: parent.width
-                        height: pAdvisorCol.implicitHeight + 18
+                        height: pReasoningCol.implicitHeight + 18
                         radius: 12
                         color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.08)
                         border.width: 0
                         border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.30)
 
                         Column {
-                            id: pAdvisorCol
+                            id: pReasoningCol
                             x: 12
                             y: 9
                             width: parent.width - 24
@@ -877,17 +792,9 @@ Item {
 
                             Row {
                                 spacing: 6
-                                Glyph {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    name: "advisor"
-                                    size: 13
-                                    stroke: 1.8
-                                    color: Theme.accent
-                                }
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    text: qsTr("ANTHROPIC ADVISOR STRATEGY · %1")
-                                          .arg(String(panel.responseMeta && panel.responseMeta.advisorFocus ? panel.responseMeta.advisorFocus : "GENERAL").toUpperCase())
+                                    text: qsTr("THINKING")
                                     color: Theme.accent
                                     font.family: Theme.font
                                     font.pixelSize: Theme.fontXs
@@ -898,7 +805,7 @@ Item {
 
                             Text {
                                 width: parent.width
-                                text: String(panel.responseMeta && panel.responseMeta.advisorInsight ? panel.responseMeta.advisorInsight : "")
+                                text: String(panel.responseMeta && panel.responseMeta.reasoning ? panel.responseMeta.reasoning : "")
                                       .replace(/[#*`]/g, "").trim()
                                 color: Theme.inkSoft
                                 font.family: Theme.font
@@ -1255,7 +1162,6 @@ Item {
                                             const m = panel.responseMeta || {}
                                             const parts = []
                                             if (Number(m.turns || 0) > 1) parts.push(m.turns + " turns")
-                                            if (Number(m.handoffs || 0) > 0) parts.push(m.handoffs === 1 ? "1 handoff" : m.handoffs + " handoffs")
                                             if (Number(m.totalTokens || 0) > 0) parts.push(m.totalTokens + " tok")
                                             if (Number(m.durationMs || 0) > 0) parts.push(panel.formatDuration(m.durationMs))
                                             // Model last: it is the part that elides first.
@@ -1353,21 +1259,12 @@ Item {
                 border.color: followUpInput.activeFocus ? Theme.accent : Theme.fieldBorder
                 Behavior on border.color { ColorAnimation { duration: 130 } }
 
-                Glyph {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: "spark"
-                    size: 13
-                    color: followUpInput.activeFocus ? Theme.accent : Theme.textFaint
-                }
-
                 TextInput {
                     id: followUpInput
                     Accessible.role: Accessible.EditableText
                     Accessible.name: qsTr("Follow-up message")
                     anchors.left: parent.left
-                    anchors.leftMargin: 32
+                    anchors.leftMargin: 14
                     anchors.right: followSendBtn.left
                     anchors.rightMargin: 6
                     anchors.verticalCenter: parent.verticalCenter

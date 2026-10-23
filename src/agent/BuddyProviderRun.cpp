@@ -4,7 +4,7 @@ using namespace noch::buddyprovider;
 
 void BuddyProvider::onReplyFinished(QNetworkReply *reply)
 {
-    if (reply == m_webSearchReply || reply == m_advisorReply)
+    if (reply == m_webSearchReply)
         return;
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -219,11 +219,8 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 toolCalls.append(tc);
             } else if (bType == QLatin1String("thinking")) {
                 const QString thought = block.value(QStringLiteral("thinking")).toString().trimmed();
-                if (!thought.isEmpty() && m_advisorInsightInTurn.isEmpty()) {
-                    m_advisorUsedInTurn = true;
-                    m_advisorFocusInTurn = QStringLiteral("extended thinking");
-                    m_advisorInsightInTurn = thought.left(700);
-                }
+                if (!thought.isEmpty() && m_reasoningInTurn.isEmpty())
+                    m_reasoningInTurn = thought.left(700);
             } else if (bType == QLatin1String("text")) {
                 const QJsonArray cites = block.value(QStringLiteral("citations")).toArray();
                 for (const QJsonValue &cv : cites) {
@@ -247,15 +244,6 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 step[QStringLiteral("durationMs")] = 0;
                 m_toolSteps.append(step);
                 emit toolStepsChanged();
-            } else if (bType == QLatin1String("advisor_tool_result")) {
-                const QJsonObject resContent = block.value(QStringLiteral("content")).toObject();
-                const QString advText = resContent.value(QStringLiteral("text")).toString().trimmed();
-                if (!advText.isEmpty()) {
-                    m_advisorUsedInTurn = true;
-                    if (m_advisorFocusInTurn.isEmpty())
-                        m_advisorFocusInTurn = QStringLiteral("advisor");
-                    m_advisorInsightInTurn = advText.left(800);
-                }
             } else if (bType == QLatin1String("web_search_tool_result")) {
                 const QJsonArray srArr = block.value(QStringLiteral("content")).toArray();
                 for (const QJsonValue &sv : srArr) {
@@ -556,39 +544,6 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     emit statusChanged(QStringLiteral("idle"));
 }
 
-QString BuddyProvider::checkForPlan(const QString &text)
-{
-    const QJsonArray planArr = extractPlanBlock(text);
-    if (planArr.isEmpty())
-        return QString();
-
-    // M7: validate availability for THIS run (agent profile + tool diet),
-    // not just registry existence.
-    const PlanValidation v = validatePlan(planArr, [this](const QString &tool) {
-        return toolAllowedForActiveAgent(tool) && toolSchemaVisible(tool);
-    });
-    if (!v.ok) {
-        addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
-                             { QStringLiteral("event"), QStringLiteral("invalid") },
-                             { QStringLiteral("errors"), QJsonArray::fromStringList(v.errors) } });
-        return QStringLiteral("\n[Plan rejected: %1 — please output a corrected ```plan block.]")
-            .arg(v.errors.join(QStringLiteral("; ")));
-    }
-
-    // A new valid plan replaces any current one (this is also the replan path).
-    m_plan = v.steps;
-    m_planActive = true;
-    m_planIndex = 0;
-    m_consecutivePlanFailures = 0;
-    addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("plan") },
-                         { QStringLiteral("event"), QStringLiteral("accepted") },
-                         { QStringLiteral("steps"), v.steps.size() },
-                         { QStringLiteral("replans"), m_replanCount } });
-    return QStringLiteral("\n[Plan accepted (%1 steps). Execute step 1 now: %2 — verify: %3]")
-        .arg(v.steps.size())
-        .arg(v.steps.first().tool, v.steps.first().verify);
-}
-
 void BuddyProvider::processNextToolCall()
 {
     if (m_pendingTools.isEmpty()) {
@@ -725,7 +680,7 @@ void BuddyProvider::processNextToolCall()
         finishCurrentToolCall(call, QString::fromLatin1(kBatchHalted), QString(), true);
         return;
     }
-    setActiveToolState(call.name, summary);
+    setActiveToolState(call.name, summary, call.input);
     emit toolExecuted(call.name, summary);
 
     gateAndExecute(call);
@@ -742,17 +697,6 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
         m_stepStatusOverride = QStringLiteral("denied");
         finishCurrentToolCall(call, toModel, QString(), true);
     };
-
-    // P6 tool diet: the model tried a deferred tool without loading it via
-    // tool_search first. Tell it how, instead of a cryptic unknown-tool deny.
-    if (m_toolDiet && !toolSchemaVisible(call.name) && toolSchema(call.name)) {
-        deny(QStringLiteral("diet:not-loaded"),
-             tr("Tool '%1' is not loaded").arg(call.name),
-             QStringLiteral("The tool '%1' is available but its schema was not sent to save context. "
-                            "Call tool_search with query '%1' to load it, then try again.")
-                 .arg(call.name));
-        return;
-    }
 
     // Loop guard: the same tool with the same input again and again means
     // the model is stuck; tell it to change approach.
@@ -791,19 +735,6 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
     if (m_redactSecrets && m_apiKey.trimmed().size() >= 8 && fp.contains(m_apiKey.trimmed())) {
         deny(QStringLiteral("guard:secret-in-input"), tr("Blocked: arguments contained your API key"),
              QStringLiteral("Blocked: the tool arguments contained the user's API key. Never include secrets in tool calls."));
-        return;
-    }
-
-    // Handoffs move control between agents and have no side effects; the
-    // policy allow-lists them, so they flow through evaluate() like any
-    // other call and stay under the single choke point.
-    const bool isHandoff = call.name.startsWith(QLatin1String("transfer_to_"));
-    // A specialist only gets its own toolset (the model sees only those
-    // tools, but an out-of-set call is still refused here).
-    if (!toolAllowedForActiveAgent(call.name)) {
-        deny(QStringLiteral("agent:toolset"), tr("Not available to the %1").arg(activeAgentTitle()),
-             QStringLiteral("The tool '%1' is not available to the %2. Hand back with transfer_to_buddy if it is needed.")
-                 .arg(call.name, activeAgentTitle()));
         return;
     }
 
@@ -846,11 +777,6 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
                             "choose a safer approach or ask the user.").arg(d.reason));
         return;
     }
-    if (isHandoff) {
-        setStepFields(call.stepIndex, { { QStringLiteral("policy"), QStringLiteral("handoff") } });
-        executeHandoff(effective);
-        return;
-    }
     if (d.verdict == AgentPolicy::Verdict::Ask && !direct) {
         // Human in the loop: pause this call until the user decides.
         m_approvalCall = effective;
@@ -883,7 +809,7 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
                                                                     : tr("this tool until you restart Noch") },
         };
         m_approvalTimer.start();
-        setActiveToolState(call.name, tr("Waiting for your approval…"));
+        setActiveToolState(call.name, tr("Waiting for your approval…"), call.input);
         emit pendingApprovalChanged();
         return;
     }
@@ -943,20 +869,6 @@ void BuddyProvider::executeToolCall(const PendingToolCall &call)
             return;
         }
         executeWebFetchTool(call);
-    } else if (call.name == QLatin1String("tool_search")
-               || call.name.startsWith(QLatin1String("tool_search_tool"))) {
-        if (!m_allowToolSearch) {
-            finishCurrentToolCall(call, QStringLiteral("Error: tool search is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeToolSearchTool(call);
-    } else if (call.name == QLatin1String("advisor")
-               || call.name.startsWith(QLatin1String("advisor_"))) {
-        if (!m_allowAdvisor) {
-            finishCurrentToolCall(call, QStringLiteral("Error: advisor tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeAdvisorTool(call);
     } else if (call.name == QLatin1String("todo_write")) {
         if (!m_allowTodoTask) {
             finishCurrentToolCall(call, QStringLiteral("Error: task & desktop context tool is disabled in Settings > Buddy."), QString(), true);
@@ -1016,169 +928,6 @@ QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QStrin
     return out;
 }
 
-
-// Context editing (Anthropic "clear tool uses" strategy), in batches.
-//
-// The newest kKeepRecentToolResults tool results always stay verbatim. Older
-// bulky results (and every older screenshot) are replaced by a short
-// placeholder - but not one at a time. Rewriting a message early in the
-// conversation changes the prompt prefix, which throws away the prompt cache
-// for everything after it, so trimming every turn meant paying for the whole
-// history again on every turn. Instead nothing is touched until enough has
-// piled up (kClearBatch*), then all of it goes at once and the prefix stays
-// byte-identical for the next several turns. This is what `clear_at_least`
-// is for in Anthropic's context-editing API. Returns how many results were
-// cleared this time.
-int BuddyProvider::compactContext()
-{
-    struct Ref { int msg; int block; };   // block -1 = whole OpenAI-style tool message
-    QList<Ref> refs;
-    for (int i = 0; i < m_agentMessages.size(); ++i) {
-        const QJsonObject m = m_agentMessages.at(i).toObject();
-        const QString role = m.value(QStringLiteral("role")).toString();
-        if (role == QLatin1String("tool")) {
-            refs.append({ i, -1 });
-        } else if (role == QLatin1String("user") && m.value(QStringLiteral("content")).isArray()) {
-            const QJsonArray c = m.value(QStringLiteral("content")).toArray();
-            for (int b = 0; b < c.size(); ++b)
-                if (c.at(b).toObject().value(QStringLiteral("type")).toString() == QLatin1String("tool_result"))
-                    refs.append({ i, b });
-        }
-    }
-    if (refs.size() <= kKeepRecentToolResults)
-        return 0;
-
-    // What each older result is: nothing to clear, bulky text, or a screenshot.
-    struct Candidate { Ref ref; int chars; bool image; };   // chars: for the placeholder text
-    QList<Candidate> candidates;
-    int images = 0;
-    for (int r = 0; r < refs.size() - kKeepRecentToolResults; ++r) {
-        const Ref ref = refs.at(r);
-        const QJsonObject m = m_agentMessages.at(ref.msg).toObject();
-        int chars = 0;
-        bool hasImage = false;
-        bool already = false;
-        if (ref.block < 0) {
-            // OpenAI-style tool message. Since vision support, its content can
-            // be an array: [{type:"text",...},{type:"image_url",...}], and
-            // Ollama carries screenshots in a top-level "images" array.
-            const QJsonValue content = m.value(QStringLiteral("content"));
-            const bool ollamaImages = !m.value(QStringLiteral("images")).toArray().isEmpty();
-            if (content.isArray()) {
-                bool stillHasImage = ollamaImages;
-                for (const QJsonValue &part : content.toArray()) {
-                    const QJsonObject po = part.toObject();
-                    if (po.value(QStringLiteral("type")).toString() == QLatin1String("image_url"))
-                        stillHasImage = true;
-                    else
-                        chars += po.value(QStringLiteral("text")).toString().size();
-                }
-                hasImage = stillHasImage;
-                // Never "already cleared": without an image the message is an
-                // ordinary result again, and bulky text still compacts below.
-                already = false;
-            } else {
-                const QString c = content.toString();
-                chars = c.size();
-                already = c.startsWith(QLatin1String("[Earlier tool result cleared"))
-                       || c.startsWith(QLatin1String("[Earlier screenshot removed"));
-                hasImage = ollamaImages;
-            }
-        } else {
-            const QJsonValue v = m.value(QStringLiteral("content")).toArray().at(ref.block).toObject()
-                                     .value(QStringLiteral("content"));
-            if (v.isString()) {
-                chars = v.toString().size();
-                already = v.toString().startsWith(QLatin1String("[Earlier tool result cleared"))
-                       || v.toString().startsWith(QLatin1String("[Earlier screenshot removed"));
-            } else {
-                for (const QJsonValue &part : v.toArray()) {
-                    const QJsonObject po = part.toObject();
-                    if (po.value(QStringLiteral("type")).toString() == QLatin1String("image"))
-                        hasImage = true;
-                    chars += po.value(QStringLiteral("text")).toString().size();
-                }
-            }
-        }
-        if (already || (!hasImage && chars < kCompactMinChars))
-            continue;
-        candidates.append({ ref, chars, hasImage });
-        images += hasImage ? 1 : 0;
-    }
-    // Not worth breaking the cache for yet.
-    if (candidates.size() < kClearBatchResults && images < kClearBatchImages)
-        return 0;
-
-    auto placeholder = [](int chars) {
-        return QStringLiteral("[Earlier tool result cleared to save context (%1 chars). Re-run the tool if you need it again.]").arg(chars);
-    };
-    int cleared = 0;
-    for (const Candidate &cand : candidates) {
-        QJsonObject m = m_agentMessages.at(cand.ref.msg).toObject();
-        if (cand.ref.block < 0) {
-            if (cand.image) {
-                // Drop the image but keep the text: the model still sees what
-                // the tool reported, just not the pixels.
-                const QJsonValue content = m.value(QStringLiteral("content"));
-                if (content.isArray()) {
-                    QJsonArray parts;
-                    for (const QJsonValue &part : content.toArray()) {
-                        if (part.toObject().value(QStringLiteral("type")).toString()
-                                == QLatin1String("image_url"))
-                            continue;
-                        parts.append(part);
-                    }
-                    m[QStringLiteral("content")] = parts;
-                } else {
-                    m[QStringLiteral("content")] = QStringLiteral("[Earlier screenshot removed to save context.]");
-                }
-                m.remove(QStringLiteral("images"));
-            } else {
-                m[QStringLiteral("content")] = placeholder(cand.chars);
-            }
-        } else {
-            QJsonArray content = m.value(QStringLiteral("content")).toArray();
-            QJsonObject block = content.at(cand.ref.block).toObject();
-            const QJsonValue bc = block.value(QStringLiteral("content"));
-            if (cand.image && bc.isArray()) {
-                // Anthropic tool results pair text with the screenshot
-                // ([{type:"text",...},{type:"image",...}]): drop only the
-                // image parts so the model keeps what the tool reported, but
-                // note the removal so it doesn't wonder where the image went.
-                QJsonArray parts;
-                bool droppedImage = false;
-                for (const QJsonValue &part : bc.toArray()) {
-                    if (part.toObject().value(QStringLiteral("type")).toString()
-                            == QLatin1String("image")) {
-                        droppedImage = true;
-                        continue;
-                    }
-                    parts.append(part);
-                }
-                if (droppedImage) {
-                    parts.append(QJsonObject{
-                        { QStringLiteral("type"), QStringLiteral("text") },
-                        { QStringLiteral("text"),
-                          QStringLiteral("[Earlier screenshot removed to save context.]") }
-                    });
-                }
-                block[QStringLiteral("content")] = QJsonValue(parts);
-            } else {
-                block[QStringLiteral("content")] = cand.image
-                    ? QStringLiteral("[Earlier screenshot removed to save context.]")
-                    : placeholder(cand.chars);
-            }
-            content[cand.ref.block] = block;
-            m[QStringLiteral("content")] = content;
-        }
-        m_agentMessages[cand.ref.msg] = m;
-        ++cleared;
-    }
-    m_compactedResults += cleared;
-    // The cached prefix just changed; the old tail marker points at nothing useful.
-    m_lastCacheMark = -1;
-    return cleared;
-}
 
 bool BuddyProvider::scheduleRetry(int status, QNetworkReply::NetworkError err, const QByteArray &retryAfter)
 {

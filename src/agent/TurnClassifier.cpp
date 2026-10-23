@@ -392,7 +392,7 @@ QString systemPrompt()
         "- risk: the most the request could change: ReadOnly, WritesFiles, RunsCommands or ControlsScreen\n"
         "- effort: Trivial, Simple or MultiStep (three or more dependent steps)\n"
         "- agent: buddy (general), research (needs current web information) or code (reading, editing or building code)\n"
-        "- tools: array of tools likely needed, from web_search, web_fetch, memory, memory_search, advisor, todo_write\n"
+        "- tools: array of tools likely needed, from web_search, web_fetch, memory, memory_search, todo_write\n"
         "- confidence: number from 0 to 1\n"
         "Example: {\"intent\":\"WebResearch\",\"risk\":\"ReadOnly\",\"effort\":\"Simple\","
         "\"agent\":\"research\",\"tools\":[\"web_search\",\"web_fetch\"],\"confidence\":0.93}\n"

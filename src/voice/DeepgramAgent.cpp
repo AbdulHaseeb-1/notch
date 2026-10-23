@@ -21,7 +21,18 @@ namespace {
 constexpr int kFrameBytes = 1280;                 // 40 ms of 16 kHz mono 16-bit
 constexpr qint64 kMaxBacklogBytes = 512 * 1024;   // a stalled network drops audio instead of queueing it
 constexpr int kBargeInDropMs = 150;               // stale agent audio still in flight after a barge-in
-constexpr int kGateTailMs = 300;                  // the room still rings a moment after the speakers stop
+constexpr int kGateTailMs = 150;                  // the room still rings a moment after the speakers stop
+// Speaker mode barge-in: the microphone hears the agent's own voice, so a voice counts as the
+// user talking over it only when it is clearly louder than that echo, for a few frames in a row.
+constexpr double kBargeMinLevel = 0.12;          // quieter than this is never a voice over the agent
+constexpr double kBargeEchoRatio = 0.6;          // the echo at the microphone is about this share of the output
+constexpr double kBargeEchoRatioAec = 0.25;      // ... once the echo canceller is working
+constexpr int kPrerollFrames = 8;                // 320 ms of microphone kept for the start of an interruption
+constexpr double kBargeEchoMargin = 0.08;        // ... plus a margin for the room
+constexpr int kBargeFrames = 4;                  // 4 x 40 ms of loud voice
+constexpr int kAckFirstMs = 2200;                 // a handed-off task this long with nothing said: say "one moment"
+constexpr int kAckAgainMs = 6000;
+constexpr int kAckMax = 3;
 constexpr int kBuddyTimeoutMs = 180000;           // the longest a handed-off task may take
 constexpr int kMaxReconnects = 3;
 constexpr int kTestTimeoutMs = 20000;
@@ -60,6 +71,22 @@ DeepgramAgent::DeepgramAgent(QObject *parent)
         if (active())
             openSocket(true);
     });
+    m_ackTimer.setSingleShot(true);
+    connect(&m_ackTimer, &QTimer::timeout, this, [this] {
+        // Buddy is still working and nothing has been said for a while: a quiet line feels like a hang.
+        if (!active() || m_calls.isEmpty() || m_ackCount >= kAckMax)
+            return;
+        const qint64 quiet = QDateTime::currentMSecsSinceEpoch() - m_lastAudioMs;
+        if (m_state == State::Speaking || !m_player.idle() || quiet < kAckFirstMs) {
+            m_ackTimer.start(500);          // it is talking: look again when it has finished
+            return;
+        }
+        say(m_ackCount == 0 ? tr("One moment.")
+            : m_ackCount == 1 ? tr("Still working on it.")
+                              : tr("This one is taking a little longer."));
+        ++m_ackCount;
+        m_ackTimer.start(kAckAgainMs);
+    });
     m_testTimeout.setSingleShot(true);
     connect(&m_testTimeout, &QTimer::timeout, this, [this] {
         finishTest(false, tr("Deepgram did not answer in time."));
@@ -74,6 +101,19 @@ DeepgramAgent::DeepgramAgent(QObject *parent)
     connect(&m_player, &StreamingPlayer::drained, this, &DeepgramAgent::onAgentDrained);
     connect(&m_player, &StreamingPlayer::levelChanged, this, &DeepgramAgent::levelChanged);
     connect(&m_player, &StreamingPlayer::failed, this, [this](const QString &why) { setNotice(why); });
+    // What goes to the speakers is what the echo canceller must take back out of the microphone.
+    connect(&m_player, &StreamingPlayer::reference, this, [this](const QByteArray &pcm) {
+        if (echoCancelling())
+            m_aec.pushReference(pcm);
+    });
+    connect(&m_player, &StreamingPlayer::referenceReset, this, [this] { m_aec.clearReference(); });
+    connect(&m_player, &StreamingPlayer::playbackStarted, this, &DeepgramAgent::noteFirstSound);
+    connect(&m_player, &StreamingPlayer::underrun, this, [this](int bufferMs) {
+        ++m_stalls;
+        qInfo().noquote() << "noch voice: the stream stalled mid-answer; jitter buffer now" << bufferMs
+                          << "ms (stall" << m_stalls << "this conversation)";
+        emit statsChanged();
+    });
     m_player.setInputRate(deepgram::kOutputRate);
     m_voices = deepgram::builtinVoices();
 
@@ -218,6 +258,24 @@ void DeepgramAgent::setAskBuddy(bool on)
     setConfigChanged();
 }
 
+void DeepgramAgent::setQuickReplies(bool on)
+{
+    if (on == m_cfg.quickReplies)
+        return;
+    m_cfg.quickReplies = on;
+    setConfigChanged();
+}
+
+void DeepgramAgent::setEchoCancel(bool on)
+{
+    if (on == m_echoCancel)
+        return;
+    m_echoCancel = on;
+    m_aec.reset();
+    m_preroll.clear();
+    emit configChanged();
+}
+
 void DeepgramAgent::setSpeakSpeed(double s)
 {
     const double v = std::clamp(s, 0.5, 1.5);
@@ -271,11 +329,12 @@ void DeepgramAgent::sendLiveChanges()
     if (!m_settingsApplied || !m_ws.isOpen()) {
         return;
     }
-    const QString prompt = m_cfg.prompt.trimmed().isEmpty() ? deepgram::defaultPrompt() : m_cfg.prompt;
-    const QString sentPrompt = m_sent.prompt.trimmed().isEmpty() ? deepgram::defaultPrompt() : m_sent.prompt;
+    const QString prompt = deepgram::effectivePrompt(m_cfg);
+    const QString sentPrompt = deepgram::effectivePrompt(m_sent);
     if (prompt != sentPrompt) {
         m_ws.sendText(deepgram::updatePromptMessage(prompt));
         m_sent.prompt = m_cfg.prompt;
+        m_sent.quickReplies = m_cfg.quickReplies;
     }
     if (m_cfg.speakModel != m_sent.speakModel || !qFuzzyCompare(m_cfg.speakSpeed, m_sent.speakSpeed)) {
         m_ws.sendText(deepgram::updateSpeakMessage(m_cfg.speakModel, m_cfg.speakSpeed));
@@ -402,6 +461,10 @@ bool DeepgramAgent::start()
     m_sent = m_cfg;
     m_restartNeeded = false;
     m_everApplied = false;
+    resetStats();
+    m_aec.reset();
+    m_preroll.clear();
+    m_wasEchoGated = false;
     setState(State::Connecting);
     openSocket(false);
     return true;
@@ -450,7 +513,14 @@ void DeepgramAgent::finishSession(bool graceful)
     if (m_capture)
         m_capture->stop();
     m_micBuffer.clear();
+    m_preroll.clear();
     m_player.flush();
+    m_aec.reset();
+    if (was && (m_replies > 0 || m_stalls > 0))
+        qInfo().noquote() << "noch voice: conversation ended;" << m_replies << "replies, average"
+                          << avgLatencyMs() << "ms to answer," << avgResponseDelayMs()
+                          << "ms until the first sound, jitter buffer" << m_player.prebufferMs() << "ms,"
+                          << m_stalls << "stalls, echo reduced by" << int(m_aec.erleDb()) << "dB";
     m_settingsApplied = false;
     m_queuedText.clear();
     dropCalls();
@@ -489,6 +559,24 @@ void DeepgramAgent::startMicrophone()
 // The microphone is gated, not closed, while the agent speaks through speakers (or
 // when muted): silence is sent in its place so the connection stays a normal stream
 // and the agent cannot hear itself.
+bool DeepgramAgent::echoCancelling() const
+{
+    return m_echoCancel && m_audioMode == QLatin1String("speakers");
+}
+
+// Speaker mode: the microphone also hears the agent through the speakers, so it stays gated while
+// the agent talks. A voice clearly louder than that echo, held for a few frames, is the user talking
+// over the agent. Headphones never need this: their microphone is never gated.
+bool DeepgramAgent::userTalkingOver(bool loud)
+{
+    if (m_muted || m_audioMode != QLatin1String("speakers") || m_state != State::Speaking) {
+        m_bargeFrames = 0;
+        return false;
+    }
+    m_bargeFrames = loud ? m_bargeFrames + 1 : 0;
+    return m_bargeFrames >= kBargeFrames;
+}
+
 bool DeepgramAgent::gateClosed() const
 {
     if (m_muted)
@@ -505,38 +593,124 @@ void DeepgramAgent::onMicAudio(const QByteArray &pcm)
 {
     if (!m_settingsApplied || !m_ws.isOpen())
         return;
-    const bool gated = gateClosed();
-    if (!gated) {
-        // Rise fast, fall slowly: a meter that follows the voice without flickering.
-        m_level = std::max(voice::level(pcm), m_level * 0.82);
-        emit levelChanged();
-    } else if (m_level != 0.0) {
-        m_level = 0.0;
-        emit levelChanged();
-    }
     m_micBuffer += pcm;
-    if (lcDeepgram().isDebugEnabled()) {
-        static qint64 lastLog = 0;
-        static int frames = 0, silent = 0;
-        const qint64 now = QDateTime::currentMSecsSinceEpoch();
-        ++frames;
-        silent += gated ? 1 : 0;
-        if (now - lastLog > 2000) {
-            qCDebug(lcDeepgram) << "mic chunks in last 2s:" << frames << "gated:" << silent << "level" << m_level
-                                << "buffered" << m_ws.bufferedBytes();
-            frames = silent = 0;
-            lastLog = now;
-        }
-    }
     while (m_micBuffer.size() >= kFrameBytes) {
         QByteArray frame = m_micBuffer.left(kFrameBytes);
         m_micBuffer.remove(0, kFrameBytes);
-        if (gated)
-            frame.fill('\0');
-        if (m_ws.bufferedBytes() > kMaxBacklogBytes)
-            continue;
-        m_ws.sendBinary(frame);
+        processMicFrame(frame);
     }
+}
+
+void DeepgramAgent::sendMicFrame(const QByteArray &frame)
+{
+    if (m_ws.bufferedBytes() > kMaxBacklogBytes)
+        return;                 // a stalled network drops audio instead of queueing it
+    m_ws.sendBinary(frame);
+}
+
+// What the microphone heard just before the gate opened: the loud run that ends now, plus a frame of
+// lead-in, so the first syllables of an interruption are not lost to the gate.
+void DeepgramAgent::sendPreroll()
+{
+    qsizetype start = m_preroll.size() - 1;
+    while (start > 0 && m_preroll[start - 1].loud)
+        --start;
+    if (start > 0)
+        --start;
+    for (qsizetype i = start; i < m_preroll.size(); ++i)
+        sendMicFrame(m_preroll[i].pcm);
+    m_preroll.clear();
+}
+
+// One 40 ms frame of the microphone: echo taken out, held back while the agent talks (speaker mode),
+// or sent. The user talking over the agent opens the gate and cuts the agent off.
+void DeepgramAgent::processMicFrame(QByteArray frame)
+{
+    const bool aec = echoCancelling();
+    if (aec)
+        frame = m_aec.process(frame);
+    const double heard = voice::level(frame);
+    // How loud the agent's own voice can be at the microphone: a share of what the speakers play,
+    // a smaller one once the canceller is taking most of it out.
+    const double echo = m_player.level() * (aec && m_aec.converged() ? kBargeEchoRatioAec : kBargeEchoRatio)
+                        + kBargeEchoMargin;
+    const bool loud = heard > std::max(kBargeMinLevel, echo);
+
+    // The last few frames, but never audio from while the microphone was muted.
+    if (m_muted) {
+        m_preroll.clear();
+    } else {
+        m_preroll.append({ frame, loud });
+        while (m_preroll.size() > kPrerollFrames)
+            m_preroll.removeFirst();
+    }
+
+    bool gated = gateClosed();
+    bool barged = false;
+    if (gated && userTalkingOver(loud)) {
+        interrupt();
+        gated = gateClosed();
+        barged = !gated;
+    }
+    const bool heldForAgent = gated && !m_muted;
+
+    if (gated) {
+        if (m_level != 0.0) {
+            m_level = 0.0;
+            emit levelChanged();
+        }
+        sendMicFrame(QByteArray(kFrameBytes, '\0'));
+    } else {
+        // Rise fast, fall slowly: a meter that follows the voice without flickering.
+        m_level = std::max(heard, m_level * 0.82);
+        emit levelChanged();
+        // The gate has just opened because the user cut in (or the agent's echo is reliably
+        // gone): the first words are in the pre-roll, send them first.
+        if (m_wasEchoGated && (barged || (aec && m_aec.converged())))
+            sendPreroll();
+        else
+            sendMicFrame(frame);
+    }
+    m_wasEchoGated = heldForAgent;
+
+    ++m_frames;
+    if (aec && m_frames % 25 == 0 && std::abs(m_aec.erleDb() - m_reportedErle) >= 1.0) {
+        m_reportedErle = m_aec.erleDb();
+        emit statsChanged();
+    }
+    if (lcDeepgram().isDebugEnabled() && m_frames % 50 == 0)
+        qCDebug(lcDeepgram) << "mic frames:" << m_frames << "gated:" << gated << "level" << m_level << "echo cut"
+                            << m_aec.erleDb() << "dB, buffered" << m_ws.bufferedBytes();
+}
+
+void DeepgramAgent::resetStats()
+{
+    m_turnEndMs = 0;
+    m_responseMs = 0;
+    m_responseSum = 0;
+    m_responseCount = 0;
+    m_latencyMs = 0;
+    m_latencySum = 0;
+    m_latencyCount = 0;
+    m_replies = 0;
+    m_stalls = 0;
+    m_reportedErle = 0.0;
+    m_frames = 0;
+    emit latencyChanged();
+    emit statsChanged();
+}
+
+// The first sound of an answer is coming out of the speakers: how long after the user's last word?
+void DeepgramAgent::noteFirstSound()
+{
+    if (m_turnEndMs <= 0)
+        return;
+    m_responseMs = int(QDateTime::currentMSecsSinceEpoch() - m_turnEndMs);
+    m_responseSum += m_responseMs;
+    ++m_responseCount;
+    m_turnEndMs = 0;
+    qCDebug(lcDeepgram) << "first sound" << m_responseMs << "ms after the last word";
+    emit statsChanged();
 }
 
 // ---- what the server says ------------------------------------------------------------------------
@@ -567,12 +741,15 @@ void DeepgramAgent::onBinary(const QByteArray &data)
     if (m_state != State::Speaking)
         setState(State::Speaking);
     touchActivity();
+    m_player.setStreaming(true);     // more of this answer is coming: a stall rebuffers, it does not end it
+    m_lastAudioMs = now;
     m_player.write(pcm);
 }
 
 void DeepgramAgent::onAgentDrained()
 {
-    m_gateOpensAtMs = QDateTime::currentMSecsSinceEpoch() + kGateTailMs;
+    m_lastAudioMs = QDateTime::currentMSecsSinceEpoch();
+    m_gateOpensAtMs = m_lastAudioMs + kGateTailMs;
     if (m_agentAudioDone && m_state == State::Speaking) {
         setState(State::Listening);
         if (m_followUp > 0)
@@ -633,6 +810,7 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
     case E::UserStartedSpeaking:
         // Barge-in: stop talking at once, and ignore the tail of the old answer still on its way.
         m_player.flush();
+        m_turnEndMs = 0;
         m_dropUntilMs = QDateTime::currentMSecsSinceEpoch() + kBargeInDropMs;
         m_agentAudioDone = true;
         m_oddByte.clear();
@@ -644,6 +822,7 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
         touchActivity();
         if (e.role == QLatin1String("user")) {
             m_userText = e.text;
+            m_turnEndMs = QDateTime::currentMSecsSinceEpoch();     // the clock for "until the first sound"
             m_dropAgentAudio = false;
             m_dropUntilMs = 0;      // the final words are in: whatever audio comes next answers them
             remember(QStringLiteral("user"), e.text);
@@ -653,6 +832,8 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
                 setState(State::Thinking);
         } else if (e.role == QLatin1String("assistant")) {
             m_agentText = e.text;
+            ++m_replies;
+            emit statsChanged();
             m_lastReplyAsked = e.text.trimmed().endsWith(QLatin1Char('?'));
             remember(QStringLiteral("assistant"), e.text);
             emit transcriptChanged();
@@ -670,6 +851,7 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
     case E::AgentAudioDone:
         m_agentAudioDone = true;
         m_dropAgentAudio = false;
+        m_player.setStreaming(false);    // the answer is complete: what is left plays out
         if (m_player.idle() && m_state == State::Speaking) {
             setState(State::Listening);
             if (m_followUp > 0)
@@ -697,6 +879,12 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
                                : QStringLiteral("That function does not exist.")));
                 continue;
             }
+            // The same id again replaces the call: retire the old one's timer
+            // instead of leaving it armed to answer the new call early.
+            if (const auto old = m_calls.find(call.id); old != m_calls.end() && old->timeout) {
+                old->timeout->stop();
+                old->timeout->deleteLater();
+            }
             Call c;
             c.name = call.name;
             c.timeout = new QTimer(this);
@@ -709,6 +897,8 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
             c.timeout->start(kBuddyTimeoutMs);
             m_calls.insert(id, c);
             emit buddyBusyChanged();
+            m_ackCount = 0;
+            m_ackTimer.start(kAckFirstMs);
             if (isAnswer)
                 emit buddyAnswered(id, answer);
             else
@@ -732,7 +922,10 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
     case E::LatencyReport:
         if (e.totalLatency >= 0) {
             m_latencyMs = int(e.totalLatency * 1000.0 + 0.5);
+            m_latencySum += m_latencyMs;
+            ++m_latencyCount;
             emit latencyChanged();
+            emit statsChanged();
         }
         break;
     case E::Warning:
@@ -791,6 +984,8 @@ void DeepgramAgent::respondToCall(const QString &id, const QString &outcome)
         it->timeout->deleteLater();
     }
     m_calls.erase(it);
+    if (m_calls.isEmpty())
+        m_ackTimer.stop();
     emit buddyBusyChanged();
     QString text = outcome.simplified();
     if (text.isEmpty())
@@ -808,6 +1003,7 @@ void DeepgramAgent::answerBuddy(const QString &callId, const QString &outcome)
 
 void DeepgramAgent::dropCalls()
 {
+    m_ackTimer.stop();
     if (m_calls.isEmpty())
         return;
     const QStringList ids = m_calls.keys();
@@ -834,6 +1030,13 @@ void DeepgramAgent::interrupt()
     m_dropAgentAudio = true;        // the rest of this answer is not wanted; the mic opens
     m_agentAudioDone = true;
     setState(State::Listening);
+}
+
+void DeepgramAgent::holdMic(int ms)
+{
+    if (ms <= 0)
+        return;
+    m_gateOpensAtMs = std::max(m_gateOpensAtMs, QDateTime::currentMSecsSinceEpoch() + ms);
 }
 
 void DeepgramAgent::say(const QString &text)

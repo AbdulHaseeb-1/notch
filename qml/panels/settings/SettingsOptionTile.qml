@@ -2,13 +2,14 @@ pragma ComponentBehavior: Bound
 import QtQuick
 
 // A pickable tile with a preview on top and a name below (ring styles, glow modes).
-// Put the preview inside it. `lit` is true while the tile is selected or hovered,
-// so a live preview only moves when it is being looked at.
+// Put the preview inside it. `lit` is true only while the tile is hovered, so a live
+// preview moves only when it is being looked at. (It used to move for the selected
+// tile too, which kept the page redrawing every frame for as long as it was open.)
 Item {
     id: tile
     property string label: ""
     property bool selected: false
-    readonly property bool lit: selected || hit.containsMouse
+    readonly property bool lit: hit.containsMouse
     default property alias preview: stage.data
     property real stageHeight: 76
     signal picked()

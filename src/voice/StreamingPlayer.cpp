@@ -12,9 +12,9 @@
 namespace {
 
 constexpr int kPumpMs = 10;
-constexpr int kDeviceBufferMs = 200;
+constexpr int kDeviceBufferMs = 120;
 constexpr qint64 kLevelEmitMs = 60;
-constexpr qint64 kDryHoldMs = 120;
+constexpr qint64 kDryHoldMs = 90;
 
 double chunkLevel(const QByteArray &pcm16)
 {
@@ -114,6 +114,44 @@ QByteArray StreamingPlayer::resample(const QByteArray &pcm16, int inRate, const 
     return out;
 }
 
+QByteArray StreamingPlayer::toReference16k(const char *data, qint64 bytes, const QAudioFormat &format,
+                                           ReferenceState *state)
+{
+    const int bps = format.bytesPerSample();
+    const int ch = format.channelCount();
+    const int rate = format.sampleRate();
+    if (!data || !state || bps <= 0 || ch <= 0 || rate <= 0)
+        return QByteArray();
+    const qint64 frames = bytes / (qint64(bps) * ch);
+    const double step = 16000.0 / rate;
+    QByteArray out;
+    out.reserve(qsizetype(double(frames) * step * 2.0) + 4);
+    for (qint64 f = 0; f < frames; ++f) {
+        float v = 0.0f;
+        for (int c = 0; c < ch; ++c) {
+            const char *at = data + (f * ch + c) * bps;
+            switch (format.sampleFormat()) {
+            case QAudioFormat::Float: { float x; std::memcpy(&x, at, 4); v += x; break; }
+            case QAudioFormat::Int32: { qint32 x; std::memcpy(&x, at, 4); v += float(double(x) / 2147483648.0); break; }
+            case QAudioFormat::UInt8: v += (float(*reinterpret_cast<const quint8 *>(at)) - 128.0f) / 128.0f; break;
+            default: { qint16 x; std::memcpy(&x, at, 2); v += float(x) / 32768.0f; break; }
+            }
+        }
+        state->acc += v / float(ch);
+        ++state->count;
+        state->phase += step;
+        if (state->phase >= 1.0) {
+            state->phase -= 1.0;
+            const float o = std::clamp(state->acc / float(state->count), -1.0f, 1.0f);
+            const qint16 s = qint16(std::lround(o * 32767.0f));
+            out.append(reinterpret_cast<const char *>(&s), 2);
+            state->acc = 0.0f;
+            state->count = 0;
+        }
+    }
+    return out;
+}
+
 bool StreamingPlayer::openDevice()
 {
     if (m_sink)
@@ -190,7 +228,7 @@ void StreamingPlayer::write(const QByteArray &pcm16)
         if (m_started)
             m_simEndMs = std::max(m_simEndMs, m_clock.elapsed()) + chunkMs;
         setActive(true);
-        if (!m_started && m_bufferedMs >= kPrebufferMs)
+        if (!m_started && m_bufferedMs >= m_targetMs)
             beginPlayback();
         return;
     }
@@ -202,7 +240,7 @@ void StreamingPlayer::write(const QByteArray &pcm16)
     m_queue += converted;
     m_queuedFrames = m_queue.size() / std::max(1, m_format.bytesPerFrame());
     setActive(true);
-    if (!m_started && m_bufferedMs >= kPrebufferMs)
+    if (!m_started && m_bufferedMs >= m_targetMs)
         beginPlayback();
     pump();
 }
@@ -217,10 +255,14 @@ void StreamingPlayer::beginPlayback()
         m_simEndMs = m_clock.elapsed() + m_simPendingMs;
         m_simPendingMs = 0;
     }
+    emit playbackStarted();
 }
 
 void StreamingPlayer::flush()
 {
+    m_streaming = false;
+    m_ref = ReferenceState();
+    emit referenceReset();
     m_started = false;
     m_bufferedMs = 0;
     m_simPendingMs = 0;
@@ -232,6 +274,35 @@ void StreamingPlayer::flush()
     closeDevice();
     m_dryStart = -1;
     setActive(false);
+    if (m_level != 0.0) {
+        m_level = 0.0;
+        emit levelChanged();
+    }
+}
+
+void StreamingPlayer::setStreaming(bool on)
+{
+    m_streaming = on;
+    // The answer is complete: audio still waiting for a jitter buffer that will never fill plays now.
+    if (!on && m_active && !m_started)
+        beginPlayback();
+}
+
+// The stream ran dry while the answer was still coming: play silence and build a fresh
+// jitter buffer, instead of ending the answer or stuttering through the gap.
+void StreamingPlayer::rebuffer(qint64 now)
+{
+    m_started = false;
+    m_bufferedMs = 0;
+    m_simPendingMs = 0;
+    m_simEndMs = 0;
+    m_dryStart = -1;
+    m_prebufferDeadline = now + kRebufferMaxWaitMs;
+    // A real underrun: keep a bigger cushion until answers go through clean again.
+    m_targetMs = std::min(kMaxPrebufferMs, m_targetMs + kPrebufferStepMs);
+    m_underran = true;
+    ++m_underrunCount;
+    emit underrun(m_targetMs);
     if (m_level != 0.0) {
         m_level = 0.0;
         emit levelChanged();
@@ -257,14 +328,23 @@ void StreamingPlayer::pump()
     const qint64 now = m_clock.elapsed();
     bool finished = false;
     if (!m_started) {
-        // Still prebuffering: start once the wait has run out, even with little audio.
-        if (now >= m_prebufferDeadline)
-            beginPlayback();
+        // Still prebuffering: start once the wait has run out, even with little audio. A stream
+        // that is still going but has sent nothing yet is waited for, not played as silence.
+        if (now >= m_prebufferDeadline) {
+            if (m_bufferedMs > 0 || !m_streaming)
+                beginPlayback();
+            else
+                m_prebufferDeadline = now + kRebufferMaxWaitMs;
+        }
         if (!m_started)
             return;
     }
     if (m_deviceDisabled) {
         const bool dry = now >= m_simEndMs;
+        if (dry && m_streaming) {
+            rebuffer(now);
+            return;
+        }
         if (!dry)
             m_dryStart = -1;
         else if (m_dryStart < 0)
@@ -278,8 +358,12 @@ void StreamingPlayer::pump()
             if (room > 0) {
                 const qint64 n = std::min<qint64>(room, m_queue.size());
                 const qint64 wrote = m_io->write(m_queue.constData(), n);
-                if (wrote > 0)
+                if (wrote > 0) {
+                    const QByteArray ref = toReference16k(m_queue.constData(), wrote, m_format, &m_ref);
+                    if (!ref.isEmpty())
+                        emit reference(ref);
                     m_queue.remove(0, qsizetype(wrote));
+                }
                 m_queuedFrames = m_queue.size() / bpf;
             }
         }
@@ -287,11 +371,15 @@ void StreamingPlayer::pump()
         // A stream that is merely a little late (network jitter) must not close the
         // device and reopen it with a click, so the dry spell has to last.
         const bool dry = m_queue.isEmpty() && m_sink->bytesFree() >= m_deviceBufferBytes - m_format.bytesPerFrame();
-        if (!dry)
-            m_dryStart = -1;
-        else if (m_dryStart < 0)
-            m_dryStart = now;
-        finished = dry && now - m_dryStart >= kDryHoldMs;
+        if (dry && m_streaming) {
+            rebuffer(now);
+        } else {
+            if (!dry)
+                m_dryStart = -1;
+            else if (m_dryStart < 0)
+                m_dryStart = now;
+            finished = dry && now - m_dryStart >= kDryHoldMs;
+        }
         if (m_sink->error() != QAudio::NoError) {
             const QString why = tr("The speakers stopped working.");
             flush();
@@ -315,6 +403,9 @@ void StreamingPlayer::pump()
         m_started = false;
         m_bufferedMs = 0;
         m_dryStart = -1;
+        if (!m_underran)
+            m_targetMs = std::max(kPrebufferMs, m_targetMs - kPrebufferStepMs);
+        m_underran = false;
         setActive(false);
         emit drained();
     }

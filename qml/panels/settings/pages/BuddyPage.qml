@@ -144,15 +144,6 @@ SettingsPage {
         SettingsCardDivider {}
 
         SettingsToggleRow {
-            label: qsTr("Solid color ring")
-            sub: qsTr("Show the solid accent outline and aura ring around buddy during interactions.")
-            checked: panel.prefs.buddySolidRing
-            onToggled: (c) => panel.prefs.buddySolidRing = c
-        }
-
-        SettingsCardDivider {}
-
-        SettingsToggleRow {
             label: qsTr("Show thinking")
             sub: qsTr("Show what Buddy is doing while it works: the tool steps, the draft as it is written and its reasoning. Turn off for a quiet bubble that only shows the answer. Approvals and questions always show.")
             checked: panel.prefs.buddyShowThinking

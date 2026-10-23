@@ -26,21 +26,93 @@ Item {
     readonly property color c2: Qt.color(stops[2])
     readonly property color c3: Qt.color(stops[3])
 
-    readonly property real level: strength * Math.max(always ? 0.34 : 0, activity)
-    opacity: Math.min(1, level * 1.15)
-    visible: mode !== "off" && opacity > 0.01
-    Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+    // The farthest the light reaches from the orb's centre, whatever the mode: the
+    // bloom is a disc, the floor pool a squashed one that sits low, so its corners
+    // go farther than the bloom's disc. The click-through mask has to cover this,
+    // or the window region clips the light into a hard, jagged edge.
+    readonly property real extent: {
+        if (drawn !== "floor")
+            return reach
+        const a = reach
+        const b = reach * 0.26
+        const d = orbRadius * 1.28
+        const t = Math.max(-1, Math.min(1, d * b / (a * a - b * b)))
+        return Math.sqrt(a * a + d * d + 2 * d * b * t - (a * a - b * b) * t * t)
+    }
+
+    // The mode being drawn. Switching to "off" fades the light out instead of
+    // dropping it, so this keeps the last real mode until the fade is done.
+    property string drawn: mode
+    onModeChanged: if (mode !== "off") drawn = mode
+
+    readonly property real level: mode === "off" ? 0 : strength * Math.max(always ? 0.34 : 0, activity)
+    // The big light (bloom or floor pool) fades with the activity.
+    property real bodyOpacity: Math.min(1, level * 1.15)
+    Behavior on bodyOpacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+    // True from the moment the light starts to show until it has fully faded out.
+    // The window mask follows this, never the activity that drives it, so the
+    // mask cannot shrink and cut the light off while it is still fading.
+    readonly property bool lit: drawn !== "off" && bodyOpacity > 0.01
+
+    // A thin rim of light that hugs the orb and stays on whenever the glow is not
+    // "off", busy or not: the orb is near-black, so on a dark window or wallpaper
+    // it would otherwise melt into the background.
+    property real rimOpacity: mode === "off" ? 0 : Math.min(1, 0.32 + 0.45 * strength)
+    Behavior on rimOpacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+    readonly property bool rimLit: rimOpacity > 0.01
+    readonly property real rimExtent: orbRadius + 9 * s
+
+    visible: lit || rimLit
+
+    Item {
+        id: rim
+        visible: glow.rimLit
+        opacity: glow.rimOpacity
+        anchors.centerIn: parent
+        width: glow.rimExtent * 2
+        height: width
+        Shape {
+            id: rimShape
+            readonly property real p1: Math.min(0.98, (glow.orbRadius + 1.5 * glow.s) / glow.rimExtent)
+            anchors.fill: parent
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                strokeColor: "transparent"
+                fillGradient: RadialGradient {
+                    centerX: rim.width / 2
+                    centerY: rim.height / 2
+                    centerRadius: glow.rimExtent
+                    focalX: centerX
+                    focalY: centerY
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: Math.max(0.01, (glow.orbRadius - 2 * glow.s) / glow.rimExtent); color: "transparent" }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 0; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.700) }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 0.15; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.639) }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 0.3; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.484) }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 0.5; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.249) }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 0.7; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.087) }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 0.85; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.027) }
+                    GradientStop { position: rimShape.p1 + (1 - rimShape.p1) * 1.0; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.000) }
+                }
+                PathAngleArc { centerX: rim.width / 2; centerY: rim.height / 2; radiusX: glow.rimExtent; radiusY: glow.rimExtent; startAngle: 0; sweepAngle: 360 }
+            }
+        }
+    }
 
     // ---- bloom: light all round, colours drifting ------------------------------------
     Item {
         id: bloom
-        visible: glow.mode === "bloom"
+        visible: glow.lit && glow.drawn === "bloom"
+        opacity: glow.bodyOpacity
         anchors.centerIn: parent
         width: glow.reach * 2
         height: width
 
-        // The base: a ring of light hugging the orb.
+        // The base: a ring of light hugging the orb, fading out like a gaussian
+        // (a straight ramp shows a kink where it changes slope).
         Shape {
+            id: bloomShape
+            readonly property real p1: Math.min(0.98, (glow.orbRadius + 2 * glow.s) / glow.reach)
             anchors.fill: parent
             preferredRendererType: Shape.CurveRenderer
             ShapePath {
@@ -53,9 +125,14 @@ Item {
                     focalY: centerY
                     GradientStop { position: 0.0; color: "transparent" }
                     GradientStop { position: Math.max(0.01, (glow.orbRadius - 2 * glow.s) / glow.reach); color: "transparent" }
-                    GradientStop { position: Math.min(0.98, (glow.orbRadius + 2 * glow.s) / glow.reach); color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.62) }
-                    GradientStop { position: 0.72; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.14) }
-                    GradientStop { position: 1.0; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.620) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0.1; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.590) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0.2; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.507) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0.35; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.334) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0.5; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.175) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0.7; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.050) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 0.85; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.013) }
+                    GradientStop { position: bloomShape.p1 + (1 - bloomShape.p1) * 1.0; color: Qt.rgba(glow.c1.r, glow.c1.g, glow.c1.b, 0.000) }
                 }
                 PathAngleArc { centerX: bloom.width / 2; centerY: bloom.height / 2; radiusX: glow.reach; radiusY: glow.reach; startAngle: 0; sweepAngle: 360 }
             }
@@ -98,7 +175,8 @@ Item {
     // ---- floor: a pool of light under the floating orb ------------------------------------
     Item {
         id: pool
-        visible: glow.mode === "floor"
+        visible: glow.lit && glow.drawn === "floor"
+        opacity: glow.bodyOpacity
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: glow.orbRadius * 1.28

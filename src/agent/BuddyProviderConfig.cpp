@@ -56,54 +56,6 @@ void BuddyProvider::setAgentMode(bool on)
     emit agentConfigChanged();
 }
 
-void BuddyProvider::setToolDiet(bool on)
-{
-    if (m_toolDiet == on)
-        return;
-    m_toolDiet = on;
-    emit agentConfigChanged();
-}
-
-bool BuddyProvider::toolSchemaVisible(const QString &toolName) const
-{
-    // Diet off: every enabled tool's schema is sent (previous behavior).
-    if (!m_toolDiet)
-        return true;
-    // tool_search is the loader: always visible.
-    if (toolName == QLatin1String("tool_search"))
-        return true;
-    // Core tools are always visible.
-    static const QStringList coreTools{
-        QStringLiteral("bash"), QStringLiteral("str_replace_editor"),
-        QStringLiteral("glob_grep"), QStringLiteral("computer"),
-        // Interaction tools are core too, not deferrable utilities:
-        // asking the user a question and showing/sharing screenshots are
-        // the loop's basic channels, and handoffs pick the active
-        // specialist. Hiding them by default changes behavior, not just
-        // token count — the tests encode "offered by default" for all
-        // three. Utility schemas (web, memory, advisor, todo) stay deferred.
-        QStringLiteral("ask_user_question"),
-        QStringLiteral("share_screenshot"),
-        // The music pill is a user-facing channel too ("play some music"): no
-        // tool_search round trip first.
-        QStringLiteral("music"),
-    };
-    if (coreTools.contains(toolName))
-        return true;
-    if (toolName.startsWith(QLatin1String("transfer_to_")))
-        return true;
-    // A restricted specialist's toolset is its core: the diet must not
-    // hide what the active profile is allowed to use (e.g. web_search
-    // for the research specialist).
-    if (m_activeAgent != QLatin1String("buddy")) {
-        const AgentProfile *p = profileFor(m_activeAgent);
-        if (p && !p->tools.isEmpty() && p->tools.contains(toolName))
-            return true;
-    }
-    // Deferred tools only once loaded via tool_search this run.
-    return m_unlockedDeferredTools.contains(toolName);
-}
-
 void BuddyProvider::setAllowBash(bool on)
 {
     if (m_allowBash == on)
@@ -149,22 +101,6 @@ void BuddyProvider::setAllowWebSearch(bool on)
     if (m_allowWebSearch == on)
         return;
     m_allowWebSearch = on;
-    emit agentConfigChanged();
-}
-
-void BuddyProvider::setAllowToolSearch(bool on)
-{
-    if (m_allowToolSearch == on)
-        return;
-    m_allowToolSearch = on;
-    emit agentConfigChanged();
-}
-
-void BuddyProvider::setAllowAdvisor(bool on)
-{
-    if (m_allowAdvisor == on)
-        return;
-    m_allowAdvisor = on;
     emit agentConfigChanged();
 }
 
@@ -233,10 +169,7 @@ void BuddyProvider::clearToolSteps()
     m_totalOutputTokens = 0;
     m_lastModelUsed.clear();
     m_lastStopReason.clear();
-    m_advisorUsedInTurn = false;
-    m_advisorFocusInTurn.clear();
-    m_advisorInsightInTurn.clear();
-    m_unlockedDeferredTools.clear();
+    m_reasoningInTurn.clear();
     m_callRepeats.clear();
     m_lastComputerFp.clear();
     m_computerRepeat = 0;
@@ -273,12 +206,15 @@ void BuddyProvider::clearToolSteps()
     setActiveToolState(QString(), QString());
 }
 
-void BuddyProvider::setActiveToolState(const QString &tool, const QString &summary)
+void BuddyProvider::setActiveToolState(const QString &tool, const QString &summary, const QJsonObject &input)
 {
     const QString badge = tool.isEmpty() ? QString() : badgeForTool(tool, QJsonObject());
-    if (m_activeTool == tool && m_activeToolBadge == badge && m_activeToolSummary == summary)
+    const QString icon = tool.isEmpty() ? QString() : iconForTool(tool, input);
+    if (m_activeTool == tool && m_activeToolIcon == icon && m_activeToolBadge == badge
+        && m_activeToolSummary == summary)
         return;
     m_activeTool = tool;
+    m_activeToolIcon = icon;
     m_activeToolBadge = badge;
     m_activeToolSummary = summary;
     emit activeToolChanged();
@@ -319,9 +255,7 @@ void BuddyProvider::updateResponseMeta()
     meta[QStringLiteral("turns")] = qMax(1, m_agentIteration + 1);
     meta[QStringLiteral("toolCount")] = m_toolSteps.size();
     meta[QStringLiteral("durationMs")] = m_turnTimer.isValid() ? int(m_turnTimer.elapsed()) : 0;
-    meta[QStringLiteral("advisorUsed")] = m_advisorUsedInTurn;
-    meta[QStringLiteral("advisorFocus")] = m_advisorFocusInTurn;
-    meta[QStringLiteral("advisorInsight")] = m_advisorInsightInTurn;
+    meta[QStringLiteral("reasoning")] = m_reasoningInTurn;
     meta[QStringLiteral("permissionMode")] = m_permissionMode;
     meta[QStringLiteral("cachedTokens")] = m_cachedTokens;
     meta[QStringLiteral("compacted")] = m_compactedResults;
@@ -345,9 +279,6 @@ void BuddyProvider::updateResponseMeta()
     }
     meta[QStringLiteral("retries")] = m_retryCount;
     meta[QStringLiteral("traceId")] = m_traceId;
-    meta[QStringLiteral("agent")] = m_activeAgent;
-    meta[QStringLiteral("agentTitle")] = activeAgentTitle();
-    meta[QStringLiteral("handoffs")] = m_handoffCount;
     meta[QStringLiteral("continuations")] = m_continuations;
     meta[QStringLiteral("truncated")] = m_truncated;
     meta[QStringLiteral("maxSteps")] = m_maxSteps;
@@ -362,8 +293,8 @@ bool BuddyProvider::hasAnyToolEnabled() const
 {
     return m_agentMode && !m_toolsDisabledForTurn
            && (m_allowBash || m_allowComputer || m_allowEditor || m_allowCodeSearch
-               || m_allowMemory || m_allowWebSearch || m_allowToolSearch
-               || m_allowAdvisor || m_allowTodoTask || m_allowAskUser || m_allowScreenshots
+               || m_allowMemory || m_allowWebSearch
+               || m_allowTodoTask || m_allowAskUser || m_allowScreenshots
                || musicAvailable());
 }
 

@@ -156,9 +156,10 @@ noch_add_unit_test(tst_runjournal
     LIBS Qt6::Core Qt6::Network)
 
 noch_add_unit_test(tst_buddyagent
-    SOURCES tests/tst_buddyagent.cpp
+    SOURCES tests/tst_buddyagent.cpp tests/BuddyAgentFakes.h
             src/agent/BuddyProvider.cpp src/agent/BuddyProvider.h
             src/agent/BuddyProviderConfig.cpp src/agent/BuddyProviderInternal.h
+            src/agent/BuddyProviderContext.cpp src/agent/BuddyProviderPlan.cpp
             src/agent/BuddyProviderPrompts.cpp src/agent/BuddyProviderProtocol.cpp
             src/agent/BuddyProviderRun.cpp src/agent/BuddyProviderStorage.cpp
             src/agent/BuddyProviderTools.cpp src/agent/BuddyProviderWeb.cpp
@@ -225,9 +226,15 @@ noch_add_unit_test(tst_wsclient
             src/voice/WsClient.cpp src/voice/WsClient.h
     LIBS Qt6::Core Qt6::Network)
 
+noch_add_unit_test(tst_echo
+    SOURCES tests/tst_echo.cpp
+            src/voice/EchoCanceller.cpp src/voice/EchoCanceller.h
+    LIBS Qt6::Core)
+
 noch_add_unit_test(tst_deepgram
     SOURCES tests/tst_deepgram.cpp tests/SpeechFakes.h tests/WsTestServer.h
             src/voice/DeepgramAgent.cpp src/voice/DeepgramAgent.h
+            src/voice/EchoCanceller.cpp src/voice/EchoCanceller.h
             src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
             src/voice/WsClient.cpp src/voice/WsClient.h
             src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
@@ -250,6 +257,7 @@ noch_add_unit_test(tst_deepgramrest
 noch_add_unit_test(tst_deepgramlive
     SOURCES tests/tst_deepgramlive.cpp tests/SpeechFakes.h
             src/voice/DeepgramAgent.cpp src/voice/DeepgramAgent.h
+            src/voice/EchoCanceller.cpp src/voice/EchoCanceller.h
             src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
             src/voice/WsClient.cpp src/voice/WsClient.h
             src/voice/SpeechOut.cpp src/voice/SpeechOut.h

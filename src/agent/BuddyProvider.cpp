@@ -223,39 +223,9 @@ void BuddyProvider::onClassified(quint64 token, const turnclass::Classification 
 
     if (used) {
         m_classification = result;
-        applyClassification();
         emit lastClassificationChanged();
     }
     dispatchAgentTurn();
-}
-
-// Narrow the run with a classification: take the specialist it names (when it
-// has something to work with) and load the deferred tools it expects. Nothing
-// here grants anything; every call still goes through the permission policy.
-void BuddyProvider::applyClassification()
-{
-    const turnclass::Classification &c = m_classification;
-    const AgentProfile *p = profileFor(c.agent);
-    const bool specialistUsable = c.agent == QLatin1String("research")
-        ? m_allowWebSearch
-        : c.agent == QLatin1String("code")
-            ? (m_allowEditor || m_allowCodeSearch || m_allowBash)
-            : false;
-    if (m_handoffs && p && c.agent != QLatin1String("buddy") && specialistUsable
-            && c.confidence >= turnclass::kAgentSwitchConfidence) {
-        const QString from = activeAgentTitle();
-        setActiveAgent(p->id);
-        ++m_handoffCount;
-        addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("handoff") },
-                             { QStringLiteral("from"), from }, { QStringLiteral("to"), p->title },
-                             { QStringLiteral("reason"), QStringLiteral("jev classifier: %1")
-                                   .arg(turnclass::intentName(c.intent)) } });
-    }
-    if (m_toolDiet) {
-        for (const QString &tool : c.tools)
-            if (toolAllowedForActiveAgent(tool))
-                m_unlockedDeferredTools.insert(tool);
-    }
 }
 
 // ---- safety settings -------------------------------------------------------
@@ -336,6 +306,11 @@ bool BuddyProvider::modelVisionCapable() const
         QStringLiteral("minicpm-v"), QStringLiteral("pixtral"),
         QStringLiteral("moondream"), QStringLiteral("bakllava"),
         QStringLiteral("llama-3.2"), QStringLiteral("molmo"),
+        QStringLiteral("gpt-4.1"), QStringLiteral("gpt-4.5"), QStringLiteral("gpt-5"),
+        QStringLiteral("o4"), QStringLiteral("gemma3"), QStringLiteral("gemma-3"),
+        QStringLiteral("qwen2.5vl"), QStringLiteral("qwen2.5-vl"), QStringLiteral("qwen3-vl"),
+        QStringLiteral("llama4"), QStringLiteral("llama-4"), QStringLiteral("mistral-small3"),
+        QStringLiteral("internvl"), QStringLiteral("glm-4v"),
     };
     for (const QString &h : hints) {
         if (m.contains(h))
@@ -511,104 +486,6 @@ void BuddyProvider::setShowThinking(bool on)
         return;
     m_showThinking = on;
     emit agentConfigChanged();
-}
-
-// ---- handoffs ------------------------------------------------------------------
-// Modelled on OpenAI Agents SDK handoffs: each handoff is exposed to the model
-// as a `transfer_to_<agent>` tool; the receiving agent sees the whole
-// conversation but runs with its own instructions and a narrower toolset.
-// The permission policy still gates every call.
-
-const QList<BuddyProvider::AgentProfile> &BuddyProvider::agentProfiles()
-{
-    static const QList<AgentProfile> profiles{
-        { QStringLiteral("buddy"), QStringLiteral("Buddy"), QStringLiteral("spark"), {},
-          QStringLiteral("Hand back to Buddy, the generalist, when the specialist part is done or the task needs other tools."),
-          QString() },
-        { QStringLiteral("research"), QStringLiteral("Research specialist"), QStringLiteral("globe"),
-          { QStringLiteral("web_search"), QStringLiteral("web_fetch"), QStringLiteral("memory"),
-            QStringLiteral("todo_write"), QStringLiteral("advisor"), QStringLiteral("ask_user_question") },
-          QStringLiteral("Questions that need current information from the web, comparing sources, or a cited summary."),
-          QStringLiteral("You are Noch's research specialist. Search first, open the two or three most relevant sources, "
-                         "cross-check claims, and answer with short inline citations (site names). Say when sources "
-                         "disagree or are thin. You cannot run commands, edit files or control the computer.") },
-        { QStringLiteral("code"), QStringLiteral("Code specialist"), QStringLiteral("code-search"),
-          { QStringLiteral("glob_grep"), QStringLiteral("str_replace_editor"), QStringLiteral("bash"),
-            QStringLiteral("todo_write"), QStringLiteral("memory"), QStringLiteral("ask_user_question") },
-          QStringLiteral("Reading, searching, editing or building code and project files."),
-          QStringLiteral("You are Noch's code specialist. Locate code with glob_grep before reading, view files before "
-                         "editing, make the smallest correct change with exact str_replace edits, and verify with a "
-                         "build or test command when one exists. Keep edits inside the workspace folder. You cannot "
-                         "browse the web or control the computer.") },
-    };
-    return profiles;
-}
-
-const BuddyProvider::AgentProfile *BuddyProvider::profileFor(const QString &id)
-{
-    for (const AgentProfile &p : agentProfiles())
-        if (p.id == id)
-            return &p;
-    return nullptr;
-}
-
-QString BuddyProvider::activeAgentTitle() const
-{
-    const AgentProfile *p = profileFor(m_activeAgent);
-    return p ? p->title : QStringLiteral("Buddy");
-}
-
-void BuddyProvider::setHandoffs(bool on)
-{
-    if (on == m_handoffs)
-        return;
-    m_handoffs = on;
-    emit agentConfigChanged();
-}
-
-void BuddyProvider::setActiveAgent(const QString &id)
-{
-    if (id == m_activeAgent)
-        return;
-    m_activeAgent = id;
-    // OpenAI-format runs carry the system prompt as message 0: swap it.
-    if (m_provider != QLatin1String("anthropic") && !m_agentMessages.isEmpty()) {
-        QJsonObject sys = m_agentMessages.at(0).toObject();
-        if (sys.value(QStringLiteral("role")).toString() == QLatin1String("system")) {
-            sys[QStringLiteral("content")] = systemPrompt();
-            m_agentMessages[0] = sys;
-        }
-    }
-    emit activeAgentChanged();
-}
-
-bool BuddyProvider::toolAllowedForActiveAgent(const QString &tool) const
-{
-    if (tool.startsWith(QLatin1String("transfer_to_")))
-        return true;
-    const AgentProfile *p = profileFor(m_activeAgent);
-    return !p || p->tools.isEmpty() || p->tools.contains(tool);
-}
-
-void BuddyProvider::executeHandoff(const PendingToolCall &call)
-{
-    const QString target = call.name.mid(int(qstrlen("transfer_to_")));
-    const AgentProfile *p = profileFor(target);
-    if (!p || !m_handoffs || target == m_activeAgent) {
-        finishCurrentToolCall(call, QStringLiteral("Error: no such agent to transfer to: '%1'.").arg(target), QString(), true);
-        return;
-    }
-    const QString from = activeAgentTitle();
-    ++m_handoffCount;
-    setActiveAgent(target);
-    addSpan(QJsonObject{ { "type", "handoff" }, { "from", from }, { "to", p->title },
-                         { "reason", call.input.value(QStringLiteral("reason")).toString().left(200) } });
-    QString msg = QStringLiteral("Transferred to %1. You are now %1.").arg(p->title);
-    if (!p->instructions.isEmpty())
-        msg += QLatin1Char(' ') + p->instructions;
-    if (!p->tools.isEmpty())
-        msg += QStringLiteral(" Tools available to you: %1.").arg(p->tools.join(QStringLiteral(", ")));
-    finishCurrentToolCall(call, msg, QString(), false);
 }
 
 // P8: the per-run memory snapshot is now top-K by relevance to the

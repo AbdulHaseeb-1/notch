@@ -12,6 +12,7 @@
 #include <memory>
 
 #include "DeepgramProtocol.h"
+#include "EchoCanceller.h"
 #include "StreamingPlayer.h"
 #include "VoiceInput.h"
 #include "WsClient.h"
@@ -66,6 +67,11 @@ class DeepgramAgent : public QObject
     // "headphones": you can talk over the agent. "speakers": the microphone is
     // muted while the agent speaks, so it does not hear (and answer) itself.
     Q_PROPERTY(QString audioMode READ audioMode WRITE setAudioMode NOTIFY configChanged)
+    // Speaker mode: take the agent's own voice out of the microphone, so talking over it is heard
+    // reliably and the first words of an interruption are not lost.
+    Q_PROPERTY(bool echoCancel READ echoCancel WRITE setEchoCancel NOTIFY configChanged)
+    // Replies of a sentence or two; anything that needs thought goes to Buddy. Faster on a voice call.
+    Q_PROPERTY(bool quickReplies READ quickReplies WRITE setQuickReplies NOTIFY configChanged)
     // How long Buddy keeps listening for a follow-up after it has answered, in seconds; 0 =
     // not at all: the conversation ends once Buddy has said its piece (about five seconds'
     // grace, thirty if it ended on a question) and the wake word starts the next one.
@@ -84,6 +90,19 @@ class DeepgramAgent : public QObject
     Q_PROPERTY(QString userText READ userText NOTIFY transcriptChanged)
     Q_PROPERTY(QString agentText READ agentText NOTIFY transcriptChanged)
     Q_PROPERTY(int latencyMs READ latencyMs NOTIFY latencyChanged)
+    // How the conversation is going, for Settings. Reset when a conversation starts.
+    // avgLatencyMs: Deepgram's own report of how long it took to answer (average).
+    // responseDelayMs: from your last word to the first sound you heard, here, buffer included
+    // (the last one, and the average). stalls: how many times the stream ran dry mid-answer;
+    // bufferMs: the jitter buffer in use (it grows after a stall). echoReductionDb: how much of
+    // the agent's voice the canceller is taking out of the microphone.
+    Q_PROPERTY(int avgLatencyMs READ avgLatencyMs NOTIFY statsChanged)
+    Q_PROPERTY(int responseDelayMs READ responseDelayMs NOTIFY statsChanged)
+    Q_PROPERTY(int avgResponseDelayMs READ avgResponseDelayMs NOTIFY statsChanged)
+    Q_PROPERTY(int replies READ replies NOTIFY statsChanged)
+    Q_PROPERTY(int stalls READ stalls NOTIFY statsChanged)
+    Q_PROPERTY(int bufferMs READ bufferMs NOTIFY statsChanged)
+    Q_PROPERTY(double echoReductionDb READ echoReductionDb NOTIFY statsChanged)
     Q_PROPERTY(bool buddyBusy READ buddyBusy NOTIFY buddyBusyChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY errorChanged)
@@ -133,6 +152,10 @@ public:
     void setEndpointKey(const QString &k);
     bool askBuddy() const { return m_cfg.askBuddy; }
     void setAskBuddy(bool on);
+    bool quickReplies() const { return m_cfg.quickReplies; }
+    void setQuickReplies(bool on);
+    bool echoCancel() const { return m_echoCancel; }
+    void setEchoCancel(bool on);
     QString speakModel() const { return m_cfg.speakModel; }
     void setSpeakModel(const QString &m);
     double speakSpeed() const { return m_cfg.speakSpeed; }
@@ -170,6 +193,13 @@ public:
     QString userText() const { return m_userText; }
     QString agentText() const { return m_agentText; }
     int latencyMs() const { return m_latencyMs; }
+    int avgLatencyMs() const { return m_latencyCount > 0 ? int(m_latencySum / m_latencyCount) : 0; }
+    int responseDelayMs() const { return m_responseMs; }
+    int avgResponseDelayMs() const { return m_responseCount > 0 ? int(m_responseSum / m_responseCount) : 0; }
+    int replies() const { return m_replies; }
+    int stalls() const { return m_stalls; }
+    int bufferMs() const { return m_player.prebufferMs(); }
+    double echoReductionDb() const { return m_aec.erleDb(); }
     bool buddyBusy() const { return !m_calls.isEmpty(); }
     QString error() const { return m_error; }
     QString notice() const { return m_notice; }
@@ -181,6 +211,9 @@ public:
     Q_INVOKABLE void toggle();
     // Cuts the agent off mid-sentence (for speaker mode, where the microphone is muted while it talks).
     Q_INVOKABLE void interrupt();
+    // Keeps the microphone shut (speaker mode) for this long: the app is about to make a sound
+    // of its own, and the agent must not hear it.
+    Q_INVOKABLE void holdMic(int ms);
     // The agent says exactly this (an approval request, a question). Queued after what it is saying.
     Q_INVOKABLE void say(const QString &text);
     // Types to the agent once the conversation is ready (right away if it already is): what
@@ -210,6 +243,7 @@ signals:
     void levelChanged();
     void transcriptChanged();
     void latencyChanged();
+    void statsChanged();
     void buddyBusyChanged();
     void errorChanged();
     void testChanged();
@@ -253,6 +287,13 @@ private:
     void dropCalls();
     void setConfigChanged();
     bool gateClosed() const;
+    bool echoCancelling() const;
+    bool userTalkingOver(bool loud);
+    void processMicFrame(QByteArray frame);
+    void sendMicFrame(const QByteArray &frame);
+    void sendPreroll();
+    void resetStats();
+    void noteFirstSound();
     void remember(const QString &role, const QString &text);
 
     // connection test
@@ -273,6 +314,9 @@ private:
     QTimer m_keepAlive;
     QTimer m_idle;
     QTimer m_reconnect;
+    QTimer m_ackTimer;               // Buddy is working and the line is quiet: say so now and then
+    int m_ackCount = 0;
+    qint64 m_lastAudioMs = 0;        // when the agent last made a sound
     State m_state = State::Off;
     bool m_settingsApplied = false;
     bool m_resuming = false;
@@ -287,6 +331,25 @@ private:
     QByteArray m_oddByte;
     QStringList m_queuedText;
     bool m_lastReplyAsked = false;   // the agent's last words ended on a question            // half a sample left over from the last audio message
+    int m_bargeFrames = 0;           // consecutive loud microphone frames while the agent talks (speaker mode)
+    bool m_echoCancel = true;
+    EchoCanceller m_aec;
+    // The last few microphone frames, with whether each was clearly the user's voice. When the
+    // gate opens (the user talks over the agent) the first words are already in here.
+    struct MicFrame { QByteArray pcm; bool loud = false; };
+    QList<MicFrame> m_preroll;
+    bool m_wasEchoGated = false;     // the previous frame was held back because the agent was talking
+    int m_frames = 0;
+    double m_reportedErle = 0.0;
+    // stats
+    qint64 m_turnEndMs = 0;          // when the user's last words were final (0 = nothing waiting for an answer)
+    int m_responseMs = 0;
+    qint64 m_responseSum = 0;
+    int m_responseCount = 0;
+    qint64 m_latencySum = 0;
+    int m_latencyCount = 0;
+    int m_replies = 0;
+    int m_stalls = 0;
     QString m_lastWsError;
     QByteArray m_micBuffer;
     double m_level = 0.0;

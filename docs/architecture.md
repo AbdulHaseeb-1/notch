@@ -63,7 +63,7 @@ Large classes are split by responsibility while keeping one public header:
   - `BuddyProviderRun.cpp` — request dispatch, streaming, retries, gate and context compaction
   - `BuddyProviderStorage.cpp` — summaries, traces, approvals and questions
   - `BuddyProviderTools.cpp` — local tool implementations
-  - `BuddyProviderWeb.cpp` — web search/fetch, tool search and advisor helpers
+  - `BuddyProviderWeb.cpp` — web search/fetch helpers
   - `BuddyProviderInternal.h` — private shared types and constants
 - `ComputerUse`
   - `ComputerUse.cpp` — the controller and screenshot/state handling
@@ -191,3 +191,22 @@ animating, or keep writing a property that something paints, while it is idle.
   frame when a property actually changed (see `calmSpring` in `Buddy.qml`).
 - Aiming the eyes is cheap only if it stays quiet: `updateGaze()` ignores changes
   under half a degree, and the cursor poll slows to 10 Hz once the cursor is still.
+- **The buddy has a window of its own** (`buddyWin` in `Main.qml`), fitted by
+  `syncBuddyWindow()` and given the click-through mask the buddy already works
+  out (`Overlay.setWindowMask`). The window must not track the bubble as it
+  grows: resizing or shifting a window shows the old picture at the new place
+  for a frame or two, which made the orb jump all the time while an answer
+  streamed in. So it is sized for the largest bubble from the start
+  (`Buddy.bubbleReach`), grows only in chunks when a menu or chip needs more,
+  and shrinks only at its right and bottom edges, after things have been quiet.
+  It is kept relative to the orb, so it travels with it. Carrying the buddy only moves that
+  window (`Overlay.setWindowPosition`, once per vsync from the real cursor), so
+  nothing is redrawn while it is dragged. Inside the window the buddy still
+  works in desktop coordinates: `world` is a screen-sized item shifted by
+  `-originX/-originY`, so `Buddy.qml`, the bubble and the result panel keep
+  their numbers. Because there are now two windows, "the app lost focus"
+  (`closeOnFocusLoss`) waits a moment and only acts when neither has it, and the
+  bubble's keyboard focus is taken with `buddyWin.requestActivate()`.
+- Settings previews (`SettingsOptionTile.lit`) move only while hovered; a preview
+  that moves for the selected tile keeps the whole window redrawing for as long as
+  the page is open.

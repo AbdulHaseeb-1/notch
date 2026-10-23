@@ -33,11 +33,11 @@ Window {
         property bool hotkeyPalette: true
         property bool suppressInFullscreen: true
         property bool buddyEnabled: true
-        property bool buddySolidRing: true
         // ---- Look & glow --------------------------------------------------------
         property string buddyRingStyle: "neon"
         property real buddyRingThickness: 1.0
         property real buddyRingSpeed: 1.0
+        property bool buddyRingShader: true
         property real buddyGlowStrength: 0.6
         property string buddyGlowMode: "bloom"
         property bool buddyGlowAlways: false
@@ -73,13 +73,7 @@ Window {
         property bool buddyAllowCodeSearch: true
         property bool buddyAllowMemory: true
         property bool buddyAllowWebSearch: true
-        property bool buddyAllowToolSearch: true
-        property bool buddyAllowAdvisor: true
         property bool buddyAllowTodoTask: true
-        // P6 tool diet: only core tools upfront, rest via tool_search.
-        // Default ON: ~25% fewer tokens per request, and the diet:not-loaded
-        // guardrail teaches the model how to load deferred tools.
-        property bool buddyToolDiet: true
         // Claude's own computer-use tools (no extra fee; they add about 4,500
         // input tokens per request, only while computer use is on).
         property bool buddyOfficialComputer: true
@@ -133,8 +127,14 @@ Window {
         property string buddyLiveVoice: "aura-2-thalia-en"
         property real buddyLiveSpeed: 1.0
         property real buddyLiveVolume: 1.0
-        property string buddyLiveGreeting: ""
+        property string buddyLiveGreeting: "I'm listening."
         property string buddyLiveAudioMode: "speakers"
+        // Speaker mode: take Buddy's own voice out of the microphone (talk over it, keep the first words).
+        property bool buddyLiveEchoCancel: true
+        // Replies of a sentence or two; anything that needs thought goes to Buddy.
+        property bool buddyLiveQuick: true
+        // A soft sound while Buddy thinks, so a short pause does not feel like a hang.
+        property bool buddyLiveThinkCue: true
         // After Buddy answers: keep listening for a follow-up this many seconds; 0 = not at all
         // (the wake word starts the next conversation).
         property int buddyLiveFollowUp: 30
@@ -149,9 +149,8 @@ Window {
         property bool buddyStreamReplies: true
         // Show what Buddy is doing while it works (steps, draft, reasoning).
         property bool buddyShowThinking: true
-        property bool buddyHandoffs: true
         // JEV: a small decision model labels each request (intent, risk, effort,
-        // specialist) before the agent starts. Off by default: the request text goes
+        // and the like) before the agent starts. Off by default: the request text goes
         // to this endpoint, which is separate from the chat provider. An address
         // ending in /systemone or /decisions is a decision model (yes/no questions);
         // any other address is treated as a chat endpoint.
@@ -168,19 +167,19 @@ Window {
     readonly property string snapshotKey: [
         cfg.sizeScale, cfg.autoHide, cfg.hideDelay,
         cfg.focusMinutes, cfg.hotkeyPalette, cfg.suppressInFullscreen,
-        cfg.buddyEnabled, cfg.buddySolidRing, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
+        cfg.buddyEnabled, Math.round(cfg.buddyX), Math.round(cfg.buddyY),
         cfg.buddyPlan.length, cfg.buddyHistory.length, cfg.buddyProvider,
         cfg.buddyApiBase, cfg.buddyModel, cfg.buddyTemperature,
-        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyCuGlowStyle, cfg.buddyRingStyle, cfg.buddyRingThickness, cfg.buddyRingSpeed, cfg.buddyGlowStrength, cfg.buddyGlowMode, cfg.buddyGlowAlways, cfg.buddyVoiceFx, cfg.buddyAllowEditor,
+        cfg.buddyAgentMode, cfg.buddyAllowBash, cfg.buddyAllowComputer, cfg.buddyCuShowCursor, cfg.buddyCuShowGlow, cfg.buddyCuGlowIntensity, cfg.buddyCuGlowStyle, cfg.buddyRingStyle, cfg.buddyRingThickness, cfg.buddyRingSpeed, cfg.buddyRingShader, cfg.buddyGlowStrength, cfg.buddyGlowMode, cfg.buddyGlowAlways, cfg.buddyVoiceFx, cfg.buddyAllowEditor,
         cfg.buddyAllowCodeSearch, cfg.buddyAllowMemory, cfg.buddyAllowWebSearch,
-        cfg.buddyAllowToolSearch, cfg.buddyAllowAdvisor, cfg.buddyAllowTodoTask,
+        cfg.buddyAllowTodoTask,
         cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots, cfg.buddyAllowMusic,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceAutoSend,
         cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddySpeakReports,
         cfg.buddyLiveEnabled, cfg.buddySttEngine, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel,
-        cfg.buddyLiveVoice, cfg.buddyLiveSpeed, cfg.buddyLiveVolume, cfg.buddyLiveAudioMode, cfg.buddyLiveFollowUp, cfg.buddyLiveAskBuddy,
+        cfg.buddyLiveVoice, cfg.buddyLiveSpeed, cfg.buddyLiveVolume, cfg.buddyLiveAudioMode, cfg.buddyLiveFollowUp, cfg.buddyLiveAskBuddy, cfg.buddyLiveEchoCancel, cfg.buddyLiveQuick, cfg.buddyLiveThinkCue,
         cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsKokoroBase, cfg.buddyTtsKokoroVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
-        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking, cfg.buddyHandoffs,
+        cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking,
         cfg.buddyClassifierEnabled, cfg.buddyClassifierBase, cfg.buddyClassifierModel,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
@@ -224,12 +223,26 @@ Window {
     Timer { id: musicHoldTimer; interval: 20000; onTriggered: root.musicHold = false }
     readonly property bool musicShown: musicPlaying || musicHold || nowPlaying.barOpen
                                        || musicPillHover.hovered || dragging || !cfg.buddyEnabled
+    // The pill opens into the player card while a track is loaded. An app window in the space
+    // it would take tucks the card up under the top edge, leaving a sliver that a click pops out;
+    // it goes back under once the pointer has left the popped card.
+    readonly property bool musicExpanded: Media.hasTrack && musicShown && !fullscreenGuard
+    readonly property bool musicWindowed: Media.hasTrack && Fullscreen.occupied && !fullscreenGuard
+    property bool musicPopped: false
+    readonly property bool musicSliver: musicWindowed && musicShown && !musicPopped
+    readonly property real sliverH: Math.round(nowPlaying.cardH * 0.05)
+    readonly property real tuckY: sliverH - nowPlaying.cardH
+    Timer {
+        id: popBackTimer
+        interval: 900
+        onTriggered: if (!musicPillHover.hovered) root.musicPopped = false
+    }
     property real musicFade: musicShown ? 1 : 0
     Behavior on musicFade { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
     // Something at the top edge worth revealing at all.
     readonly property bool notchHasContent: musicShown || timerPill.visible
     readonly property real shownY: topGap
-    readonly property real hiddenY: -pillH - 4
+    readonly property real hiddenY: -Math.max(pillH, nowPlaying.cardH) - 4
 
     function setScale(v) {
         cfg.sizeScale = Math.round(Math.max(0.7, Math.min(1.6, v)) * 100) / 100
@@ -265,7 +278,7 @@ Window {
     readonly property bool dragging: peekZone.containsDrag || musicDrop.containsDrag
     readonly property bool holdOpen: !cfg.autoHide || panelOpen || hubOpen || paletteOpen
                                      || resizing || introHold
-                                     || dragging || timerAlert
+                                     || dragging || timerAlert || musicPopped
     readonly property bool wantVisible: pointerInside || holdOpen || desktopClear
 
     onWantVisibleChanged: syncReveal()
@@ -298,6 +311,12 @@ Window {
         }
     }
     readonly property bool fullyHidden: !revealed && progress <= 0.001
+
+    // Where the notch sits for `progress` alone, and the music card's tuck (1 = only its sliver
+    // shows, under the top edge). The tuck has its own animation so it slides in and out smoothly.
+    readonly property real dockRowY: hiddenY + (shownY - hiddenY) * progress
+    property real tuck: musicSliver ? 1 : 0
+    Behavior on tuck { NumberAnimation { duration: 380; easing.type: Easing.OutCubic } }
 
     function clamp01(v) { return Math.max(0, Math.min(1, v)) }
 
@@ -376,17 +395,6 @@ Window {
         paletteOpen = false
     }
 
-    // Tells the user which shortcut the palette listens on when the preferred
-    // one was already taken at startup.
-    function hotkeyNotice() {
-        if (!cfg.hotkeyPalette)
-            return
-        if (!Hotkey.registered)
-            showToast(qsTr("Palette hotkey unavailable"))
-        else if (!Hotkey.preferred)
-            showToast(qsTr("Ctrl+Alt+Space is taken — press %1 for the palette").arg(Hotkey.shortcut))
-    }
-
     // The built-in commands the palette's list can offer.
     function runCommand(id) {
         switch (id) {
@@ -426,7 +434,11 @@ Window {
     // Clicking anywhere outside Noch must not cut a reply off: the flyouts
     // close, but the buddy only tucks its bubble away and keeps working — the
     // orb stays lit and pops the answer back up when it lands.
-    onActiveChanged: if (!active) {
+    // The buddy has a window of its own, so focus moving between the two windows is not
+    // "clicking elsewhere": the check waits a moment and only acts when neither has it.
+    function closeOnFocusLoss() {
+        if (root.active || buddyWin.active)
+            return
         panelOpen = false
         hubOpen = false
         paletteOpen = false
@@ -437,6 +449,8 @@ Window {
         else
             buddy.stash()
     }
+    Timer { id: focusLossTimer; interval: 80; onTriggered: root.closeOnFocusLoss() }
+    onActiveChanged: if (!active) focusLossTimer.restart()
 
     Shortcut { sequence: "Esc"; onActivated: root.closeAll() }
     Shortcut { sequence: "Ctrl+,"; onActivated: root.toggleSettings() }
@@ -458,8 +472,8 @@ Window {
     // every single dependency change (including no-op hover ticks) re-fired
     // onMaskKeyChanged and queued a full Win32 region rebuild. Joined, the
     // comparison actually succeeds and identical states cost nothing.
-    readonly property bool buddyInteracting: buddy.dragging || buddyPanel.interacting
-    readonly property string maskKey: [revealed, fullyHidden, Math.round(pillH), width,
+    readonly property bool buddyInteracting: buddyPanel.interacting
+    readonly property string maskKey: [revealed, fullyHidden, musicSliver, musicPopped, Math.round(musicDock.height), width,
                                     Math.round(musicDock.x), Math.round(musicDock.width), Math.round(timerPill.width),
                                     musicShown, Math.round(timerPill.x),
                                     panelVisible, Math.round(panelTargetH),
@@ -468,11 +482,7 @@ Window {
                                     Math.round(paletteTargetH),
                                     tipVisible, hudVisible, tip.opacity > 0.01,
                                     Math.round(tip.targetX), Math.round(tip.targetWidth),
-                                    cfg.buddyEnabled, buddy.session, buddyInteracting,
-                                    buddyInteracting ? 0 : Math.round(buddy.x),
-                                    buddyInteracting ? 0 : Math.round(buddy.y),
-                                    Math.round(buddy.width), Math.round(buddy.height),
-                                    buddyInteracting ? "" : buddy.maskSig,
+                                    cfg.buddyEnabled, buddyInteracting,
                                     buddyPanel.open, buddyPanel.visible,
                                     buddyInteracting ? 0 : Math.round(buddyPanel.dragX),
                                     buddyInteracting ? 0 : Math.round(buddyPanel.dragY),
@@ -480,8 +490,8 @@ Window {
                                     buddyInteracting ? 0 : Math.round(buddyPanel.height)].join(",")
     onMaskKeyChanged: Qt.callLater(updateMask)
 
-    // The buddy's regions exist whether or not the notch is tucked away.
-    // While dragging the buddy or its panel, expand to the full window rect so
+    // The buddy's own regions belong to its window (see syncBuddyWindow); this window only
+    // carries the result panel. While the panel is dragged, expand to the full window rect so
     // Win32 SetWindowRgn is called only once at drag start and once on release.
     function pushBuddyRegions(r) {
         if (!cfg.buddyEnabled || !buddy.visible)
@@ -490,9 +500,6 @@ Window {
             r.push({ x: 0, y: 0, width: root.width, height: root.height, radius: 0 })
             return
         }
-        const br = buddy.regionsIn(root.contentItem)
-        for (let i = 0; i < br.length; ++i)
-            r.push(br[i])
         if (buddyPanel.open || buddyPanel.visible) {
             r.push({ x: Math.round(buddyPanel.dragX) - 6,
                      y: Math.round(buddyPanel.dragY) - 16,
@@ -520,11 +527,11 @@ Window {
             const tipActive = tipVisible || hudVisible || tip.opacity > 0.01
             const below = tipActive ? 52 : m
             if (right > left)
-                r.push({ x: left, y: 0, width: right - left, height: shownY + pillH + below, radius: 26 })
+                r.push({ x: left, y: 0, width: right - left, height: musicSliver ? sliverH + 4 : shownY + musicDock.height + below, radius: 26 })
             if (tipActive) {
                 const tx0 = Math.round(Math.min(tip.x, tip.targetX) - m)
                 const tx1 = Math.round(Math.max(tip.x + tip.width, tip.targetX + tip.targetWidth) + m)
-                r.push({ x: tx0, y: shownY + pillH, width: Math.max(40, tx1 - tx0), height: 52, radius: 14 })
+                r.push({ x: tx0, y: shownY + musicDock.height, width: Math.max(40, tx1 - tx0), height: 52, radius: 14 })
             }
             if (panelVisible) {
                 r.push({ x: panelItem.x - m, y: panelItem.baseY - 8,
@@ -539,6 +546,8 @@ Window {
                          width: paletteFlyout.width + 2 * m, height: paletteTargetH + 2 * m + 8, radius: 24 })
             }
         }
+        if (musicSliver)
+            r.push({ x: musicDock.x - 8, y: 0, width: musicDock.width + 16, height: sliverH + 4, radius: 12 })
         pushBuddyRegions(r)
         Overlay.setInteractiveRegions(r)
     }
@@ -565,6 +574,7 @@ Window {
                 || /^[a-z]{2,3}(-[A-Za-z]{2,4})?-/.test(cfg.buddyTtsGoogleVoice))
             cfg.buddyTtsGoogleVoice = "Kore"
         updateMask()
+        Qt.callLater(syncBuddyWindow)
     }
 
     // ------------------------------------------------------------ peek dash
@@ -592,15 +602,23 @@ Window {
     Item {
         id: musicDock
         width: nowPlaying.width
-        height: root.pillH
+        height: nowPlaying.height
         x: Math.round((root.width - width) / 2)
-        y: root.hiddenY + (root.shownY - root.hiddenY) * root.progress
-        opacity: root.clamp01(root.progress * 4) * root.musicFade
+        y: root.dockRowY + (root.tuckY - root.dockRowY) * root.tuck
+        opacity: root.clamp01(Math.max(root.progress, root.tuck) * 4) * root.musicFade
         visible: opacity > 0.01
-        scale: 0.85 + 0.15 * root.clamp01(root.progress)
+        scale: 0.85 + 0.15 * root.clamp01(Math.max(root.progress, root.tuck))
         transformOrigin: Item.Top
 
-        HoverHandler { id: musicPillHover }
+        HoverHandler {
+            id: musicPillHover
+            onHoveredChanged: {
+                if (hovered)
+                    popBackTimer.stop()
+                else if (root.musicPopped)
+                    popBackTimer.restart()
+            }
+        }
 
         WheelHandler {
             acceptedModifiers: Qt.ControlModifier
@@ -611,6 +629,9 @@ Window {
         NowPlaying {
             id: nowPlaying
             s: root.s
+            expanded: root.musicExpanded
+            tucked: root.musicSliver
+            onPopRequested: root.musicPopped = true
             highlight: musicDrop.containsDrag
             appear: root.clamp01(root.progress * 1.4 - 0.2)
             onEmptyClicked: root.showToast(qsTr("Drop songs here, or ask Buddy to play some music"))
@@ -755,41 +776,172 @@ Window {
             buddy.previewFx(kind)
     }
 
-    Buddy {
-        id: buddy
-        visible: cfg.buddyEnabled
-        solidRing: cfg.buddySolidRing
-        ringStyle: cfg.buddyRingStyle
-        ringThickness: cfg.buddyRingThickness
-        ringSpeed: cfg.buddyRingSpeed
-        glowStrength: cfg.buddyGlowStrength
-        glowMode: cfg.buddyGlowMode
-        glowAlways: cfg.buddyGlowAlways
-        voiceFx: cfg.buddyVoiceFx
-        motionPaused: root.fullscreenGuard || !visible
-        s: root.s
-        desktop: root.contentItem
-        focusTimer: sessionTimer
-        savedPlan: cfg.buddyPlan
-        anchor: root.buddyAnchor
-        anchorY: root.buddyAnchorY
-        resultPanel: buddyPanel
+    // The buddy lives in a window of its own, just big enough for the orb, its light, its
+    // bubble and its menus. Carrying it then moves that window natively: the window system
+    // shifts the finished picture, and nothing here is drawn again (before, every step of a
+    // drag redrew the whole screen-sized window, settings page and all).
+    //
+    // Inside the window the buddy still works in desktop coordinates (the same ones as this
+    // window's): `world` is a screen-sized item shifted by -origin, so the window shows the
+    // part of the desktop it sits over, and the buddy, its bubble and the result panel keep
+    // using the numbers they always did.
+    Window {
+        id: buddyWin
+        title: qsTr("Noch Buddy")
+        color: "transparent"
+        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
+        visible: cfg.buddyEnabled && geometryReady
+        // Where the window's top-left corner is, in desktop coordinates.
+        property real originX: 0
+        property real originY: 0
+        property bool geometryReady: false
 
-        onBuddyMoved: (x, y) => {
-            cfg.buddyX = Math.round(x)
-            cfg.buddyY = Math.round(y)
+        Shortcut { sequence: "Esc"; onActivated: root.closeAll() }
+        Shortcut { sequence: "Ctrl+,"; onActivated: root.toggleSettings() }
+        onActiveChanged: if (!active) focusLossTimer.restart()
+
+        Item {
+            id: world
+            x: -buddyWin.originX
+            y: -buddyWin.originY
+            width: root.width
+            height: root.height
+
+            Buddy {
+                id: buddy
+                visible: cfg.buddyEnabled
+                nativeDrag: true
+                ringStyle: cfg.buddyRingStyle
+                ringThickness: cfg.buddyRingThickness
+                ringSpeed: cfg.buddyRingSpeed
+                ringShader: cfg.buddyRingShader
+                glowStrength: cfg.buddyGlowStrength
+                liveThinkCue: cfg.buddyLiveThinkCue
+                glowMode: cfg.buddyGlowMode
+                glowAlways: cfg.buddyGlowAlways
+                voiceFx: cfg.buddyVoiceFx
+                motionPaused: root.fullscreenGuard || !visible
+                s: root.s
+                desktop: world
+                focusTimer: sessionTimer
+                savedPlan: cfg.buddyPlan
+                anchor: root.buddyAnchor
+                anchorY: root.buddyAnchorY
+                resultPanel: buddyPanel
+
+                onBuddyMoved: (x, y) => {
+                    cfg.buddyX = Math.round(x)
+                    cfg.buddyY = Math.round(y)
+                }
+                onToastRequested: (text) => root.showToast(text)
+                onPaletteRequested: root.summonPalette()
+                onClipboardRequested: root.openHub(1)
+                onSettingsRequested: root.toggleSettings()
+                // The bubble's text field is in this window, so this is the one that takes the keyboard.
+                onActivationRequested: buddyWin.requestActivate()
+                onPlanEdited: (plan) => cfg.buddyPlan = JSON.stringify(plan)
+                onPermissionModeRequested: (mode) => cfg.buddyPermissionMode = mode
+                voiceAutoSend: cfg.buddyVoiceAutoSend
+                historyJson: cfg.buddyHistory
+                onHistorySaved: (json) => cfg.buddyHistory = json
+                onDragMoved: root.carryBuddyWindow()
+            }
         }
-        onToastRequested: (text) => root.showToast(text)
-        onPaletteRequested: root.summonPalette()
-        onClipboardRequested: root.openHub(1)
-        onSettingsRequested: root.toggleSettings()
-        onActivationRequested: root.requestActivate()
-        onPlanEdited: (plan) => cfg.buddyPlan = JSON.stringify(plan)
-        onPermissionModeRequested: (mode) => cfg.buddyPermissionMode = mode
-        voiceAutoSend: cfg.buddyVoiceAutoSend
-        historyJson: cfg.buddyHistory
-        onHistorySaved: (json) => cfg.buddyHistory = json
     }
+
+    // Fits the buddy's window round what the buddy shows, and gives it the click-through
+    // mask the buddy already works out (the orb and its light, the bubble, the menu, the chips).
+    //
+    // The window must NOT follow every change of those regions. Resizing or shifting a window is
+    // not free of tearing: for a frame or two the old picture sits at the new place, so a window
+    // that tracked a streaming answer line by line made the orb and the bubble jump a few pixels
+    // all the time. So the window is sized for the largest bubble from the start (opening it
+    // changes nothing), only grows, a chunk at a time, when something else (a menu, a chip) needs
+    // more, and only ever shrinks at its right and bottom edges (moving the left or top edge
+    // shifts the picture) when things have been quiet for a while. The rectangle is kept relative
+    // to the orb's centre, so it travels with the orb: after a drag the new place needs no resize.
+    //
+    // mode: "fit" (the buddy was moved or resized: fit afresh), "grow" (default), "shrink".
+    property var buddyRel: null            // { x0, y0, x1, y1 } relative to the orb's centre
+    function syncBuddyWindow(mode) {
+        if (!cfg.buddyEnabled || buddy.dragging)
+            return
+        const rs = buddy.regionsIn(world)
+        if (rs.length === 0)
+            return
+        const cx = Math.floor(buddy.x + buddy.width / 2)
+        const cy = Math.floor(buddy.y + buddy.height / 2)
+        const rest = Math.ceil(buddy.orbRadius + 40 * buddy.s)
+        const need = { x0: -rest, y0: -rest, x1: rest, y1: rest }
+        const take = (x0, y0, x1, y1) => {
+            need.x0 = Math.min(need.x0, x0 - cx)
+            need.y0 = Math.min(need.y0, y0 - cy)
+            need.x1 = Math.max(need.x1, x1 - cx)
+            need.y1 = Math.max(need.y1, y1 - cy)
+        }
+        for (let i = 0; i < rs.length; ++i)
+            take(rs[i].x, rs[i].y, rs[i].x + rs[i].width, rs[i].y + rs[i].height)
+        // Always room for the largest bubble, open or not: opening it then changes nothing about
+        // the window (a window that grew when the bubble opened showed a ghost of the orb at the
+        // wrong place for a frame or two). It is transparent and click-through where nothing is.
+        const br = buddy.bubbleReach()
+        if (br)
+            take(br.x, br.y, br.x + br.width, br.y + br.height)
+
+        const slack = 48
+        const padded = { x0: need.x0 - slack, y0: need.y0 - slack, x1: need.x1 + slack, y1: need.y1 + slack }
+        const cur = root.buddyRel
+        let next = cur
+        if (!cur || mode === "fit") {
+            next = padded
+        } else if (need.x0 < cur.x0 || need.y0 < cur.y0 || need.x1 > cur.x1 || need.y1 > cur.y1) {
+            next = { x0: Math.min(cur.x0, padded.x0), y0: Math.min(cur.y0, padded.y0),
+                     x1: Math.max(cur.x1, padded.x1), y1: Math.max(cur.y1, padded.y1) }
+        } else if (mode === "shrink") {
+            next = { x0: cur.x0, y0: cur.y0,
+                     x1: cur.x1 > padded.x1 + 40 ? padded.x1 : cur.x1,
+                     y1: cur.y1 > padded.y1 + 40 ? padded.y1 : cur.y1 }
+        }
+        if (!cur || next.x0 !== cur.x0 || next.y0 !== cur.y0 || next.x1 !== cur.x1 || next.y1 !== cur.y1)
+            root.buddyRel = next
+        else
+            next = cur
+        if (mode !== "shrink")
+            buddyQuiet.restart()
+
+        const ox = cx + next.x0
+        const oy = cy + next.y0
+        const local = []
+        for (let i = 0; i < rs.length; ++i)
+            local.push({ x: rs[i].x - ox, y: rs[i].y - oy, width: rs[i].width, height: rs[i].height, radius: rs[i].radius })
+        buddyWin.originX = ox
+        buddyWin.originY = oy
+        Overlay.setWindowGeometry(buddyWin, root.x + ox, root.y + oy, next.x1 - next.x0, next.y1 - next.y0)
+        Overlay.setWindowMask(buddyWin, local)
+        buddyWin.geometryReady = true
+    }
+    // Quiet for a while: see whether the window can shrink back.
+    Timer { id: buddyQuiet; interval: 2500; onTriggered: root.syncBuddyWindow("shrink") }
+
+    // While the buddy is carried: move the window, nothing else.
+    function carryBuddyWindow() {
+        Overlay.setWindowPosition(buddyWin,
+                                  root.x + buddyWin.originX + Math.round(buddy.dragOffsetX),
+                                  root.y + buddyWin.originY + Math.round(buddy.dragOffsetY))
+    }
+
+    Connections {
+        target: buddy
+        function onMaskSigChanged() { Qt.callLater(root.syncBuddyWindow) }
+        function onXChanged() { root.syncBuddyWindow("fit") }
+        function onYChanged() { root.syncBuddyWindow("fit") }
+        function onWidthChanged() { Qt.callLater(root.syncBuddyWindow, "fit") }
+        function onVisibleChanged() { Qt.callLater(root.syncBuddyWindow) }
+        // Put down (or cancelled): the window settles where the buddy now is.
+        function onDraggingChanged() { Qt.callLater(root.syncBuddyWindow, "fit") }
+    }
+    onWidthChanged: Qt.callLater(syncBuddyWindow)
+    onHeightChanged: Qt.callLater(syncBuddyWindow)
 
     // Keep the C++ buddy provider and sound synthesizer in sync with saved settings.
     Binding { target: BuddyAgent; property: "provider"; value: cfg.buddyProvider }
@@ -811,23 +963,19 @@ Window {
         id: agentOverlay
         hudScreen: root.screen
         hudCenterX: root.x + root.width / 2
-        hudTop: root.y + root.shownY + root.pillH + 10
+        hudTop: root.y + root.shownY + musicDock.height + 10
     }
     Binding { target: BuddyAgent; property: "allowEditor"; value: cfg.buddyAllowEditor }
     Binding { target: BuddyAgent; property: "allowCodeSearch"; value: cfg.buddyAllowCodeSearch }
     Binding { target: BuddyAgent; property: "allowMemory"; value: cfg.buddyAllowMemory }
     Binding { target: BuddyAgent; property: "allowWebSearch"; value: cfg.buddyAllowWebSearch }
-    Binding { target: BuddyAgent; property: "allowToolSearch"; value: cfg.buddyAllowToolSearch }
-    Binding { target: BuddyAgent; property: "allowAdvisor"; value: cfg.buddyAllowAdvisor }
     Binding { target: BuddyAgent; property: "allowTodoTask"; value: cfg.buddyAllowTodoTask }
-    Binding { target: BuddyAgent; property: "toolDiet"; value: cfg.buddyToolDiet }
     Binding { target: BuddyAgent; property: "permissionMode"; value: cfg.buddyPermissionMode }
     Binding { target: BuddyAgent; property: "workspaceRoot"; value: cfg.buddyWorkspaceRoot }
     Binding { target: BuddyAgent; property: "redactSecrets"; value: cfg.buddyRedactSecrets }
     Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
     Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
     Binding { target: BuddyAgent; property: "showThinking"; value: cfg.buddyShowThinking }
-    Binding { target: BuddyAgent; property: "handoffs"; value: cfg.buddyHandoffs }
     Binding { target: BuddyAgent; property: "classifierBase"; value: cfg.buddyClassifierBase }
     // Own key if set; otherwise the OpenCode chat key, but only for an OpenCode address,
     // so a key is never sent to a host it was not made for.
@@ -887,6 +1035,8 @@ Window {
     Binding { target: Live; property: "greeting"; value: cfg.buddyLiveGreeting }
     Binding { target: Live; property: "audioMode"; value: cfg.buddyLiveAudioMode }
     Binding { target: Live; property: "followUpSeconds"; value: cfg.buddyLiveFollowUp }
+    Binding { target: Live; property: "echoCancel"; value: cfg.buddyLiveEchoCancel }
+    Binding { target: Live; property: "quickReplies"; value: cfg.buddyLiveQuick }
     Binding { target: BuddySound; property: "enabled"; value: cfg.buddySfxEnabled }
     // The wake word chimes the instant it hears its phrase: keep the device open for it.
     Binding { target: BuddySound; property: "keepOpen"; value: Wake.active }
@@ -937,7 +1087,6 @@ Window {
     Connections {
         target: Hotkey
         function onActivated() { root.summonPalette() }
-        function onRegisteredChanged() { root.hotkeyNotice() }
     }
     Binding { target: Hotkey; property: "enabled"; value: cfg.hotkeyPalette }
 
@@ -951,11 +1100,17 @@ Window {
             console.log("noch qml: top space", Fullscreen.occupied ? "taken by " + Fullscreen.occupiedBy : "clear")
         }
     }
+    // The zone is the pill's footprint once it is open (the card, while a track is loaded), so it
+    // does not move as the pill opens or closes: an app that gets under the card then closes it.
+    function musicZone() {
+        const cx = root.width / 2
+        const half = nowPlaying.footW / 2
+        const right = timerPill.visible ? cx + half + musicGap + timerPill.width : cx + half
+        return Qt.rect(cx - half - 8, 0, right - (cx - half) + 16, shownY + nowPlaying.footH + 8)
+    }
     Binding {
         target: Fullscreen; property: "zone"
-        value: Qt.rect(musicDock.x - 8, 0,
-                       (timerPill.visible ? timerPill.x + timerPill.width - musicDock.x : musicDock.width) + 16,
-                       root.shownY + root.pillH + 8)
+        value: root.musicZone()
     }
 
     Connections {

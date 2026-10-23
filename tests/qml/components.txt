@@ -12,3 +12,6 @@ buddy/fx/BuddyGlow
 buddy/fx/BuddyRing
 buddy/fx/BuddyListenFx
 buddy/fx/BuddySpeakFx
+buddy/BuddyLiveCaption
+components/Glass
+agent/ToolApprovalCard

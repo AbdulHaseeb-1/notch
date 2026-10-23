@@ -25,6 +25,31 @@ QPointF OverlayController::cursorPos() const
     return QPointF(m_window->mapFromGlobal(global));
 }
 
+void OverlayController::setWindowMask(QWindow *window, const QVariantList &regions)
+{
+    if (!window)
+        return;
+    const QRegion next = regionFromShapes(regions);
+    if (window->mask() == next)
+        return;
+    window->setMask(next);
+}
+
+void OverlayController::setWindowGeometry(QWindow *window, int x, int y, int width, int height)
+{
+    if (!window)
+        return;
+    const QRect next(x, y, width, height);
+    if (window->geometry() != next)
+        window->setGeometry(next);
+}
+
+void OverlayController::setWindowPosition(QWindow *window, int x, int y)
+{
+    if (window && window->position() != QPoint(x, y))
+        window->setPosition(x, y);
+}
+
 void OverlayController::setInteractiveRegions(const QVariantList &regions)
 {
     const QRegion nextRegion = regionFromShapes(regions);

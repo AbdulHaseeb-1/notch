@@ -49,28 +49,52 @@ QString MemoryStore::gistOf(const QString &text)
 
 QList<MemoryFact> MemoryStore::list() const
 {
-    QList<MemoryFact> out;
+    // Stat everything (cheap), but read only the newest kMaxListed: this runs
+    // every turn, so its memory must not grow with the size of the store.
+    QFileInfoList files;
     QDirIterator it(m_root, { QStringLiteral("*.md") }, QDir::Files,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
-        const QString f = it.next();
+        it.next();
         // M4: one oversized file must not make every corpus read unbounded.
-        if (QFileInfo(f).size() > kMaxScanBytes)
+        if (it.fileInfo().size() > kMaxScanBytes)
             continue;
-        QFile file(f);
+        files.append(it.fileInfo());
+    }
+    std::sort(files.begin(), files.end(),
+              [](const QFileInfo &a, const QFileInfo &b) { return a.lastModified() > b.lastModified(); });
+    if (files.size() > kMaxListed)
+        files.resize(kMaxListed);
+
+    QList<MemoryFact> out;
+    out.reserve(files.size());
+    for (const QFileInfo &info : std::as_const(files)) {
+        QFile file(info.absoluteFilePath());
         if (!file.open(QIODevice::ReadOnly))
             continue;
         MemoryFact fact;
-        fact.id = QDir(m_root).relativeFilePath(f);
+        fact.id = QDir(m_root).relativeFilePath(info.absoluteFilePath());
         fact.text = QString::fromUtf8(file.readAll());
         fact.gist = gistOf(fact.text);
-        fact.modified = QFileInfo(f).lastModified();
+        fact.modified = info.lastModified();
         fact.procedure = fact.id.startsWith(QLatin1String("procedures/"));
         out.append(fact);
     }
-    std::sort(out.begin(), out.end(),
-              [](const MemoryFact &a, const MemoryFact &b) { return a.modified > b.modified; });
     return out;
+}
+
+// Auto-extracted facts pile up over months; keep the newest kMaxFacts on disk.
+// Procedures are curated on purpose and never pruned here.
+void MemoryStore::pruneFacts() const
+{
+    QDir dir(QDir(m_root).absoluteFilePath(QStringLiteral("facts")));
+    QFileInfoList files = dir.entryInfoList({ QStringLiteral("*.md") }, QDir::Files);
+    if (files.size() <= kMaxFacts)
+        return;
+    std::sort(files.begin(), files.end(),
+              [](const QFileInfo &a, const QFileInfo &b) { return a.lastModified() > b.lastModified(); });
+    for (qsizetype i = kMaxFacts; i < files.size(); ++i)
+        QFile::remove(files.at(i).absoluteFilePath());
 }
 
 MemoryFact MemoryStore::get(const QString &id) const
@@ -104,9 +128,13 @@ QString MemoryStore::addFact(const QString &text, bool procedure)
     const QByteArray hash = QCryptographicHash::hash(text.toUtf8(), QCryptographicHash::Sha1).toHex().left(12);
     const QString name = QString::fromLatin1(hash) + QStringLiteral(".md");
     QFile file(dir.absoluteFilePath(name));
+    const bool isNew = !file.exists();
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return QString();
     file.write(text.toUtf8());
+    file.close();
+    if (isNew && !procedure)
+        pruneFacts();
     return sub + QLatin1Char('/') + name;
 }
 
