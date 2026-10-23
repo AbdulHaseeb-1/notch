@@ -26,16 +26,13 @@
 #include "DeepgramAgent.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
-#include "GlassBackdrop.h"
 #include "GlobalHotkey.h"
 #include "IconSet.h"
 #include "MediaHub.h"
 #include "MusicPlayer.h"
-#include "NightLight.h"
 #include "OverlayController.h"
 #include "PowerActions.h"
 #include "PushToTalkKey.h"
-#include "Radios.h"
 #include "RunningApps.h"
 #include "SpeechOut.h"
 #include "VoiceInput.h"
@@ -224,17 +221,6 @@ public:
     static BuddySfx *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
-struct BackdropSingleton
-{
-    Q_GADGET
-    QML_FOREIGN(GlassBackdrop)
-    QML_NAMED_ELEMENT(Backdrop)
-    QML_SINGLETON
-public:
-    inline static GlassBackdrop *s_singletonInstance = nullptr;
-    static GlassBackdrop *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
-};
-
 struct OpenAppsSingleton
 {
     Q_GADGET
@@ -277,28 +263,6 @@ struct AudioSingleton
 public:
     inline static AudioDevices *s_singletonInstance = nullptr;
     static AudioDevices *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
-};
-
-struct RadiosSingleton
-{
-    Q_GADGET
-    QML_FOREIGN(Radios)
-    QML_NAMED_ELEMENT(Radio)
-    QML_SINGLETON
-public:
-    inline static Radios *s_singletonInstance = nullptr;
-    static Radios *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
-};
-
-struct NightLightSingleton
-{
-    Q_GADGET
-    QML_FOREIGN(NightLight)
-    QML_NAMED_ELEMENT(Night)
-    QML_SINGLETON
-public:
-    inline static NightLight *s_singletonInstance = nullptr;
-    static NightLight *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
 struct PowerSingleton

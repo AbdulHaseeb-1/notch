@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Window
-import QtQuick.Dialogs
 import QtCore
 
 Window {
@@ -1117,15 +1116,5 @@ Window {
         target: AppIndex
         function onCommandRequested(command) { root.runCommand(command) }
         function onToastRequested(text) { root.showToast(text) }
-    }
-
-    Connections {
-        target: Radio
-        function onDenied() { root.showToast(qsTr("Windows blocked that switch")) }
-    }
-
-    Connections {
-        target: Night
-        function onFailed() { root.showToast(qsTr("Night light could not be switched here")) }
     }
 }

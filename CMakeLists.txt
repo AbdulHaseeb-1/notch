@@ -104,8 +104,6 @@ set(NOCH_SOURCES
     src/media/MediaHub.h
     src/media/MusicPlayer.cpp
     src/media/MusicPlayer.h
-    src/media/Radios.cpp
-    src/media/Radios.h
     src/media/SmtcMedia.cpp
     src/media/SmtcMedia.h
     src/media/OnlineTrack.h
@@ -116,12 +114,8 @@ set(NOCH_SOURCES
     src/platform/Appearance.h
     src/platform/FullscreenWatcher.cpp
     src/platform/FullscreenWatcher.h
-    src/platform/GlassBackdrop.cpp
-    src/platform/GlassBackdrop.h
     src/platform/GlobalHotkey.cpp
     src/platform/GlobalHotkey.h
-    src/platform/NightLight.cpp
-    src/platform/NightLight.h
     src/platform/OverlayController.cpp
     src/platform/OverlayController.h
     src/platform/PowerActions.cpp
@@ -202,7 +196,6 @@ set(NOCH_QML_FILES
     qml/components/Glass.qml
     qml/components/Glyph.qml
     qml/components/MenuRow.qml
-    qml/components/MoreButton.qml
     qml/components/PeekDash.qml
     qml/components/ResizeGrip.qml
     qml/components/Segmented.qml

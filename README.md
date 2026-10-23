@@ -50,8 +50,7 @@ you push the pointer to the top of the screen.
   still summons it. Turn **Keep quiet over games** off in Settings to ignore
   this.
 - **Settings** - the `...` button at the right end (or Ctrl + , while Noch is
-  focused). Esc or clicking elsewhere closes it. **Blur behind (beta)** blurs the desktop behind the
-  glass (see below); it is off by default.
+  focused). Esc or clicking elsewhere closes it.
   Settings has a sidebar of categories (General, Buddy, Look & glow, Voice, Deepgram,
   AI model, Agent & tools, Safety) with a search box that narrows them by what
   they contain (Ctrl + F), and Ctrl + Tab or Ctrl + 1..8 to move between them.
@@ -93,13 +92,6 @@ icons swell toward the pointer and settle, and toggles, tabs and pills have
 springy overshoots. Only the glass changes shape, so nothing is re-laid-out per
 frame.
 
-**About the blur.** Noch's window is a transparent overlay as wide as the
-screen. The system acrylic material blurs the *whole* window, so earlier builds
-fogged most of the desktop. Blur behind now asks the compositor
-(`DwmEnableBlurBehindWindow`) to blur only the rounded shapes of the notch and
-its open flyouts. It is a beta: with it off the glass is simply denser, so it
-reads on any wallpaper.
-
 ## Build
 
 Requires Qt 6.9+ (uses `RectangularShadow` from `QtQuick.Effects`) and CMake 3.21+. `run.bat` builds,
@@ -139,8 +131,8 @@ src/
   chat/               saved chats and session serialization
   common/             small header-only helpers
   desktop/            dock, app search/icons, clipboard, running windows
-  media/              music player, Windows media sessions, audio, radios
-  platform/           Win32 integration: overlay, blur, hotkeys, power, appearance
+  media/              music player, Windows media sessions, audio
+  platform/           Win32 integration: overlay, hotkeys, power, appearance
   voice/              microphone input, wake word, speech output, buddy SFX
 qml/
   Main.qml            window shell: notch, reveal, resize, input mask

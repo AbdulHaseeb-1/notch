@@ -38,8 +38,8 @@ registered singletons and their signals.
 | `src/chat/` | Saved chats, turn storage, session formatting and resume/branch support |
 | `src/common/` | Header-only utilities shared by more than one domain (`ShapeRegion.h`, `ImageAlpha.h`) |
 | `src/desktop/` | Dock controller, app discovery/search, icon extraction, clipboard history, running windows |
-| `src/media/` | Local music player, Windows media sessions, audio devices, radios |
-| `src/platform/` | Win32/Windows integration: overlay input regions, glass backdrop, global hotkeys, fullscreen watcher, night light, power actions, appearance |
+| `src/media/` | Local music player, Windows media sessions, audio devices |
+| `src/platform/` | Win32/Windows integration: overlay input regions, global hotkeys, fullscreen watcher, power actions, appearance |
 | `src/voice/` | Microphone capture, voice input, wake word, speech output, synthesised buddy cues, and Deepgram (live voice-agent conversation, speech to text, voice: see [deepgram.md](deepgram.md)) |
 
 `src/main.cpp` stays at the root because it is the process entry point.

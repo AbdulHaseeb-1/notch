@@ -1,7 +1,7 @@
 #pragma once
 
 // Minimal hand-written ABI definitions for the Windows Runtime bits Noch
-// needs (SMTC now-playing, Radio for Wi-Fi/Bluetooth). The project builds with
+// needs (SMTC now-playing). The project builds with
 // MinGW, which has no C++/WinRT, so the interfaces are declared here with
 // exactly the vtable layouts the Windows SDK generates (checked against the
 // SDK's cppwinrt headers), and the WinRT entry points are resolved from
@@ -75,12 +75,6 @@ inline constexpr Guid kIidRandomAccessStream{0x905A0FE1, 0xBC53, 0x11DF,
                                              {0x8C, 0x49, 0x00, 0x1E, 0x4F, 0xC6, 0x86, 0xDA}};
 inline constexpr Guid kIidInputStream{0x905A0FE2, 0xBC53, 0x11DF,
                                       {0x8C, 0x49, 0x00, 0x1E, 0x4F, 0xC6, 0x86, 0xDA}};
-
-// Windows.Devices.Radios
-inline constexpr Guid kIidRadioStatics{0x5FB6A12E, 0x67CB, 0x46AE,
-                                       {0xAA, 0xE9, 0x65, 0x91, 0x9F, 0x86, 0xEF, 0xF4}};
-inline constexpr Guid kIidRadio{0x252118DF, 0xB33E, 0x416A,
-                                {0x87, 0x5F, 0x1C, 0xF3, 0x8A, 0xE2, 0xD8, 0x3E}};
 
 // ------------------------------------------------------------------ COM types
 // MinGW's inspectable.h is not pulled in by windows.h, so the WinRT root
@@ -254,23 +248,6 @@ struct ISessionManagerStaticsAbi : IInspectableAbi {
     virtual HRESULT STDMETHODCALLTYPE RequestAsync(void **operation) = 0;
 };
 
-// Windows.Devices.Radios
-struct IRadioAbi : IInspectableAbi {
-    virtual HRESULT STDMETHODCALLTYPE SetStateAsync(int32_t state, void **operation) = 0;
-    virtual HRESULT STDMETHODCALLTYPE add_StateChanged(void *handler, int64_t *token) = 0;
-    virtual HRESULT STDMETHODCALLTYPE remove_StateChanged(int64_t token) = 0;
-    virtual HRESULT STDMETHODCALLTYPE get_State(int32_t *value) = 0;
-    virtual HRESULT STDMETHODCALLTYPE get_Name(HStringHandle *value) = 0;
-    virtual HRESULT STDMETHODCALLTYPE get_Kind(int32_t *value) = 0;
-};
-
-struct IRadioStaticsAbi : IInspectableAbi {
-    virtual HRESULT STDMETHODCALLTYPE GetRadiosAsync(void **operation) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetDeviceSelector(HStringHandle *value) = 0;
-    virtual HRESULT STDMETHODCALLTYPE FromIdAsync(HStringHandle id, void **operation) = 0;
-    virtual HRESULT STDMETHODCALLTYPE RequestAccessAsync(void **operation) = 0;
-};
-
 // ------------------------------------------------------------------ enums
 enum AsyncStatus { AsyncStarted = 0, AsyncCompleted = 1, AsyncCanceled = 2, AsyncError = 3 };
 enum PlaybackStatus {
@@ -281,9 +258,6 @@ enum PlaybackStatus {
     PlaybackPlaying = 4,
     PlaybackPaused = 5,
 };
-enum RadioKindValue { RadioOther = 0, RadioWiFi = 1, RadioMobileBroadband = 2, RadioBluetooth = 3, RadioFM = 4 };
-enum RadioStateValue { RadioUnknown = 0, RadioOn = 1, RadioOff = 2, RadioDisabled = 3 };
-enum RadioAccessValue { RadioAccessUnspecified = 0, RadioAccessAllowed = 1, RadioAccessDeniedByUser = 2, RadioAccessDeniedBySystem = 3 };
 
 // ------------------------------------------------------------------ loader
 using RoInitializeFn = HRESULT(WINAPI *)(int initType);

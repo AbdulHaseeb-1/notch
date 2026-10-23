@@ -26,18 +26,15 @@
 #include "DeepgramAgent.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
-#include "GlassBackdrop.h"
 #include "GlobalHotkey.h"
 #include "IconSet.h"
 #include "QmlSingletons.h"
 #include "MediaHub.h"
 #include "MusicAgentBackend.h"
 #include "MusicPlayer.h"
-#include "NightLight.h"
 #include "OverlayController.h"
 #include "PowerActions.h"
 #include "PushToTalkKey.h"
-#include "Radios.h"
 #include "RunningApps.h"
 #include "SessionLink.h"
 #include "SmtcMedia.h"
@@ -68,6 +65,9 @@ void initializeSafeStorage()
     for (const char *key : { "ui/buddyVoiceBase", "ui/buddyVoiceKey", "ui/buddyVoiceModel", "ui/buddyVoiceLanguage",
                              "ui/buddyWakeCloudOk" })
         ini.remove(QString::fromLatin1(key));
+
+    // Blur behind was removed (the desktop is never blurred now); drop its switch.
+    ini.remove(QStringLiteral("ui/blurBehind"));
 
     // 1. One-time migration of any existing settings from the Windows Registry.
     if (!ini.value(QStringLiteral("meta/migratedFromRegistry"), false).toBool()) {
@@ -167,7 +167,6 @@ int main(int argc, char *argv[])
             voiceInput->beginListening();
     });
     QObject::connect(talkKey, &PushToTalkKey::released, voiceInput, &VoiceInput::endListening);
-    auto *glass = new GlassBackdrop(&app);
     auto *clipboard = new ClipboardHistory(&app);
     auto *openApps = new RunningApps(&app);
     auto *audio = new AudioDevices(&app);
@@ -177,8 +176,6 @@ int main(int argc, char *argv[])
     // Songs from YouTube, found and streamed without a browser (yt-dlp): Buddy plays them in the pill.
     auto *youtube = new YtDlp(&app);
     buddyProvider->setMusicBackend(new MusicAgentBackend(media, player, youtube));
-    auto *radios = new Radios(&app);
-    auto *nightLight = new NightLight(&app);
     auto *power = new PowerActions(&app);
     auto *fullscreen = new FullscreenWatcher(&app);
     auto *hotkey = new GlobalHotkey(&app);
@@ -203,13 +200,10 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("talkKey"), talkKey);
     engine.rootContext()->setContextProperty(QStringLiteral("liveAgent"), live);
     engine.rootContext()->setContextProperty(QStringLiteral("youtube"), youtube);
-    engine.rootContext()->setContextProperty(QStringLiteral("glassBackdrop"), glass);
     engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
     engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
     engine.rootContext()->setContextProperty(QStringLiteral("media"), media);
     engine.rootContext()->setContextProperty(QStringLiteral("audio"), audio);
-    engine.rootContext()->setContextProperty(QStringLiteral("radios"), radios);
-    engine.rootContext()->setContextProperty(QStringLiteral("nightLight"), nightLight);
     engine.rootContext()->setContextProperty(QStringLiteral("power"), power);
     engine.rootContext()->setContextProperty(QStringLiteral("fullscreen"), fullscreen);
     engine.rootContext()->setContextProperty(QStringLiteral("hotkey"), hotkey);
@@ -231,13 +225,10 @@ int main(int argc, char *argv[])
     LiveSingleton::s_singletonInstance = live;
     YoutubeSingleton::s_singletonInstance = youtube;
     SpeechSingleton::s_singletonInstance = speechOut;
-    BackdropSingleton::s_singletonInstance = glass;
     OpenAppsSingleton::s_singletonInstance = openApps;
     ClipboardSingleton::s_singletonInstance = clipboard;
     MediaSingleton::s_singletonInstance = media;
     AudioSingleton::s_singletonInstance = audio;
-    RadiosSingleton::s_singletonInstance = radios;
-    NightLightSingleton::s_singletonInstance = nightLight;
     PowerSingleton::s_singletonInstance = power;
     FullscreenSingleton::s_singletonInstance = fullscreen;
     HotkeySingleton::s_singletonInstance = hotkey;
@@ -249,7 +240,6 @@ int main(int argc, char *argv[])
 
     QWindow *window = qobject_cast<QWindow *>(engine.rootObjects().constFirst());
     overlay->setWindow(window);
-    glass->setWindow(window);
     hotkey->setWindow(window);
     talkKey->setWindow(window);
 

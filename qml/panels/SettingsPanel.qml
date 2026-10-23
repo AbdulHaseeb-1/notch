@@ -12,8 +12,6 @@ Item {
     property var prefs
     property bool startupSupported: false
     property bool launchAtStartup: false
-    property bool blurSupported: false
-    property bool blurBehind: false
     property real maxPanelWidth: 620
     property real maxBodyHeight: 100000
     property string version: ""
@@ -22,7 +20,6 @@ Item {
     signal resetRequested()
     signal quitRequested()
     signal startupToggled(bool enabled)
-    signal blurToggled(bool on)
     signal resetBuddyPosRequested()
     signal ringPreviewRequested()
     signal fxPreviewRequested(string kind)
@@ -40,7 +37,7 @@ Item {
 
     readonly property var pageList: [
         { id: "general", group: qsTr("Notch"), label: qsTr("General"), icon: "settings",
-          keys: "size scale notch auto hide delay fullscreen hotkey palette startup launch blur position" },
+          keys: "size scale notch auto hide delay fullscreen hotkey palette startup launch position" },
         { id: "buddy", group: qsTr("Buddy"), label: qsTr("Buddy"), icon: "spark",
           keys: "desktop buddy orb companion sound effects chime volume position chat" },
         { id: "look", group: qsTr("Buddy"), label: qsTr("Look & glow"), icon: "droplet",
