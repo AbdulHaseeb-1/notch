@@ -4,7 +4,6 @@
 #include <QAudioFormat>
 #include <QElapsedTimer>
 #include <QHash>
-#include <QMediaDevices>
 #include <QObject>
 #include <QPointer>
 #include <QSharedPointer>
@@ -13,6 +12,7 @@
 #include <QVector>
 
 class QAudioSink;
+class QMediaDevices;
 class SfxMixer;
 
 // Procedural sound-effects engine for Noch's desktop buddy. Synthesizes soft
@@ -104,6 +104,7 @@ signals:
 private:
     void rebuildCues();
     bool ensureSink();
+    void watchDevices();
     bool resolveFormat();
     void dropSink();
     void stopSoon();
@@ -124,7 +125,7 @@ private:
 
     QHash<QString, qint64> m_lastPlayMs;
     QElapsedTimer m_clock;
-    QMediaDevices m_mediaDevices;
+    QMediaDevices *m_mediaDevices = nullptr;   // made on first use, see watchDevices()
     QAudioSink *m_sink = nullptr;
     SfxMixer *m_mixer = nullptr;
     QAudioFormat m_format;

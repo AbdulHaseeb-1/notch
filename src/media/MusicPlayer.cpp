@@ -100,15 +100,26 @@ QString stringOrList(const QVariant &value)
 MusicPlayer::MusicPlayer(QObject *parent)
     : QObject(parent)
 {
-    m_player = new QMediaPlayer(this);
-    m_audio = new QAudioOutput(this);
-    m_player->setAudioOutput(m_audio);
-    m_audio->setVolume(float(m_volume));
-
     m_saveTimer.setInterval(400);
     m_saveTimer.setSingleShot(true);
     connect(&m_saveTimer, &QTimer::timeout, this, &MusicPlayer::saveNow);
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &MusicPlayer::saveNow);
+
+    load();
+}
+
+// The media backend (Qt's player and its FFmpeg decoder) costs start-up time and
+// memory, so it is only created the first time something is played. Until then the
+// saved queue and position are kept here and no file is opened.
+void MusicPlayer::ensureBackend()
+{
+    if (m_player)
+        return;
+    m_player = new QMediaPlayer(this);
+    m_audio = new QAudioOutput(this);
+    m_player->setAudioOutput(m_audio);
+    m_audio->setVolume(float(m_volume));
+    m_audio->setMuted(m_muted);
 
     connect(m_player, &QMediaPlayer::positionChanged, this, &MusicPlayer::positionChanged);
     connect(m_player, &QMediaPlayer::durationChanged, this, &MusicPlayer::durationChanged);
@@ -140,8 +151,6 @@ MusicPlayer::MusicPlayer(QObject *parent)
         if (error != QMediaPlayer::NoError)
             advanceAfterError();
     });
-
-    load();
 }
 
 MusicPlayer::~MusicPlayer()
@@ -181,7 +190,7 @@ QString MusicPlayer::album() const
 
 qint64 MusicPlayer::position() const
 {
-    return m_player ? m_player->position() : 0;
+    return m_player ? m_player->position() : qMax<qint64>(0, m_pendingSeek);
 }
 
 qint64 MusicPlayer::duration() const
@@ -292,14 +301,19 @@ void MusicPlayer::toggle()
 {
     if (m_tracks.isEmpty())
         return;
-    if (m_player->playbackState() == QMediaPlayer::PlayingState) {
+    if (m_player && m_player->playbackState() == QMediaPlayer::PlayingState) {
         m_player->pause();
         return;
     }
-    if (!hasTrack() || m_player->mediaStatus() == QMediaPlayer::NoMedia)
+    if (!hasTrack() || !m_player || m_player->mediaStatus() == QMediaPlayer::NoMedia) {
+        // The first play of a restored track resumes at its saved position, which
+        // playIndex() would otherwise forget.
+        const qint64 resumeAt = m_player ? -1 : m_pendingSeek;
         playIndex(qMax(0, m_index), true);
-    else
+        m_pendingSeek = resumeAt;
+    } else {
         m_player->play();
+    }
 }
 
 void MusicPlayer::next()
@@ -317,7 +331,7 @@ void MusicPlayer::next()
         playIndex(m_index + 1, true);
     else if (m_repeatMode > 0)
         playIndex(0, true);
-    else
+    else if (m_player)
         m_player->pause();
 }
 
@@ -325,21 +339,31 @@ void MusicPlayer::previous()
 {
     if (m_tracks.isEmpty())
         return;
-    if (m_player->position() > 3000) {
-        m_player->setPosition(0);
+    if (position() > 3000) {
+        if (m_player)
+            m_player->setPosition(0);
+        else
+            m_pendingSeek = 0;
         return;
     }
     if (m_index > 0)
         playIndex(m_index - 1, true);
     else if (m_repeatMode > 0)
         playIndex(m_tracks.size() - 1, true);
-    else
+    else if (m_player)
         m_player->setPosition(0);
 }
 
 void MusicPlayer::seek(qint64 ms)
 {
-    if (!m_player || m_player->duration() <= 0)
+    if (!m_player) {
+        // Nothing is open yet (a restored queue, not played): the position is
+        // applied when the track loads.
+        if (hasTrack())
+            m_pendingSeek = qMax<qint64>(0, ms);
+        return;
+    }
+    if (m_player->duration() <= 0)
         return;
     m_player->setPosition(qBound(qint64(0), ms, m_player->duration()));
 }
@@ -386,8 +410,10 @@ void MusicPlayer::remove(int index)
     m_tracks.removeAt(index);
     if (m_tracks.isEmpty()) {
         m_index = -1;
-        m_player->stop();
-        m_player->setSource({});
+        if (m_player) {
+            m_player->stop();
+            m_player->setSource({});
+        }
         setCover({});
         emit trackChanged();
     } else if (current) {
@@ -402,8 +428,11 @@ void MusicPlayer::remove(int index)
 
 void MusicPlayer::clear()
 {
-    m_player->stop();
-    m_player->setSource({});
+    if (m_player) {
+        m_player->stop();
+        m_player->setSource({});
+    }
+    m_pendingSeek = -1;
     m_tracks.clear();
     m_index = -1;
     setCover({});
@@ -465,8 +494,6 @@ void MusicPlayer::load()
     else
         m_repeatMode = settings.value(QStringLiteral("repeat"), true).toBool() ? 1 : 0;
     m_shuffle = settings.value(QStringLiteral("shuffle"), false).toBool();
-    m_audio->setVolume(float(m_volume));
-    m_audio->setMuted(m_muted);
 
     const QStringList paths = settings.value(QStringLiteral("tracks")).toStringList();
     for (const QString &path : paths) {
@@ -478,9 +505,9 @@ void MusicPlayer::load()
     settings.endGroup();
 
     if (!m_tracks.isEmpty()) {
+        // Opened when it is first played (see toggle()), so start-up does not decode it.
         m_index = qBound(0, savedIndex, m_tracks.size() - 1);
         m_pendingSeek = savedPosition;
-        m_player->setSource(QUrl::fromLocalFile(m_tracks.at(m_index).path));
     }
     m_loading = false;
     emit playlistChanged();
@@ -494,7 +521,7 @@ void MusicPlayer::load()
 
 void MusicPlayer::saveNow()
 {
-    if (m_loading || !m_player)
+    if (m_loading)
         return;
     // Songs from the internet are for this session only (their stream addresses expire): the
     // saved queue and the position in it leave them out.
@@ -510,7 +537,7 @@ void MusicPlayer::saveNow()
     settings.setValue(QStringLiteral("repeatMode"), m_repeatMode);
     settings.setValue(QStringLiteral("shuffle"), m_shuffle);
     settings.setValue(QStringLiteral("index"), savedIndex);
-    settings.setValue(QStringLiteral("position"), currentSaved ? m_player->position() : 0);
+    settings.setValue(QStringLiteral("position"), currentSaved ? position() : 0);
     settings.setValue(QStringLiteral("tracks"), paths);
     settings.endGroup();
 }
@@ -648,6 +675,7 @@ void MusicPlayer::playIndex(int index, bool start)
     if (index >= m_tracks.size())
         index = 0;
 
+    ensureBackend();
     m_index = index;
     m_pendingSeek = -1;
     setCover({});
@@ -670,6 +698,7 @@ void MusicPlayer::playIndex(int index, bool start)
 
 void MusicPlayer::renewAndPlay(int index, bool start)
 {
+    ensureBackend();
     const QString page = m_tracks.at(index).path;
     m_resolver(page, [this, page, start](const OnlineTrack &fresh, const QString &error) {
         // Still the track the user is on? (They may have skipped while it was being renewed.)

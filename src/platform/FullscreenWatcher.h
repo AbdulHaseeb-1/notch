@@ -4,8 +4,9 @@
 #include <QPointer>
 #include <QRectF>
 #include <QString>
-#include <QTimer>
 #include <QWindow>
+
+class WindowMonitor;
 
 // Watches whether a full-screen app (game, video, presentation) owns the
 // foreground. The notch uses this to stay tucked away over games and to
@@ -17,6 +18,9 @@
 // own coordinates; any ordinary visible app window overlapping that rectangle
 // counts. Noch's own windows, minimised or cloaked windows, tool windows,
 // click-through or see-through overlays and the desktop/taskbar do not.
+//
+// Both answers are read from the shared WindowMonitor listing, which refreshes
+// once a second and on every foreground change.
 class FullscreenWatcher final : public QObject
 {
     Q_OBJECT
@@ -30,7 +34,7 @@ class FullscreenWatcher final : public QObject
     Q_PROPERTY(QString occupiedBy READ occupiedBy NOTIFY occupiedChanged)
 
 public:
-    explicit FullscreenWatcher(QObject *parent = nullptr);
+    explicit FullscreenWatcher(WindowMonitor *windows, QObject *parent = nullptr);
     ~FullscreenWatcher() override;
 
     bool active() const { return m_active; }
@@ -43,7 +47,7 @@ public:
 
 public slots:
     void check();
-    // Looks for an app window in the zone; cheap enough to run every second.
+    // Lists the windows again now and looks for an app window in the zone.
     void checkZone();
 
 signals:
@@ -53,9 +57,11 @@ signals:
     void occupiedChanged();
 
 private:
+    void onWindowsRefreshed();
+    void updateZone();
+
+    WindowMonitor *m_windows = nullptr;
     bool m_active = false;
-    QTimer m_timer;
-    QTimer m_zoneTimer;
     QPointer<QWindow> m_window;
     QRectF m_zone;
     bool m_occupied = false;

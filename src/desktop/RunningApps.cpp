@@ -1,12 +1,13 @@
 #include "RunningApps.h"
 
+#include "WindowMonitor.h"
+
 #include <QColor>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QLinearGradient>
 #include <QPainter>
-#include <QSet>
 #include <QStringList>
 
 #ifdef Q_OS_WIN
@@ -14,20 +15,11 @@
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
-#  include <dwmapi.h>
 #endif
 
 namespace {
 
-constexpr int kRefreshMs = 4000;
 constexpr int kPreviewWidth = 360;
-
-struct OpenWindow {
-    double id = 0;
-    QString title;
-    QString exe;  // lower-case file name, e.g. "chrome.exe"
-    QString path; // full path of the program
-};
 
 QString iconIdFor(const QString &path)
 {
@@ -44,76 +36,6 @@ QString displayName(const QString &path)
 }
 
 #ifdef Q_OS_WIN
-static QHash<DWORD, QString> s_pidCache;
-
-QString programPath(DWORD pid)
-{
-    auto it = s_pidCache.constFind(pid);
-    if (it != s_pidCache.constEnd())
-        return it.value();
-
-    const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process)
-        return {};
-    wchar_t buffer[4096];
-    DWORD size = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
-    QString path;
-    if (QueryFullProcessImageNameW(process, 0, buffer, &size))
-        path = QString::fromWCharArray(buffer, static_cast<int>(size));
-    CloseHandle(process);
-
-    if (!path.isEmpty()) {
-        if (s_pidCache.size() > 512)
-            s_pidCache.clear();
-        s_pidCache.insert(pid, path);
-    }
-    return path;
-}
-
-// Visible, user-facing top-level windows only: no tool windows, owned dialogs,
-// cloaked (other virtual desktop) windows, or our own.
-BOOL CALLBACK collectWindow(HWND hwnd, LPARAM lParam)
-{
-    auto *out = reinterpret_cast<QList<OpenWindow> *>(lParam);
-    if (!IsWindowVisible(hwnd))
-        return TRUE;
-
-    const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    const bool appWindow = (style & WS_EX_APPWINDOW) != 0;
-    if (!appWindow && ((style & WS_EX_TOOLWINDOW) || GetWindow(hwnd, GW_OWNER)))
-        return TRUE;
-
-    DWORD cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
-        return TRUE;
-
-    constexpr int kTitleChars = 512;
-    wchar_t buffer[kTitleChars];
-    const int length = GetWindowTextW(hwnd, buffer, kTitleChars);
-    if (length <= 0)
-        return TRUE;
-    const QString title = QString::fromWCharArray(buffer, length);
-    if (title == QLatin1String("Program Manager"))
-        return TRUE;
-
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (pid == 0 || pid == GetCurrentProcessId())
-        return TRUE;
-
-    const QString path = programPath(pid);
-    if (path.isEmpty())
-        return TRUE;
-
-    OpenWindow window;
-    window.id = double(reinterpret_cast<quintptr>(hwnd));
-    window.title = title;
-    window.path = path;
-    window.exe = QFileInfo(path).fileName().toLower();
-    out->append(window);
-    return TRUE;
-}
-
 HWND nativeWindow(double windowId)
 {
     return reinterpret_cast<HWND>(static_cast<quintptr>(windowId));
@@ -166,26 +88,6 @@ QImage captureWindow(HWND hwnd)
 }
 #endif
 
-QList<OpenWindow> enumerateWindows()
-{
-    QList<OpenWindow> windows;
-#ifdef Q_OS_WIN
-    EnumWindows(collectWindow, reinterpret_cast<LPARAM>(&windows));
-#else
-    // Placeholder windows so the layout can be exercised off Windows. The path
-    // is the name, so the icon falls back to the monogram.
-    windows << OpenWindow{1, QStringLiteral("Claude - New chat"), QStringLiteral("claude"),
-                          QStringLiteral("Claude")}
-            << OpenWindow{2, QStringLiteral("main.cpp - notch"), QStringLiteral("cursor"),
-                          QStringLiteral("Cursor")}
-            << OpenWindow{3, QStringLiteral("README.md - notch"), QStringLiteral("cursor"),
-                          QStringLiteral("Cursor")}
-            << OpenWindow{4, QStringLiteral("bash - notch"), QStringLiteral("terminal"),
-                          QStringLiteral("Terminal")};
-#endif
-    return windows;
-}
-
 QImage placeholderPreview(double windowId)
 {
     QImage image(320, 200, QImage::Format_RGB32);
@@ -204,12 +106,11 @@ QImage placeholderPreview(double windowId)
 
 } // namespace
 
-RunningApps::RunningApps(QObject *parent)
+RunningApps::RunningApps(WindowMonitor *windows, QObject *parent)
     : QObject(parent)
+    , m_windows(windows)
 {
-    m_timer.setInterval(kRefreshMs);
-    connect(&m_timer, &QTimer::timeout, this, &RunningApps::refresh);
-    m_timer.start();
+    connect(m_windows, &WindowMonitor::refreshed, this, &RunningApps::refresh);
     refresh();
 }
 
@@ -221,17 +122,17 @@ QString RunningApps::iconPathForId(const QString &iconId) const
 
 void RunningApps::refresh()
 {
-    const QList<OpenWindow> windows = enumerateWindows();
-
     // Keep programs in the order they were first seen, so tiles do not shuffle
     // when the user clicks between windows.
     QStringList order;
     for (const QVariant &previous : std::as_const(m_apps))
         order << previous.toMap().value(QStringLiteral("exe")).toString();
 
-    QHash<QString, OpenWindow> firstWindow;
+    QHash<QString, WindowMonitor::Window> firstWindow;
     QHash<QString, int> counts;
-    for (const OpenWindow &window : windows) {
+    for (const WindowMonitor::Window &window : m_windows->windows()) {
+        if (!window.program)
+            continue;
         if (!counts.contains(window.exe)) {
             firstWindow.insert(window.exe, window);
             if (!order.contains(window.exe))
@@ -246,7 +147,7 @@ void RunningApps::refresh()
     for (const QString &exe : std::as_const(order)) {
         if (!counts.contains(exe))
             continue;
-        const OpenWindow &window = firstWindow.value(exe);
+        const WindowMonitor::Window &window = firstWindow.value(exe);
         const QString iconId = iconIdFor(window.path);
         QVariantMap app;
         app.insert(QStringLiteral("name"), displayName(window.path));
@@ -279,12 +180,13 @@ void RunningApps::refresh()
     }
 }
 
-QVariantList RunningApps::windowsFor(const QString &exe) const
+QVariantList RunningApps::windowsFor(const QString &exe)
 {
+    m_windows->refresh();
     QVariantList list;
     const QString wanted = exe.toLower();
-    for (const OpenWindow &window : enumerateWindows()) {
-        if (window.exe != wanted)
+    for (const WindowMonitor::Window &window : m_windows->windows()) {
+        if (!window.program || window.exe != wanted)
             continue;
         QVariantMap entry;
         entry.insert(QStringLiteral("windowId"), window.id);
@@ -294,10 +196,13 @@ QVariantList RunningApps::windowsFor(const QString &exe) const
     return list;
 }
 
-QVariantList RunningApps::allWindows() const
+QVariantList RunningApps::allWindows()
 {
+    m_windows->refresh();
     QVariantList list;
-    for (const OpenWindow &window : enumerateWindows()) {
+    for (const WindowMonitor::Window &window : m_windows->windows()) {
+        if (!window.program)
+            continue;
         QVariantMap entry;
         entry.insert(QStringLiteral("windowId"), window.id);
         entry.insert(QStringLiteral("title"), window.title);
@@ -314,9 +219,10 @@ void RunningApps::closeApp(const QString &exe)
 {
     const QString wanted = exe.toLower();
     int closed = 0;
+    m_windows->refresh();
 #ifdef Q_OS_WIN
-    for (const OpenWindow &window : enumerateWindows()) {
-        if (window.exe != wanted)
+    for (const WindowMonitor::Window &window : m_windows->windows()) {
+        if (!window.program || window.exe != wanted)
             continue;
         const HWND hwnd = nativeWindow(window.id);
         if (hwnd && PostMessageW(hwnd, WM_CLOSE, 0, 0))
@@ -326,14 +232,15 @@ void RunningApps::closeApp(const QString &exe)
     Q_UNUSED(exe)
 #endif
     if (closed)
-        refresh(); // windows going away changes the tile set
+        m_windows->refresh(); // windows going away changes the tile set
 }
 
 bool RunningApps::activateApp(const QString &exe)
 {
     const QString wanted = exe.toLower();
-    for (const OpenWindow &window : enumerateWindows()) {
-        if (window.exe == wanted)
+    m_windows->refresh();
+    for (const WindowMonitor::Window &window : m_windows->windows()) {
+        if (window.program && window.exe == wanted)
             return activateWindow(window.id);
     }
     return false;

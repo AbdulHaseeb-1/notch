@@ -4,13 +4,14 @@
 #include <QMutex>
 #include <QObject>
 #include <QStringList>
-#include <QTimer>
 #include <QUrl>
 #include <QVariantList>
 
+class WindowMonitor;
+
 // Owns the list of pinned apps shown in the notch: discovers common apps on
-// first run, persists the list, launches entries, and tracks which of them are
-// currently running.
+// first run, persists the list, launches entries, and tracks which of them have
+// a window open right now.
 class DockController final : public QObject
 {
     Q_OBJECT
@@ -24,7 +25,7 @@ class DockController final : public QObject
     Q_PROPERTY(QUrl settingsFileUrl READ settingsFileUrl CONSTANT)
 
 public:
-    explicit DockController(QObject *parent = nullptr);
+    explicit DockController(WindowMonitor *windows, QObject *parent = nullptr);
 
     QVariantList apps() const;
     QStringList running() const { return m_running; }
@@ -71,7 +72,7 @@ private:
     void save() const;
     void rebuildIconIndex();
     void rebuildAppsCache();
-    void pollRunning();
+    void updateRunning();
     QList<App> discoverDefaults() const;
     static App makeApp(const QString &path);
     static QString iconIdFor(const App &app);
@@ -79,8 +80,7 @@ private:
     QList<App> m_apps;
     QVariantList m_appsCache;
     QStringList m_running;
-    QTimer m_pollTimer;
-    bool m_pollBusy = false;   // GUI thread only: a snapshot is still being taken
+    WindowMonitor *m_windows = nullptr;
 
     mutable QMutex m_iconMutex;
     QHash<QString, QString> m_iconIndex; // iconId -> icon file

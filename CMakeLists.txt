@@ -96,6 +96,8 @@ set(NOCH_SOURCES
     src/desktop/IconSet.h
     src/desktop/RunningApps.cpp
     src/desktop/RunningApps.h
+    src/desktop/WindowMonitor.cpp
+    src/desktop/WindowMonitor.h
 
     src/media/AudioDevices.cpp
     src/media/AudioDevices.h

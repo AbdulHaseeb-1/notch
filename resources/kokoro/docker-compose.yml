@@ -2,7 +2,9 @@
 # an OpenAI-compatible speech endpoint at http://127.0.0.1:8880/v1/audio/speech
 #
 # The image is built here (small, CPU-only); the weights are the Kokoro-82M
-# folder next door, mounted read-only, so nothing is downloaded at run time.
+# folder, mounted read-only, so nothing is downloaded at run time. That folder
+# lives outside the repo: set KOKORO_MODEL_DIR to it in a .env file next to this
+# file, for example  KOKORO_MODEL_DIR=C:/Users/you/Desktop/Kokoro-82M
 #
 #   docker compose up -d --build   build + start
 #   docker compose logs -f         follow the server log
@@ -20,7 +22,7 @@ services:
       - "8880:8880"
     restart: unless-stopped
     volumes:
-      - ../Kokoro-82M:/models:ro
+      - "${KOKORO_MODEL_DIR:?set KOKORO_MODEL_DIR to the Kokoro-82M folder (see the note at the top)}:/models:ro"
     environment:
       - KOKORO_MODEL_DIR=/models
       - KOKORO_THREADS=8

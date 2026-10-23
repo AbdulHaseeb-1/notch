@@ -1,5 +1,7 @@
 #include "DockController.h"
 
+#include "WindowMonitor.h"
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -15,7 +17,6 @@
 #include <QSaveFile>
 #include <QSet>
 #include <QSettings>
-#include <QThread>
 
 #ifdef Q_OS_WIN
 #  ifndef NOMINMAX
@@ -23,7 +24,6 @@
 #  endif
 #  include <windows.h>
 #  include <shellapi.h>
-#  include <tlhelp32.h>
 #endif
 
 namespace {
@@ -82,15 +82,14 @@ QHash<QString, QString> startMenuShortcuts()
 
 } // namespace
 
-DockController::DockController(QObject *parent)
+DockController::DockController(WindowMonitor *windows, QObject *parent)
     : QObject(parent)
+    , m_windows(windows)
 {
     load();
 
-    m_pollTimer.setInterval(3500);
-    connect(&m_pollTimer, &QTimer::timeout, this, &DockController::pollRunning);
-    m_pollTimer.start();
-    pollRunning();
+    connect(m_windows, &WindowMonitor::refreshed, this, &DockController::updateRunning);
+    updateRunning();
 }
 
 QString DockController::version() const
@@ -433,7 +432,7 @@ bool DockController::pinApp(const QString &name, const QString &path)
     save();
     rebuildIconIndex();
     emit appsChanged();
-    pollRunning();
+    updateRunning();
     return true;
 }
 
@@ -450,7 +449,7 @@ void DockController::unpin(int index)
     save();
     rebuildIconIndex();
     emit appsChanged();
-    pollRunning();
+    updateRunning();
 }
 
 void DockController::move(int from, int to)
@@ -500,7 +499,7 @@ void DockController::resetToDefaults()
     save();
     rebuildIconIndex();
     emit appsChanged();
-    pollRunning();
+    updateRunning();
 }
 
 void DockController::openDataFolder() const
@@ -605,49 +604,24 @@ void DockController::setLaunchAtStartup(bool enabled)
 #endif
 }
 
-void DockController::pollRunning()
+void DockController::updateRunning()
 {
-    // The snapshot of every process on the machine lives on a background
-    // thread; the GUI thread only receives the finished list. One at a time:
-    // a slow snapshot must not pile up threads behind the timer.
-    if (m_pollBusy)
-        return;
-    QStringList wanted;
-    for (const App &app : std::as_const(m_apps)) {
-        if (!app.exe.isEmpty())
-            wanted.append(app.exe);
+    // Pinned apps with a window open, read from the shared window listing, so
+    // no process scan of its own is needed.
+    QSet<QString> open;
+    for (const WindowMonitor::Window &window : m_windows->windows()) {
+        if (window.program)
+            open.insert(window.exe);
     }
 
-    m_pollBusy = true;
-    auto *thread = QThread::create([this, wanted] {
-        QStringList found;
-#ifdef Q_OS_WIN
-        QSet<QString> processes;
-        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snap != INVALID_HANDLE_VALUE) {
-            PROCESSENTRY32W entry;
-            entry.dwSize = sizeof(entry);
-            if (Process32FirstW(snap, &entry)) {
-                do {
-                    processes.insert(QString::fromWCharArray(entry.szExeFile).toLower());
-                } while (Process32NextW(snap, &entry));
-            }
-            CloseHandle(snap);
-        }
-        for (const QString &exe : wanted) {
-            if (!found.contains(exe) && processes.contains(exe))
-                found.append(exe);
-        }
-#endif
-        found.sort();
-        QMetaObject::invokeMethod(this, [this, found] {
-            m_pollBusy = false;
-            if (found != m_running) {
-                m_running = found;
-                emit runningChanged();
-            }
-        }, Qt::QueuedConnection);
-    });
-    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
-    thread->start();
+    QStringList found;
+    for (const App &app : std::as_const(m_apps)) {
+        if (!app.exe.isEmpty() && open.contains(app.exe) && !found.contains(app.exe))
+            found.append(app.exe);
+    }
+    found.sort();
+    if (found != m_running) {
+        m_running = found;
+        emit runningChanged();
+    }
 }

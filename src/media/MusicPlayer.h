@@ -127,6 +127,7 @@ private:
     };
 
     void load();
+    void ensureBackend();
     void saveNow();
     void scheduleSave();
     int addPath(const QString &path);

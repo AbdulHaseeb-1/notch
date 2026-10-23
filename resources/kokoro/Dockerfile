@@ -1,5 +1,5 @@
 # Small CPU image for Kokoro-82M. The model itself is not baked in: the compose
-# file mounts the Kokoro-82M folder that already sits in resources/.
+# file mounts the Kokoro-82M folder named by KOKORO_MODEL_DIR (kept outside the repo).
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \

@@ -41,6 +41,7 @@
 #include "SpeechOut.h"
 #include "VoiceInput.h"
 #include "WakeWord.h"
+#include "WindowMonitor.h"
 #include "YtDlp.h"
 
 namespace {
@@ -136,7 +137,10 @@ int main(int argc, char *argv[])
         Qt::QueuedConnection);
 
     auto *overlay = new OverlayController(&app);
-    auto *dock = new DockController(&app);
+    // One listing of the desktop's windows, shared by the dock, the running-apps
+    // tiles and the full-screen guard (see WindowMonitor.h).
+    auto *windowMonitor = new WindowMonitor(&app);
+    auto *dock = new DockController(windowMonitor, &app);
     auto *player = new MusicPlayer(&app);
     auto *appearance = new Appearance(&app);
     auto *buddyProvider = new BuddyProvider(&app);
@@ -168,7 +172,7 @@ int main(int argc, char *argv[])
     });
     QObject::connect(talkKey, &PushToTalkKey::released, voiceInput, &VoiceInput::endListening);
     auto *clipboard = new ClipboardHistory(&app);
-    auto *openApps = new RunningApps(&app);
+    auto *openApps = new RunningApps(windowMonitor, &app);
     auto *audio = new AudioDevices(&app);
     auto *smtc = new SmtcMedia(&app);
     auto *media = new MediaHub(player, smtc, audio, openApps, &app);
@@ -177,7 +181,7 @@ int main(int argc, char *argv[])
     auto *youtube = new YtDlp(&app);
     buddyProvider->setMusicBackend(new MusicAgentBackend(media, player, youtube));
     auto *power = new PowerActions(&app);
-    auto *fullscreen = new FullscreenWatcher(&app);
+    auto *fullscreen = new FullscreenWatcher(windowMonitor, &app);
     auto *hotkey = new GlobalHotkey(&app);
     auto *search = new AppSearch(openApps, &app);
 

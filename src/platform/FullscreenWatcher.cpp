@@ -1,5 +1,8 @@
 #include "FullscreenWatcher.h"
 
+#include "WindowMonitor.h"
+
+#include <QRect>
 #include <QString>
 #include <QStringList>
 #include <QWindow>
@@ -15,11 +18,6 @@
 #  include <dwmapi.h>
 #endif
 
-namespace {
-constexpr int kCheckMs = 2000;
-constexpr int kZoneCheckMs = 1000;
-}
-
 #ifdef Q_OS_WIN
 
 // A WinEvent hook has no per-instance context, so keep both the handle and the
@@ -30,10 +28,9 @@ HWINEVENTHOOK s_hookHandle = nullptr;
 
 void CALLBACK foregroundChanged(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD)
 {
-    if (s_liveWatcher) {
-        s_liveWatcher->check();
+    // Relisting the windows also re-checks the full-screen state.
+    if (s_liveWatcher)
         s_liveWatcher->checkZone();
-    }
 }
 
 // Whether a window belongs to the shell (desktop, task bar ...), not to an app.
@@ -53,61 +50,6 @@ bool isShellClass(const QString &className)
     return shellClasses.contains(className);
 }
 
-struct ZoneScan {
-    RECT zone{};
-    DWORD ownPid = 0;
-    bool hit = false;
-    QString by;
-};
-
-BOOL CALLBACK scanWindow(HWND hwnd, LPARAM lParam)
-{
-    auto *scan = reinterpret_cast<ZoneScan *>(lParam);
-    if (!IsWindowVisible(hwnd) || IsIconic(hwnd))
-        return TRUE;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (pid == scan->ownPid)
-        return TRUE;
-    if (GetWindow(hwnd, GW_OWNER))
-        return TRUE;   // dialogs and popups belong to a window we already look at
-    const LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-    // Tool windows, windows that never take focus (overlays, game bars) and
-    // click-through ones are not "an app that is open".
-    if (ex & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT))
-        return TRUE;
-    if (ex & WS_EX_LAYERED) {
-        COLORREF key = 0;
-        BYTE alpha = 255;
-        DWORD flags = 0;
-        if (GetLayeredWindowAttributes(hwnd, &key, &alpha, &flags) && (flags & LWA_ALPHA) && alpha < 24)
-            return TRUE;   // practically invisible
-    }
-    DWORD cloaked = 0;
-    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
-        return TRUE;       // on another virtual desktop
-    wchar_t cls[96] = {};
-    GetClassNameW(hwnd, cls, 96);
-    const QString className = QString::fromWCharArray(cls);
-    if (isShellClass(className))
-        return TRUE;
-
-    RECT r{};
-    if (FAILED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r))))
-        GetWindowRect(hwnd, &r);
-    if (r.right - r.left < 120 || r.bottom - r.top < 60)
-        return TRUE;
-    RECT overlap{};
-    if (!IntersectRect(&overlap, &r, &scan->zone))
-        return TRUE;
-
-    wchar_t title[128] = {};
-    GetWindowTextW(hwnd, title, 128);
-    scan->by = QStringLiteral("%1 [%2]").arg(QString::fromWCharArray(title), className);
-    scan->hit = true;
-    return FALSE;
-}
-
 void startForegroundHook()
 {
     s_hookHandle = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
@@ -124,30 +66,18 @@ void stopForegroundHook()
 
 #endif
 
-FullscreenWatcher::FullscreenWatcher(QObject *parent)
+FullscreenWatcher::FullscreenWatcher(WindowMonitor *windows, QObject *parent)
     : QObject(parent)
+    , m_windows(windows)
 {
 #ifdef Q_OS_WIN
     s_liveWatcher = this;
     startForegroundHook();
 #endif
-    m_zoneTimer.setInterval(kZoneCheckMs);
-    connect(&m_zoneTimer, &QTimer::timeout, this, &FullscreenWatcher::checkZone);
-    m_zoneTimer.start();
-    m_timer.setInterval(kCheckMs);
-    connect(this, &FullscreenWatcher::activeChanged, this, [this] {
-        // The hook catches every transition already; the timer only has to
-        // keep verifying while the guard is actually up (borderline
-        // full-screen apps, a window that swapped monitors without a
-        // foreground event, etc.), so the peaceful desktop pays nothing.
-        if (m_active)
-            m_timer.start();
-        else
-            m_timer.stop();
-    });
+    // The listing ticks once a second and the foreground hook catches the
+    // changes in between, so no timer of our own is needed.
+    connect(m_windows, &WindowMonitor::refreshed, this, &FullscreenWatcher::onWindowsRefreshed);
     check();
-    if (m_active)
-        m_timer.start();
 }
 
 FullscreenWatcher::~FullscreenWatcher()
@@ -248,6 +178,19 @@ void FullscreenWatcher::setZone(const QRectF &zone)
 
 void FullscreenWatcher::checkZone()
 {
+    // Relisting the windows is what answers the question; onWindowsRefreshed()
+    // reads the answer from the new listing.
+    m_windows->refresh();
+}
+
+void FullscreenWatcher::onWindowsRefreshed()
+{
+    check();
+    updateZone();
+}
+
+void FullscreenWatcher::updateZone()
+{
     bool occupied = false;
     QString by;
 
@@ -259,15 +202,32 @@ void FullscreenWatcher::checkZone()
             // The zone is in the window's own (device-independent) coordinates;
             // the window's rectangle on screen tells where and how big that is.
             const double scale = double(wr.right - wr.left) / double(m_window->width());
-            ZoneScan scan;
-            scan.ownPid = GetCurrentProcessId();
-            scan.zone.left = wr.left + LONG(m_zone.left() * scale);
-            scan.zone.top = wr.top + LONG(m_zone.top() * scale);
-            scan.zone.right = wr.left + LONG(m_zone.right() * scale);
-            scan.zone.bottom = wr.top + LONG(m_zone.bottom() * scale);
-            EnumWindows(&scanWindow, reinterpret_cast<LPARAM>(&scan));
-            occupied = scan.hit;
-            by = scan.by;
+            const int left = wr.left + int(m_zone.left() * scale);
+            const int top = wr.top + int(m_zone.top() * scale);
+            const int right = wr.left + int(m_zone.right() * scale);
+            const int bottom = wr.top + int(m_zone.bottom() * scale);
+            const QRect zone(left, top, right - left, bottom - top);
+
+            for (const WindowMonitor::Window &window : m_windows->windows()) {
+                // Noch's own windows, minimised ones, and dialogs and popups (they
+                // belong to a window that is already looked at).
+                if (window.self || window.minimized || window.owned)
+                    continue;
+                // Tool windows, windows that never take focus (overlays, game bars)
+                // and click-through ones are not "an app that is open".
+                if (window.toolWindow || window.noActivate || window.transparent)
+                    continue;
+                if (window.nearlyInvisible || window.cloaked || isShellClass(window.className))
+                    continue;
+                if (window.rect.width() < 120 || window.rect.height() < 60)
+                    continue;
+                if (!window.rect.intersects(zone))
+                    continue;
+
+                by = QStringLiteral("%1 [%2]").arg(window.title, window.className);
+                occupied = true;
+                break;   // topmost first, so the first hit is the one on top
+            }
         }
     }
 #endif

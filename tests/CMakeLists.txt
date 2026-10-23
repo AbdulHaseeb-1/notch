@@ -202,6 +202,7 @@ if(WIN32)
                 src/media/SmtcMedia.cpp src/media/SmtcMedia.h
                 src/media/AudioDevices.cpp src/media/AudioDevices.h
                 src/desktop/RunningApps.cpp src/desktop/RunningApps.h
+                src/desktop/WindowMonitor.cpp src/desktop/WindowMonitor.h
         LIBS Qt6::Core Qt6::Gui Qt6::Quick Qt6::Multimedia Qt6::Network user32 shell32 ole32 dwmapi)
     noch_add_unit_test(tst_ytdlp
         SOURCES tests/tst_ytdlp.cpp tests/FakeYtDlp.h

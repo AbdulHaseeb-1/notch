@@ -5,18 +5,20 @@
 #include <QObject>
 #include <QQuickImageProvider>
 #include <QString>
-#include <QTimer>
 #include <QVariantList>
+
+class WindowMonitor;
 
 // The programs that have a window open right now, grouped per program. This is
 // what is open; DockController holds what is pinned, and the two stay apart.
+// The windows come from the shared WindowMonitor listing.
 class RunningApps final : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QVariantList apps READ apps NOTIFY appsChanged)
 
 public:
-    explicit RunningApps(QObject *parent = nullptr);
+    explicit RunningApps(WindowMonitor *windows, QObject *parent = nullptr);
 
     // One entry per program: name, exe (lower-case file name), path, iconId, count.
     QVariantList apps() const { return m_apps; }
@@ -25,9 +27,9 @@ public:
     QString iconPathForId(const QString &iconId) const;
 
     // The windows of one program, topmost first: windowId and title.
-    Q_INVOKABLE QVariantList windowsFor(const QString &exe) const;
+    Q_INVOKABLE QVariantList windowsFor(const QString &exe);
     // Every open window, topmost first. For the command palette's window search.
-    Q_INVOKABLE QVariantList allWindows() const;
+    Q_INVOKABLE QVariantList allWindows();
     // Asks every window of a program to close (a polite WM_CLOSE, like taskbar).
     Q_INVOKABLE void closeApp(const QString &exe);
     Q_INVOKABLE bool activateApp(const QString &exe);
@@ -39,9 +41,9 @@ signals:
 private:
     void refresh();
 
+    WindowMonitor *m_windows = nullptr;
     QVariantList m_apps;
     QString m_signature;
-    QTimer m_timer;
     mutable QMutex m_iconMutex;
     QHash<QString, QString> m_iconIndex; // iconId -> program path
 };

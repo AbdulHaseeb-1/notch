@@ -21,6 +21,7 @@
 #include "MusicPlayer.h"
 #include "RunningApps.h"
 #include "SmtcMedia.h"
+#include "WindowMonitor.h"
 #include "YtDlp.h"
 
 namespace {
@@ -64,7 +65,7 @@ private slots:
         player = new MusicPlayer(this);
         smtc = new SmtcMedia(this);
         audio = new AudioDevices(this);
-        running = new RunningApps(this);
+        running = new RunningApps(new WindowMonitor(this), this);
         hub = new MediaHub(player, smtc, audio, running, this);
         backend = new MusicAgentBackend(hub, player);
         // Let the Windows media sessions report in before deciding anything.
