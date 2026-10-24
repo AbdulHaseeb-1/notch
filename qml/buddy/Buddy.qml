@@ -1909,7 +1909,7 @@ Item {
         awaitingReply = false
         if (liveCall.length > 0) {
             finishLiveCall(qsTr("That did not work. %1").arg(String(message).slice(0, 200)))
-        } else if (spokenRun) {
+        } else if (spokenRun && !Live.active) {
             Speech.say(qsTr("That didn't work."))
             spokenRun = false
         }
@@ -2469,7 +2469,7 @@ Item {
             spokenRun = false
             return
         }
-        if (spokenRun)
+        if (spokenRun && !Live.active)
             Speech.speakReport(reply)
         spokenRun = false
     }

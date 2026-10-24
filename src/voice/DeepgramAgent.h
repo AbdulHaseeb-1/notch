@@ -309,6 +309,7 @@ private:
     bool m_muted = false;
     bool m_agentAudioDone = true;
     bool m_dropAgentAudio = false;
+    bool m_userSpeaking = false;     // the server reported speech start; no final transcript yet
     qint64 m_dropUntilMs = 0;        // agent audio before this moment is stale (a barge-in just happened)
     qint64 m_gateOpensAtMs = 0;      // speaker mode: the microphone stays muted until this moment
     bool m_everApplied = false;
