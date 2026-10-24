@@ -43,13 +43,13 @@ Item {
         { id: "look", group: qsTr("Buddy"), label: qsTr("Look & glow"), icon: "droplet",
           keys: "ring colour color style neon aurora comet orbit beads pulse prism halo thickness speed glow shadow bloom floor listening speaking animation waves screen cursor" },
         { id: "voice", group: qsTr("Buddy"), label: qsTr("Voice"), icon: "mic",
-          keys: "microphone speech text wake word hey buddy moonshine transcription read aloud speak tts google cloud kokoro voice" },
+          keys: "microphone speech text wake word hey buddy transcription read aloud speak tts google cloud voice" },
         { id: "deepgram", group: qsTr("Buddy"), label: qsTr("Deepgram"), icon: "activity",
           keys: "deepgram live conversation voice agent hands-free talk speech listen hear think speak stt tts aura nova flux haiku claude model prompt api key interrupt barge headphones speakers" },
         { id: "model", group: qsTr("Agent"), label: qsTr("AI model"), icon: "cpu",
           keys: "provider openai anthropic ollama custom api key model endpoint temperature test connection" },
         { id: "agent", group: qsTr("Agent"), label: qsTr("Agent & tools"), icon: "terminal",
-          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking jev classifier classify intent request mem0 memory remember docker long-term" },
+          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking intent request mem0 memory remember docker long-term" },
         { id: "connectors", group: qsTr("Agent"), label: qsTr("Connectors"), icon: "layers",
           keys: "connectors apps accounts gmail google email mail inbox draft reply calendar drive slack github notion mcp server oauth sign in connect disconnect integrations" },
         { id: "safety", group: qsTr("Agent"), label: qsTr("Safety"), icon: "shield-check",
@@ -167,8 +167,6 @@ Item {
     property var remoteModels: []
     property string testState: "idle"     // idle | testing | ok | failed
     property string testMessage: ""
-    property string classifierTestState: "idle"     // idle | testing | ok | failed
-    property string classifierTestMessage: ""
     property string memTestState: "idle"     // idle | testing | ok | failed
     property string memTestMessage: ""
 
@@ -259,16 +257,6 @@ Item {
         BuddyAgent.probe()
     }
 
-    function runClassifierTest() {
-        settings.classifierTestState = "testing"
-        settings.classifierTestMessage = qsTr("Asking %1…").arg(BuddyAgent.classifierUrl())
-        BuddyAgent.testClassifier()
-    }
-    function classifierEdited() {
-        settings.classifierTestState = "idle"
-        settings.classifierTestMessage = ""
-    }
-
     function runMemTest() {
         settings.memTestState = "testing"
         settings.memTestMessage = qsTr("Asking %1…").arg(BuddyAgent.memBaseUrl())
@@ -284,10 +272,6 @@ Item {
         function onMemTestFinished(ok, message) {
             settings.memTestState = ok ? "ok" : "failed"
             settings.memTestMessage = message
-        }
-        function onClassifierTestFinished(ok, message) {
-            settings.classifierTestState = ok ? "ok" : "failed"
-            settings.classifierTestMessage = message
         }
         function onTestFinished(ok, message) {
             settings.testState = ok ? "ok" : "failed"

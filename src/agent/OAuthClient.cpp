@@ -162,7 +162,7 @@ void OAuthClient::start()
     cancel();
     if (m_cfg.clientId.trimmed().isEmpty()) {
         m_done = false;
-        QTimer::singleShot(0, this, [this] { fail(tr("Enter your Google OAuth client ID first.")); });
+        QTimer::singleShot(0, this, [this] { fail(tr("No OAuth client ID is configured for this sign-in.")); });
         return;
     }
     // Loopback on the IPv4 address: this is the redirect Google documents for desktop apps.

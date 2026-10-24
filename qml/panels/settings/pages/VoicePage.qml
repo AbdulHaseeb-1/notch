@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Dialogs
 
 SettingsPage {
     id: page
@@ -9,17 +10,13 @@ SettingsPage {
     SettingsSectionHeader {
         title: qsTr("Voice input")
         rightText: Voice.enabled ? (Voice.configured ? qsTr("Ready") : qsTr("Needs setup")) : qsTr("Off")
-        description: Voice.engineIsLocal
-                     ? qsTr("Hold a key or the microphone button and talk. Speech is turned into text on this computer by Moonshine.")
-                     : qsTr("Hold a key or the microphone button and talk. Each clip is turned into text by Deepgram.")
+        description: qsTr("Hold a key or the microphone button and talk. Each clip is turned into text by Deepgram.")
     }
 
     SettingsGroupCard {
         SettingsToggleRow {
             label: qsTr("Push-to-talk")
-            sub: Voice.engineIsLocal
-                 ? qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold and turned into text by a model on this computer. It is kept in memory only, never sent anywhere and never stored.")
-                 : qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold, sent to Deepgram to be transcribed, kept in memory only and never stored on this computer.")
+            sub: qsTr("Hold the microphone button in Buddy's bubble (or the shortcut) and speak; release to turn it into text. Audio is recorded only while you hold, sent to Deepgram to be transcribed, kept in memory only and never stored on this computer.")
             checked: panel.prefs.buddyVoiceEnabled
             onToggled: (c) => panel.prefs.buddyVoiceEnabled = c
         }
@@ -55,8 +52,7 @@ SettingsPage {
 
             Text {
                 width: parent.width
-                text: Voice.engineIsLocal ? qsTr("Speech to text: %1, on this computer").arg(Voice.engine)
-                                          : qsTr("Speech to text: %1 (cloud service)").arg(Voice.engine)
+                text: qsTr("Speech to text: %1 (cloud service)").arg(Voice.engine)
                 color: Theme.ink
                 font.family: Theme.font
                 font.pixelSize: Theme.fontBase
@@ -66,35 +62,58 @@ SettingsPage {
             Text {
                 width: parent.width
                 text: !Voice.configured ? Voice.problem
-                      : Voice.ready ? (Voice.engineIsLocal ? qsTr("Ready. English only. Nothing you say leaves this computer.")
-                                                           : qsTr("Ready. Change the engine, model and language in the Deepgram page."))
-                      : qsTr("Starting the speech model…")
+                      : Voice.ready ? qsTr("Ready. Change the model and language in the Deepgram page.")
+                      : qsTr("Starting…")
                 color: Voice.configured ? Theme.textDim : Theme.warning
                 font.family: Theme.font
                 font.pixelSize: Theme.fontSm
                 wrapMode: Text.WordWrap
             }
-            Flow {
-                width: parent.width
-                spacing: 8
-                SettingsPillButton {
-                    visible: Voice.engineIsLocal
-                    icon: "folder"
-                    label: qsTr("Open models folder")
-                    onClicked: Voice.openModelFolder()
-                }
-            }
         }
     }
 
-    property var modelStt: ({})
     property var modelWake: ({})
     property var modelTts: ({})
 
     function refreshModels() {
-        modelStt = Voice.sttModelStatus()
         modelWake = Wake.detectorModelStatus()
         modelTts = Speech.engineStatuses()
+    }
+
+    // The result of adding or removing a wake word, shown under the list.
+    property string wakeModelMessage: ""
+    property bool wakeModelError: false
+
+    function enabledPhraseNames() {
+        const names = []
+        const ps = Wake.phrases || []
+        for (let i = 0; i < ps.length; ++i)
+            if (ps[i].enabled)
+                names.push("“" + ps[i].name + "”")
+        return names.length > 0 ? names.join(", ") : qsTr("no wake word — switch one on below")
+    }
+
+    function addModelChosen(url) {
+        const err = Wake.addWakeWordModel(url.toString())
+        if (err.length > 0) {
+            page.wakeModelMessage = err
+            page.wakeModelError = true
+            return
+        }
+        const base = url.toString().split("/").pop().replace(/\.onnx$/i, "").replace(/[_-]+/g, " ")
+        page.wakeModelMessage = qsTr("Added “%1”. It is switched on in the list below.").arg(base)
+        page.wakeModelError = false
+    }
+
+    function removePhrase(id, name) {
+        const err = Wake.removeWakeWordModel(id)
+        if (err.length > 0) {
+            page.wakeModelMessage = err
+            page.wakeModelError = true
+        } else {
+            page.wakeModelMessage = qsTr("Removed “%1”.").arg(name)
+            page.wakeModelError = false
+        }
     }
 
     function filesMissing(files) {
@@ -112,58 +131,21 @@ SettingsPage {
         return qsTr("built in")
     }
 
-    readonly property bool allModelsReady: !filesMissing(modelStt.files || [])
-                                           && modelTts.system && modelTts.system.ready
+    readonly property bool allModelsReady: !filesMissing(modelWake.files || [])
+                                           && chosenVoiceReady()
+
+    function chosenVoiceReady() {
+        const s = modelTts[panel.prefs.buddyTtsEngine]
+        return !s || s.ready
+    }
 
     SettingsSectionHeader {
         title: qsTr("Speech models")
         rightText: page.allModelsReady ? qsTr("Ready") : qsTr("Needs attention")
-        description: qsTr("The speech models on this computer and whether they are correctly configured.")
+        description: qsTr("The wake-word models on this computer, and whether the spoken-answer voices are set up.")
     }
 
     SettingsGroupCard {
-        Column {
-            width: parent.width
-            spacing: 6
-
-            Text {
-                width: parent.width
-                text: qsTr("Moonshine Tiny (speech to text)")
-                color: Theme.ink
-                font.family: Theme.font
-                font.pixelSize: Theme.fontBase
-                font.weight: Font.Medium
-            }
-            Text {
-                width: parent.width
-                text: page.modelStt.ready
-                      ? qsTr("Ready. English only. Nothing you say leaves this computer.")
-                      : (page.modelStt.problem || qsTr("The model files are not all here."))
-                color: page.modelStt.ready ? Theme.textDim : Theme.warning
-                font.family: Theme.font
-                font.pixelSize: Theme.fontSm
-                wrapMode: Text.WordWrap
-            }
-            Repeater {
-                model: page.modelStt.files || []
-                delegate: Text {
-                    required property var modelData
-                    width: parent.width
-                    text: modelData.name + " · " + page.fileSizeText(modelData.bytes, modelData.found)
-                    color: modelData.found ? Theme.textDim : Theme.warning
-                    font.family: Theme.font
-                    font.pixelSize: Theme.fontSm
-                }
-            }
-            SettingsPillButton {
-                icon: "folder"
-                label: qsTr("Open models folder")
-                onClicked: Voice.openModelFolder()
-            }
-        }
-
-        SettingsCardDivider {}
-
         Column {
             width: parent.width
             spacing: 6
@@ -222,9 +204,8 @@ SettingsPage {
             }
             Repeater {
                 model: [
-                    { id: "system", name: qsTr("This computer") },
                     { id: "google", name: qsTr("Google AI Studio") },
-                    { id: "kokoro", name: qsTr("Kokoro") }
+                    { id: "deepgram", name: qsTr("Deepgram") }
                 ]
                 delegate: Text {
                     required property var modelData
@@ -249,6 +230,7 @@ SettingsPage {
         target: Wake
         function onStateChanged() { page.refreshModels() }
         function onDetectorChanged() { page.refreshModels() }
+        function onPhrasesChanged() { page.refreshModels() }
     }
     Connections {
         target: Speech
@@ -261,7 +243,7 @@ SettingsPage {
         visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled)
         title: qsTr("Wake word")
         rightText: !panel.prefs.buddyWakeEnabled ? qsTr("Off") : (Wake.state === "listening" ? qsTr("Listening") : (Wake.state === "awaiting" ? qsTr("Heard you") : qsTr("On")))
-        description: qsTr("Say “Hey Buddy” instead of clicking. The phrase and your request are both recognised on this computer.")
+        description: qsTr("Say a wake word instead of clicking. Several phrases can be on at once, including openWakeWord models of your own. The phrase is recognised on this computer; the request you speak after it is turned into text by Deepgram.")
     }
 
     SettingsGroupCard {
@@ -270,10 +252,10 @@ SettingsPage {
             visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled)
             label: qsTr("Wake word")
             sub: panel.prefs.buddyLiveEnabled
-                 ? qsTr("Say “Hey Buddy” (or “Hey Buddy, open Notepad”) and a live conversation starts. Only the phrase is listened for on this computer; nothing goes to Deepgram until you have said it. After Buddy answers it keeps listening for the time you set in the Deepgram page, then closes the microphone and waits for the phrase again.")
+                 ? qsTr("Say a wake word (or follow it straight with what you want) and a live conversation starts. Only the phrase is listened for on this computer; nothing goes to Deepgram until you have said it. After Buddy answers it keeps listening for the time you set in the Deepgram page, then closes the microphone and waits for the phrase again.")
                  : Wake.detector === "speech"
-                 ? qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is turned into text on this computer, compared with the phrase and forgotten.")
-                 : qsTr("Say “Hey Buddy” and Buddy starts listening, then does what you ask and reports back. The phrase and your request are both recognised on this computer: nothing is sent anywhere. The microphone stays open while this is on (Windows shows its microphone icon).")
+                 ? qsTr("Say the phrase below and Buddy starts listening, then does what you ask and reports back. The microphone stays open while this is on (Windows shows its microphone icon). Whatever is said near it is sent to Deepgram, turned into text, compared with the phrase and forgotten.")
+                 : qsTr("Say one of the wake words below and Buddy starts listening, then does what you ask and reports back. The phrase is recognised on this computer; your request is sent to Deepgram to be turned into text. The microphone stays open while this is on (Windows shows its microphone icon).")
             checked: panel.prefs.buddyWakeEnabled
             onToggled: (c) => panel.prefs.buddyWakeEnabled = c
         }
@@ -282,9 +264,87 @@ SettingsPage {
             visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled && Wake.detector !== "speech"
             label: qsTr("Sensitivity")
             decimals: 2
-            // Left: strict (fewer false wake-ups). Right: easy (wakes on a quieter or less clear “Hey Buddy”).
+            // Left: strict (fewer false wake-ups). Right: easy (wakes on a quieter or less clear phrase).
             value: (0.9 - panel.prefs.buddyWakeThreshold) / 0.7
             onMoved: (v) => panel.prefs.buddyWakeThreshold = Math.round((0.9 - 0.7 * v) * 100) / 100
+        }
+
+        Column {
+            visible: (panel.prefs.buddyVoiceEnabled || panel.prefs.buddyLiveEnabled) && panel.prefs.buddyWakeEnabled
+            width: parent.width
+            spacing: 6
+
+            Text {
+                width: parent.width
+                text: qsTr("Wake words")
+                color: Theme.ink
+                font.family: Theme.font
+                font.pixelSize: Theme.fontBase
+                font.weight: Font.Medium
+            }
+            Text {
+                width: parent.width
+                text: qsTr("Every phrase switched on is listened for at the same time, and the detector reloads as you change them. Your own models are openWakeWord classifiers (a single .onnx per phrase, trained with openWakeWord) — they live in the models folder, on this computer only, and are never uploaded.")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            Repeater {
+                model: Wake.phrases
+                delegate: Column {
+                    required property var modelData
+                    width: parent.width
+                    spacing: 4
+
+                    SettingsToggleRow {
+                        label: modelData.name
+                        sub: modelData.builtin && modelData.userAdded
+                             ? qsTr("Your models · replaces the built-in copy")
+                             : modelData.userAdded ? qsTr("Your models") : qsTr("Built in")
+                        checked: modelData.enabled
+                        onToggled: (c) => Wake.setPhraseEnabled(modelData.id, c)
+                    }
+                    Flow {
+                        visible: modelData.userAdded
+                        width: parent.width
+                        spacing: 8
+                        SettingsPillButton {
+                            icon: "trash"
+                            label: qsTr("Remove")
+                            danger: true
+                            onClicked: page.removePhrase(modelData.id, modelData.name)
+                        }
+                    }
+                }
+            }
+            Text {
+                visible: (Wake.phrases || []).length === 0
+                width: parent.width
+                text: qsTr("No wake word models were found. Add an openWakeWord model below, or drop one into the models folder.")
+                color: Theme.warning
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
+            Flow {
+                width: parent.width
+                spacing: 8
+                SettingsPillButton {
+                    icon: "plus"
+                    label: qsTr("Add wake word…")
+                    onClicked: addWakeDialog.open()
+                }
+            }
+            Text {
+                visible: page.wakeModelMessage.length > 0
+                width: parent.width
+                text: page.wakeModelMessage
+                color: page.wakeModelError ? Theme.warning : Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
         }
 
         Flow {
@@ -315,7 +375,7 @@ SettingsPage {
                   : Wake.error.length > 0 ? Wake.error
                   : Wake.state === "loading" ? qsTr("Starting the local detector…")
                   : Wake.state === "listening" ? (Wake.detector === "local"
-                        ? qsTr("Listening for “Hey Buddy” on this computer.")
+                        ? qsTr("Listening for %1 on this computer.").arg(page.enabledPhraseNames())
                         : qsTr("Listening for “%1”.").arg(panel.prefs.buddyWakePhrase))
                   : Wake.state === "awaiting" ? qsTr("Heard it. Listening for your request…")
                   : Wake.state === "paused" ? qsTr("Paused for a moment.") : ""
@@ -337,9 +397,17 @@ SettingsPage {
         }
     }
 
+    FileDialog {
+        id: addWakeDialog
+        title: qsTr("Choose an openWakeWord wake word model")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("Wake word models (*.onnx)"), qsTr("All files (*)")]
+        onAccepted: page.addModelChosen(selectedFile)
+    }
+
     SettingsSectionHeader {
         title: qsTr("Spoken answers")
-        rightText: !panel.prefs.buddySpeakReports ? qsTr("Off") : ({ system: qsTr("This computer"), google: qsTr("Google AI Studio"), kokoro: qsTr("Kokoro") })[panel.prefs.buddyTtsEngine] || ""
+        rightText: !panel.prefs.buddySpeakReports ? qsTr("Off") : ({ google: qsTr("Google AI Studio"), deepgram: qsTr("Deepgram") })[panel.prefs.buddyTtsEngine] || ""
         description: qsTr("Buddy reads a short summary of each answer out loud: never code or links.")
     }
 
@@ -375,10 +443,8 @@ SettingsPage {
                 spacing: 8
                 Repeater {
                     model: [
-                        { id: "system", name: qsTr("This computer") },
                         { id: "google", name: qsTr("Google AI Studio") },
-                        { id: "deepgram", name: qsTr("Deepgram") },
-                        { id: "kokoro", name: qsTr("Kokoro") }
+                        { id: "deepgram", name: qsTr("Deepgram") }
                     ]
                     delegate: SettingsChip {
                         required property var modelData
@@ -387,18 +453,6 @@ SettingsPage {
                         onPicked: panel.prefs.buddyTtsEngine = modelData.id
                     }
                 }
-            }
-
-            Text {
-                visible: panel.prefs.buddyTtsEngine === "system"
-                width: parent.width
-                text: Speech.available
-                      ? qsTr("Uses the voice built into this computer. Nothing leaves it.")
-                      : Speech.problem
-                color: Speech.available ? Theme.textDim : Theme.warning
-                font.family: Theme.font
-                font.pixelSize: Theme.fontSm
-                wrapMode: Text.WordWrap
             }
 
             Column {
@@ -450,94 +504,8 @@ SettingsPage {
                 }
             }
 
-            Column {
-                id: kokoroSettings
-                visible: panel.prefs.buddyTtsEngine === "kokoro"
-                width: parent.width
-                spacing: 10
-
-                function loadVoices() {
-                    if (visible && Speech.kokoroVoices.length === 0 && !Speech.kokoroVoicesLoading)
-                        Speech.refreshKokoroVoices()
-                }
-                Component.onCompleted: loadVoices()
-                onVisibleChanged: loadVoices()
-
-                Timer {
-                    id: voicesRetry
-                    interval: 700
-                    onTriggered: Speech.refreshKokoroVoices()
-                }
-
-                SettingsFieldBox {
-                    width: parent.width
-                    label: qsTr("Kokoro server")
-                    placeholder: "http://127.0.0.1:8880"
-                    hint: qsTr("A Kokoro TTS server running on this computer (for example Kokoro-FastAPI). Speech is only sent to this computer or over https.")
-                    mono: true
-                    text: panel.prefs.buddyTtsKokoroBase
-                    onEdited: (v) => {
-                        panel.prefs.buddyTtsKokoroBase = v
-                        voicesRetry.restart()
-                    }
-                    onAccepted: Speech.refreshKokoroVoices()
-                }
-                SettingsFieldBox {
-                    width: parent.width
-                    label: qsTr("Voice")
-                    placeholder: "af_heart"
-                    hint: qsTr("Type any voice name, or pick one from the server's list below.")
-                    mono: true
-                    text: panel.prefs.buddyTtsKokoroVoice
-                    onEdited: (v) => panel.prefs.buddyTtsKokoroVoice = v
-                }
-
-                Row {
-                    width: parent.width
-                    spacing: 8
-
-                    Text {
-                        width: Math.max(0, parent.width - refreshVoices.width - parent.spacing)
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: Speech.kokoroVoicesLoading
-                              ? qsTr("Looking for voices on this server…")
-                              : Speech.kokoroVoicesProblem.length > 0
-                                ? Speech.kokoroVoicesProblem
-                                : Speech.kokoroVoices.length > 0
-                                  ? qsTr("%1 voices available. Pick one below, or type another name.").arg(Speech.kokoroVoices.length)
-                                  : qsTr("Load the voices this server offers.")
-                        color: Speech.kokoroVoicesProblem.length > 0 ? Theme.warning : Theme.textFaint
-                        font.family: Theme.font
-                        font.pixelSize: Theme.fontSm
-                        wrapMode: Text.WordWrap
-                    }
-                    SettingsPillButton {
-                        id: refreshVoices
-                        icon: "reset"
-                        label: Speech.kokoroVoicesLoading ? qsTr("Loading…") : qsTr("Refresh")
-                        enabled: !Speech.kokoroVoicesLoading
-                        onClicked: Speech.refreshKokoroVoices()
-                    }
-                }
-
-                Flow {
-                    width: parent.width
-                    spacing: 8
-                    visible: Speech.kokoroVoices.length > 0
-                    Repeater {
-                        model: Speech.kokoroVoices
-                        delegate: SettingsChip {
-                            required property string modelData
-                            text: modelData
-                            selected: panel.prefs.buddyTtsKokoroVoice === modelData
-                            onPicked: panel.prefs.buddyTtsKokoroVoice = modelData
-                        }
-                    }
-                }
-            }
 
             SettingsLabeledSlider {
-                visible: panel.prefs.buddyTtsEngine !== "system"
                 label: qsTr("Speed")
                 decimals: 2
                 // 0.7 .. 1.5
@@ -546,7 +514,7 @@ SettingsPage {
             }
 
             Text {
-                visible: panel.prefs.buddyTtsEngine !== "system" && !Speech.available
+                visible: !Speech.available
                 width: parent.width
                 text: Speech.problem
                 color: Theme.warning

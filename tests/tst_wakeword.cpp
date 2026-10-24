@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QSignalSpy>
+#include <QUrl>
 
 #include "OrtRuntime.h"
 #include "SpeechOut.h"
@@ -505,20 +506,38 @@ private slots:
         QCOMPARE(r.mic->starts, 1);
     }
 
-    void needsTheSpeechModel() {
+    void needsTheSpeechServiceSetUp() {
         Rig r(false);
-        r.stt.set([](FakeTranscriber &t) { t.problemText = QStringLiteral("The speech model is missing."); });
+        r.stt.set([](FakeTranscriber &t) { t.problemText = QStringLiteral("Add your Deepgram API key to use it for speech to text."); });
         r.wake.setEnabled(true);
         QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
-        QCOMPARE(r.wake.blockedReason(), QStringLiteral("The speech model is missing."));
+        // The plain setup problem is the reason — not a refusal to use a cloud engine.
+        QCOMPARE(r.wake.blockedReason(), QStringLiteral("Add your Deepgram API key to use it for speech to text."));
         QCOMPARE(r.mic->starts, 0);                  // the microphone never opens for something that cannot work
     }
 
-    void nothingIsEverSentAnywhereSoThereIsNothingToConsentTo() {
+    void theSpeechEngineIsNotRefused() {
         Rig r;
         QVERIFY(r.wake.blockedReason().isEmpty());
         QVERIFY(r.wake.active());
         QCOMPARE(r.voice.engine(), QStringLiteral("Fake"));
+    }
+
+    void aCloudEngineTranscribesWhatFollowsThePhrase() {
+        // Deepgram is asynchronous and in the cloud; the wake word used to
+        // refuse such an engine outright. Now the follow-up just works.
+        Rig r(false);
+        auto *cloud = new AsyncFakeTranscriber;
+        cloud->reply = QStringLiteral("hey buddy open notepad");
+        r.voice.setTranscriber(std::unique_ptr<Transcriber>(cloud));
+        r.wake.setEnabled(true);
+        QCOMPARE(r.wake.blockedReason(), QString());
+        QCOMPARE(r.wake.state(), QStringLiteral("listening"));
+        r.say();
+        QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 5000);
+        // The command is what followed the phrase in the same utterance.
+        QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad."));
+        QCOMPARE(cloud->requests.load(), 1);
     }
 
     void badPhraseBlocks() {
@@ -598,10 +617,10 @@ private slots:
 
     void aFailingEngineClosesTheMicrophoneUntilTheSettingsChange() {
         Rig r;
-        r.stt.set([](FakeTranscriber &t) { t.errorText = QStringLiteral("Moonshine stopped while writing."); });
+        r.stt.set([](FakeTranscriber &t) { t.errorText = QStringLiteral("Deepgram stopped while writing."); });
         r.say();
         QTRY_COMPARE(r.failed.count(), 1);
-        QVERIFY(r.wake.error().contains("Moonshine"));
+        QVERIFY(r.wake.error().contains("Deepgram"));
         QCOMPARE(r.wake.state(), QStringLiteral("blocked"));
         QVERIFY(!r.wake.active());                 // no microphone left open on something that cannot work
         r.say();                                    // nothing hears this
@@ -725,6 +744,207 @@ private slots:
         play(r.mic, speech(1.0) + silence(1.6));
         QTRY_COMPARE_WITH_TIMEOUT(r.command.count(), 1, 10000);
         QCOMPARE(r.command.first().first().toString(), QStringLiteral("open notepad."));
+    }
+
+    // ---- many phrases: finding them ---------------------------------------------------
+
+    void phraseNamesComeFromTheFileName() {
+        QCOMPARE(wake::phraseDisplayName("hey_buddy.onnx"), QStringLiteral("Hey Buddy"));
+        QCOMPARE(wake::phraseDisplayName("alexa.onnx"), QStringLiteral("Alexa"));
+        QCOMPARE(wake::phraseDisplayName("hey_max.onnx"), QStringLiteral("Hey Max"));
+        QCOMPARE(wake::phraseDisplayName("ok-computer.onnx"), QStringLiteral("Ok Computer"));
+    }
+
+    void discoveryListsBundledAndUserPhrases() {
+        QTemporaryDir bundled, user;
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/melspectrogram.onnx", bundled.filePath("melspectrogram.onnx")));
+        QVERIFY(QFile::copy(res + "/embedding_model.onnx", bundled.filePath("embedding_model.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", bundled.filePath("hey_buddy.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", bundled.filePath("alexa.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", user.filePath("hey_max.onnx")));
+        const QList<wake::PhraseModel> found = wake::discoverPhraseModels(user.path(), bundled.path());
+        QCOMPARE(found.size(), 3);   // the two shared feature models are not phrases
+        QCOMPARE(found[0].fileName, QStringLiteral("alexa.onnx"));
+        QVERIFY(found[0].builtin && !found[0].userAdded);
+        QCOMPARE(found[1].fileName, QStringLiteral("hey_buddy.onnx"));
+        QCOMPARE(found[1].name, QStringLiteral("Hey Buddy"));
+        QVERIFY(found[1].builtin && !found[1].userAdded);
+        QCOMPARE(found[2].fileName, QStringLiteral("hey_max.onnx"));
+        QCOMPARE(found[2].name, QStringLiteral("Hey Max"));
+        QVERIFY(found[2].userAdded && !found[2].builtin);
+        QCOMPARE(found[2].path, user.filePath("hey_max.onnx"));
+    }
+
+    void aUserCopyShadowsTheBundledPhrase() {
+        QTemporaryDir bundled, user;
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", bundled.filePath("hey_buddy.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", user.filePath("hey_buddy.onnx")));
+        const QList<wake::PhraseModel> found = wake::discoverPhraseModels(user.path(), bundled.path());
+        QCOMPARE(found.size(), 1);   // one phrase, two sources
+        QVERIFY(found[0].builtin && found[0].userAdded);
+        QCOMPARE(found[0].path, user.filePath("hey_buddy.onnx"));   // the user's copy is in effect
+    }
+
+    void modelStatusListsThePhrases() {
+        QTemporaryDir models;
+        Rig r(false);
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", models.filePath("hey_max.onnx")));
+        r.wake.setModelFolder(models.path());
+        const QVariantList phrases = r.wake.detectorModelStatus().value(QStringLiteral("phrases")).toList();
+        QCOMPARE(phrases.size(), 1);
+        const QVariantMap m = phrases.first().toMap();
+        QCOMPARE(m.value(QStringLiteral("name")).toString(), QStringLiteral("Hey Max"));
+        QCOMPARE(m.value(QStringLiteral("source")).toString(), QStringLiteral("user"));
+        QVERIFY(!m.value(QStringLiteral("enabled")).toBool());   // not switched on yet
+    }
+
+    // ---- many phrases: adding and removing ---------------------------------------------
+
+    void addedWakeWordAppearsSwitchedOn() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        QTemporaryDir models, staging;
+        Rig r(false);
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        // The real "Hey Buddy" classifier renamed is the uploaded fixture.
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", staging.filePath("hey_max.onnx")));
+        r.wake.setModelFolder(models.path());
+        QCOMPARE(r.wake.addWakeWordModel(staging.filePath("hey_max.onnx")), QString());
+        QVERIFY(QFile::exists(models.filePath("hey_max.onnx")));   // copied into the models folder
+        bool seen = false;
+        for (const QVariant &v : r.wake.phrases()) {
+            const QVariantMap m = v.toMap();
+            if (m.value(QStringLiteral("id")).toString() != QStringLiteral("hey_max.onnx"))
+                continue;
+            seen = true;
+            QCOMPARE(m.value(QStringLiteral("name")).toString(), QStringLiteral("Hey Max"));
+            QCOMPARE(m.value(QStringLiteral("source")).toString(), QStringLiteral("user"));
+            QVERIFY(m.value(QStringLiteral("enabled")).toBool());   // on at once
+        }
+        QVERIFY(seen);
+        QVERIFY(r.wake.wakeWords().contains(QStringLiteral("hey_max.onnx")));
+        // A file:// URL, as the settings file dialog hands over, works too.
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", staging.filePath("hey_ada.onnx")));
+        QCOMPARE(r.wake.addWakeWordModel(QUrl::fromLocalFile(staging.filePath("hey_ada.onnx")).toString()), QString());
+        QVERIFY(r.wake.wakeWords().contains(QStringLiteral("hey_ada.onnx")));
+        // And a phrase the user added can be removed again, file and all.
+        QCOMPARE(r.wake.removeWakeWordModel(QStringLiteral("hey_max.onnx")), QString());
+        QVERIFY(!QFile::exists(models.filePath("hey_max.onnx")));
+        QVERIFY(!r.wake.wakeWords().contains(QStringLiteral("hey_max.onnx")));
+    }
+
+    void builtinPhraseCannotBeRemovedOnlySwitchedOff() {
+        QTemporaryDir bundled, user;
+        Rig r(false);
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", bundled.filePath("hey_buddy.onnx")));
+        r.wake.setBundledDir(bundled.path());
+        r.wake.setModelFolder(user.path());
+        const QString err = r.wake.removeWakeWordModel(QStringLiteral("hey_buddy.onnx"));
+        QVERIFY2(!err.isEmpty(), "a built-in phrase must not be removable");
+        QVERIFY(err.contains(QStringLiteral("built in"), Qt::CaseInsensitive));
+        QVERIFY(QFile::exists(bundled.filePath("hey_buddy.onnx")));
+        QVERIFY(!r.wake.removeWakeWordModel(QStringLiteral("not_there.onnx")).isEmpty());
+    }
+
+    void addRejectsFilesThatAreNotWakeWords() {
+        QTemporaryDir models, staging;
+        Rig r(false);
+        r.wake.setModelFolder(models.path());
+        // Missing entirely.
+        QVERIFY(!r.wake.addWakeWordModel(staging.filePath("nope.onnx")).isEmpty());
+        // Not an .onnx.
+        QFile txt(staging.filePath("hey_max.txt"));
+        QVERIFY(txt.open(QIODevice::WriteOnly));
+        txt.write("hello");
+        txt.close();
+        QVERIFY(!r.wake.addWakeWordModel(staging.filePath("hey_max.txt")).isEmpty());
+        // One of the shared pipeline models is not a phrase.
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/melspectrogram.onnx", staging.filePath("melspectrogram.onnx")));
+        const QString pipeline = r.wake.addWakeWordModel(staging.filePath("melspectrogram.onnx"));
+        QVERIFY2(pipeline.contains(QStringLiteral("shared"), Qt::CaseInsensitive), qPrintable(pipeline));
+        // Garbage with the right suffix is caught by really loading it.
+        QString why;
+        if (ortrt::load({}, &why)) {
+            QFile junk(staging.filePath("junk.onnx"));
+            QVERIFY(junk.open(QIODevice::WriteOnly));
+            junk.write("not a model");
+            junk.close();
+            QVERIFY(!r.wake.addWakeWordModel(staging.filePath("junk.onnx")).isEmpty());
+            // The embedding model loads as ONNX but is not a phrase classifier.
+            QVERIFY(QFile::copy(res + "/embedding_model.onnx", staging.filePath("hey_embed.onnx")));
+            QVERIFY(!r.wake.addWakeWordModel(staging.filePath("hey_embed.onnx")).isEmpty());
+        }
+        // Nothing was copied in or listed.
+        QVERIFY(r.wake.phrases().isEmpty());
+        QVERIFY(QDir(models.path()).entryList({ QStringLiteral("*.onnx") }, QDir::Files).isEmpty());
+    }
+
+    // ---- many phrases: the enabled set drives the detector ----------------------------
+
+    void onlyTheSwitchedOnPhrasesAreListenedFor() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        QTemporaryDir models;
+        Rig r(false);
+        r.stt.reply = reply("");   // the speech fallback hears nothing: only the detector can wake it
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/melspectrogram.onnx", models.filePath("melspectrogram.onnx")));
+        QVERIFY(QFile::copy(res + "/embedding_model.onnx", models.filePath("embedding_model.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", models.filePath("hey_buddy.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", models.filePath("hey_max.onnx")));
+        r.wake.setModelFolder(models.path());
+        // "Hey Max" is the same classifier renamed: it must be the one that fires.
+        r.wake.setWakeWords({ QStringLiteral("hey_max.onnx") });
+        r.wake.setEnabled(true);
+        QTRY_COMPARE_WITH_TIMEOUT(r.wake.detector(), QStringLiteral("local"), 20000);
+        QTRY_VERIFY(r.mic->open);
+        QSignalSpy wokePhrase{ &r.wake, &WakeWord::wokePhrase };
+        play(r.mic, silence(1.0) + fixturePcm("hey_buddy_tts.wav"));
+        QTRY_COMPARE_WITH_TIMEOUT(r.woke.count(), 1, 10000);
+        QCOMPARE(wokePhrase.count(), 1);
+        QCOMPARE(wokePhrase.first().at(0).toString(), QStringLiteral("hey_max.onnx"));
+        QCOMPARE(wokePhrase.first().at(1).toString(), QStringLiteral("Hey Max"));
+        // Switch every phrase off: the local detector stands down and the
+        // phrase in the recording no longer wakes anything.
+        r.wake.cancelAwaiting();
+        r.wake.setWakeWords({});
+        QTRY_COMPARE_WITH_TIMEOUT(r.wake.detector(), QStringLiteral("speech"), 20000);
+        play(r.mic, fixturePcm("hey_buddy_tts.wav"));
+        QTest::qWait(1200);
+        QCOMPARE(r.woke.count(), 1);
+    }
+
+    void twoPhrasesCanBeOnAtOnce() {
+        QString why;
+        if (!ortrt::load({}, &why))
+            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
+        QTemporaryDir models;
+        Rig r(false);
+        r.stt.reply = reply("");
+        const QString res = QStringLiteral(NOCH_WAKEWORD_DIR);
+        QVERIFY(QFile::copy(res + "/melspectrogram.onnx", models.filePath("melspectrogram.onnx")));
+        QVERIFY(QFile::copy(res + "/embedding_model.onnx", models.filePath("embedding_model.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", models.filePath("hey_buddy.onnx")));
+        QVERIFY(QFile::copy(res + "/hey_buddy.onnx", models.filePath("hey_max.onnx")));
+        r.wake.setModelFolder(models.path());
+        r.wake.setWakeWords({ QStringLiteral("hey_buddy.onnx"), QStringLiteral("hey_max.onnx") });
+        r.wake.setEnabled(true);
+        QTRY_COMPARE_WITH_TIMEOUT(r.wake.detector(), QStringLiteral("local"), 20000);
+        QTRY_VERIFY(r.mic->open);
+        QSignalSpy wokePhrase{ &r.wake, &WakeWord::wokePhrase };
+        play(r.mic, silence(1.0) + fixturePcm("hey_buddy_tts.wav"));
+        QTRY_COMPARE_WITH_TIMEOUT(r.woke.count(), 1, 10000);
+        QCOMPARE(wokePhrase.count(), 1);
+        const QString id = wokePhrase.first().at(0).toString();
+        QVERIFY2(id == QStringLiteral("hey_buddy.onnx") || id == QStringLiteral("hey_max.onnx"), qPrintable(id));
+        QCOMPARE(wokePhrase.first().at(1).toString(), wake::phraseDisplayName(id));
     }
 
 };

@@ -11,6 +11,7 @@
 #include <QTcpSocket>
 #include <QDir>
 #include <QFile>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
@@ -58,6 +59,33 @@ class TstMusicAgent : public QObject
     MusicAgentBackend *backend = nullptr;
     QTemporaryDir music;
 
+    // An empty queue is arranged by building a fresh player stack: the saved
+    // queue is wiped first, or the new player would resurrect it from
+    // settings. (MusicPlayer has no clear() any more — it was test-only
+    // surface with no production caller and no queue UI.)
+    void resetPlayer() {
+        delete backend;
+        delete hub;
+        delete player;
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("player"));
+        settings.remove(QStringLiteral("tracks"));
+        settings.remove(QStringLiteral("index"));
+        settings.remove(QStringLiteral("position"));
+        settings.endGroup();
+        player = new MusicPlayer(this);
+        hub = new MediaHub(player, smtc, audio, this);
+        backend = new MusicAgentBackend(hub, player);
+        hub->selectSource(QStringLiteral("local"));
+    }
+
+    // MusicPlayer::currentIsOnline() is gone (test-only surface too). Within
+    // this fixture the same fact is observable: playOnline() stamps the
+    // track's album as "YouTube", and the local files here carry no album tag.
+    bool currentIsOnline() const {
+        return player->hasTrack() && player->album() == QStringLiteral("YouTube");
+    }
+
 private slots:
     void initTestCase() {
         QStandardPaths::setTestModeEnabled(true);   // the player's saved queue must not be the user's
@@ -66,7 +94,7 @@ private slots:
         smtc = new SmtcMedia(this);
         audio = new AudioDevices(this);
         running = new RunningApps(new WindowMonitor(this), this);
-        hub = new MediaHub(player, smtc, audio, running, this);
+        hub = new MediaHub(player, smtc, audio, this);
         backend = new MusicAgentBackend(hub, player);
         // Let the Windows media sessions report in before deciding anything.
         QTest::qWait(1500);
@@ -76,7 +104,7 @@ private slots:
     }
 
     void startsEmptyAndSaysSo() {
-        player->clear();
+        resetPlayer();
         QVERIFY(backend->status().ready);
         QCOMPARE(backend->status().queueCount, 0);
         QString why;
@@ -211,18 +239,18 @@ private slots:
     }
 
     void anOnlineSongPlaysNextAndShowsItsOwnTitleAndArtist() {
-        player->clear();
+        resetPlayer();
         const QString local = music.filePath("queued.wav");
         const QString stream = music.filePath("stream.wav");
         QVERIFY(writeWav(local, 3.0));
         QVERIFY(writeWav(stream, 3.0));
         QCOMPARE(player->addUrls({ QUrl::fromLocalFile(local) }), 1);
-        QVERIFY(!player->currentIsOnline());
+        QVERIFY(!currentIsOnline());
 
         player->playOnline(onlineTrack(stream));
         QCOMPARE(player->count(), 2);
         QCOMPARE(player->index(), 1);                                  // next in line, so the queue carries on after it
-        QVERIFY(player->currentIsOnline());
+        QVERIFY(currentIsOnline());
         QCOMPARE(player->title(), QStringLiteral("Yellow"));
         QCOMPARE(player->artist(), QStringLiteral("Coldplay"));
         QCOMPARE(player->album(), QStringLiteral("YouTube"));
@@ -244,12 +272,11 @@ private slots:
         QVERIFY(!paths.first().contains("youtube"));
         QCOMPARE(saved, 0);
         player->next();
-        QVERIFY(!player->currentIsOnline());                           // the queue went on to the local song
-        player->clear();
+        QVERIFY(!currentIsOnline());                           // the queue went on to the local song
     }
 
     void aNewOnlineSongAfterASkipGoesNextInLine() {
-        player->clear();
+        resetPlayer();
         const QString stream = music.filePath("stream.wav");
         QVERIFY(writeWav(stream, 2.0));
         player->playOnline(onlineTrack(stream, "first00000a"));
@@ -262,7 +289,6 @@ private slots:
         QCOMPARE(player->count(), 3);
         QCOMPARE(player->index(), 1);                                  // right after the one that was playing
         QCOMPARE(player->persistentPaths().size(), 0);
-        player->clear();
     }
 
     void withoutYtDlpTheAgentIsToldHowToGetIt() {
@@ -283,7 +309,7 @@ private slots:
     }
 
     void theBackendFindsAndPlaysASongFromYouTube() {
-        player->clear();
+        resetPlayer();
         const QString json = music.filePath("answer.json");
         QFile f(json);
         QVERIFY(f.open(QIODevice::WriteOnly));
@@ -305,7 +331,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(done, 20000);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QCOMPARE(title, QStringLiteral("Yellow — Coldplay"));
-        QVERIFY(player->currentIsOnline());
+        QVERIFY(currentIsOnline());
         QCOMPARE(player->title(), QStringLiteral("Yellow"));
         QCOMPARE(hub->source(), QStringLiteral("local"));              // the pill shows Noch's player
         QCOMPARE(hub->title(), QStringLiteral("Yellow"));
@@ -323,7 +349,6 @@ private slots:
         qunsetenv("NOCH_FAKE_EXIT");
         qunsetenv("NOCH_FAKE_STDERR");
         qunsetenv("NOCH_FAKE_YTDLP");
-        player->clear();
     }
 
     // The whole way, for real: yt-dlp finds the song, Noch's player streams it from YouTube.
@@ -334,7 +359,7 @@ private slots:
         if (exe.isEmpty())
             QSKIP("Set NOCH_YTDLP_EXE to a yt-dlp executable to play from YouTube for real.");
         qunsetenv("NOCH_FAKE_YTDLP");
-        player->clear();
+        resetPlayer();
         player->setMuted(true);                                        // nobody should be woken by a test
         YtDlp yt;
         yt.setConfiguredPath(exe);
@@ -345,19 +370,13 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(done, 90000);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         qInfo().noquote() << "playing" << title;
-        QVERIFY(player->currentIsOnline());
+        QVERIFY(currentIsOnline());
         QTRY_COMPARE_WITH_TIMEOUT(player->state(), 1, 30000);          // the stream opened and plays
         QTRY_VERIFY_WITH_TIMEOUT(player->duration() > 60000, 30000);
         QTRY_VERIFY_WITH_TIMEOUT(player->position() > 500, 30000);     // and time moves
         QTRY_VERIFY_WITH_TIMEOUT(player->hasCover(), 30000);           // the thumbnail arrived
         QVERIFY(backend->status().playing || hub->playing());
         player->setMuted(false);
-        player->clear();
-    }
-
-    void cleanupTestCase() {
-        if (player)
-            player->clear();
     }
 };
 

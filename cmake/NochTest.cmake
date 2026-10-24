@@ -6,8 +6,9 @@
 #       LIBS    Qt6::Core Qt6::Network
 #   )
 #
-# Every test gets the source include paths from the noch_includes interface
-# target, the Qt Test framework, and a headless-friendly environment.
+# Every test gets the Qt Test framework and a headless-friendly
+# environment. Production headers arrive through the per-area libraries
+# in the test's LIBS (each library carries its area's include dir).
 
 function(noch_add_unit_test name)
     cmake_parse_arguments(ARG "" "" "SOURCES;LIBS;DEFS" ${ARGN})
@@ -27,7 +28,7 @@ function(noch_add_unit_test name)
     endforeach()
 
     qt_add_executable(${name} ${sources})
-    target_link_libraries(${name} PRIVATE Qt6::Test noch_includes ${ARG_LIBS})
+    target_link_libraries(${name} PRIVATE Qt6::Test ${ARG_LIBS})
     if(ARG_DEFS)
         target_compile_definitions(${name} PRIVATE ${ARG_DEFS})
     endif()

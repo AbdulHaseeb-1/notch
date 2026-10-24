@@ -1,16 +1,17 @@
-// All connectors in one place: the built-in apps (Gmail) and the MCP servers the user
-// added. It is what BuddyProvider and the Settings page talk to.
+// All connectors in one place: the built-in apps (Gmail, GitHub) and any MCP servers
+// saved earlier. It is what BuddyProvider and the Settings page talk to.
 //
 // For Buddy: tools() lists the tools of connected connectors, callTool() runs one, and
 // the "always allow" grants live here, so Settings can show and revoke them. For
-// Settings (QML): connectorList() describes every connector, and connectApp(),
-// addMcpServer() ... change them.
+// Settings (QML): connectorList() describes every connector, and connectApp() /
+// disconnectApp() drive the browser sign-ins. The built-in apps sign in with Noch's
+// own OAuth client IDs (BuiltinOAuth): there is nothing for the user to paste.
 //
 // Persistence (only once setStorageDir() was called; tests never touch real files):
-//   <dir>/connectors.json   non-secret settings: the Google client ID, the MCP servers
-//                           (name, transport, command or URL), the "always allow" tools
-//   <dir>/secrets/*.sec     everything secret, encrypted (SecretStore): OAuth tokens and
-//                           client secret, MCP tokens and environment
+//   <dir>/connectors.json   non-secret settings: the MCP servers (name, transport,
+//                           command or URL), the "always allow" tools
+//   <dir>/secrets/*.sec     everything secret, encrypted (SecretStore): OAuth tokens,
+//                           MCP tokens and environment
 #pragma once
 
 #include <QHash>
@@ -21,6 +22,7 @@
 #include "Connector.h"
 #include "SecretStore.h"
 
+class GithubConnector;
 class GmailConnector;
 
 class ConnectorRegistry : public QObject
@@ -48,6 +50,7 @@ public:
     void addConnector(Connector *c);
     Connector *find(const QString &id) const;
     GmailConnector *gmail() const { return m_gmail; }
+    GithubConnector *github() const { return m_github; }
     SecretStore *secrets() { return &m_secrets; }
     bool secretsEncrypted() const { return secrets::encryptionAvailable(); }
 
@@ -70,10 +73,9 @@ public:
     QVariantList connectorList() const;
     Q_INVOKABLE void connectApp(const QString &id);
     Q_INVOKABLE void disconnectApp(const QString &id);
-    // Google Cloud OAuth client for Gmail (the user's own, see docs/connectors.md).
-    Q_INVOKABLE void setGoogleClientId(const QString &clientId);
-    Q_INVOKABLE void setGoogleClientSecret(const QString &secret);
     // Adds an MCP server and connects it. Returns an error sentence, or "" when added.
+    // (Kept for saved servers and tests; Settings no longer offers adding one — the
+    // built-in apps above are the connectors now.)
     // `secrets`: `Header: value` lines (http) or `NAME=value` lines (stdio), kept encrypted.
     Q_INVOKABLE QString addMcpServer(const QString &name, const QString &transport, const QString &target,
                                      const QString &secrets);
@@ -83,8 +85,6 @@ public:
     Q_INVOKABLE void removeConnector(const QString &id);
     Q_INVOKABLE void revokeAlwaysAllow(const QString &tool) { setAlwaysAllow(tool, false); }
     Q_INVOKABLE void revokeAllAlwaysAllow();
-    // Ready-made entries for the add form: [{ name, transport, target, secretsHint, help }].
-    Q_INVOKABLE QVariantList presets() const;
 
 signals:
     // Anything about a connector changed (for the settings list).
@@ -101,6 +101,7 @@ private:
     SecretStore m_secrets;
     QList<Connector *> m_list;
     GmailConnector *m_gmail = nullptr;
+    GithubConnector *m_github = nullptr;
     QSet<QString> m_always;
     bool m_loading = false;
     // tool name -> { definition fingerprint, schema }

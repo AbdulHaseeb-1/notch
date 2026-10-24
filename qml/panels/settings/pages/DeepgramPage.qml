@@ -443,7 +443,7 @@ SettingsPage {
         SettingsFieldBox {
             width: parent.width
             label: qsTr("Words to listen for")
-            placeholder: qsTr("Noch, Moonshine, your name")
+            placeholder: qsTr("Noch, Buddy, your name")
             hint: qsTr("Names and jargon Deepgram should get right, separated by commas.")
             text: page.prefs.buddyLiveKeyterms
             onEdited: (v) => page.prefs.buddyLiveKeyterms = v
@@ -475,20 +475,12 @@ SettingsPage {
             font.pixelSize: Theme.fontSm
             font.weight: Font.DemiBold
         }
-        Segmented {
-            width: parent.width
-            options: [{ label: qsTr("On this computer"), value: "local" }, { label: qsTr("Deepgram"), value: "deepgram" }]
-            value: page.prefs.buddySttEngine
-            onPicked: (v) => page.prefs.buddySttEngine = v
-        }
         Text {
             width: parent.width
-            text: page.prefs.buddySttEngine === "deepgram"
-                  ? (Voice.configured
-                     ? qsTr("Each push-to-talk clip is sent to Deepgram for transcription, and Buddy's own model answers. The always-on wake word keeps using the detector on this computer, so nothing is streamed until you say it.")
-                     : Voice.problem)
-                  : qsTr("Moonshine runs on this computer: nothing you say leaves it. Slower to start and English only.")
-            color: page.prefs.buddySttEngine === "deepgram" && !Voice.configured ? Theme.warning : Theme.textFaint
+            text: Voice.configured
+                 ? qsTr("Each push-to-talk clip is sent to Deepgram for transcription, and Buddy's own model answers. The always-on wake word keeps using the detector on this computer, so nothing is streamed until you say it; the request you speak after the wake word is transcribed by Deepgram too.")
+                 : Voice.problem
+            color: !Voice.configured ? Theme.warning : Theme.textFaint
             font.family: Theme.font
             font.pixelSize: Theme.fontSm
             wrapMode: Text.WordWrap

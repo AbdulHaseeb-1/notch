@@ -1,8 +1,10 @@
 // Gmail for Buddy: search and read mail, write drafts, send.
 //
 // Sign-in is Google's OAuth 2.0 for desktop apps (PKCE, loopback redirect, see
-// OAuthClient.h) with the user's own Google Cloud OAuth client: Noch ships no client
-// ID of its own. The scopes are the narrowest that do the job:
+// OAuthClient.h) with Noch's own built-in "Desktop app" client ID (BuiltinOAuth):
+// the user presses Connect and approves in the browser — nothing to paste.
+// Desktop clients are public clients, so the flow is PKCE-only and no client
+// secret is ever sent. The scopes are the narrowest that do the job:
 //   gmail.readonly   search and read messages and threads
 //   gmail.compose    create drafts and send mail (no read-modify, no delete)
 // Tokens are kept encrypted (SecretStore), never in plain settings.
@@ -90,11 +92,9 @@ public:
     void call(const QString &tool, const QJsonObject &args, connectors::Done done) override;
     void cancelAll() override;
 
-    // The user's own Google OAuth client (Settings > Connectors). The secret is optional
-    // (Google's Desktop clients have one that is not confidential) and is kept encrypted.
-    void setClientCredentials(const QString &clientId, const QString &clientSecret);
+    // Noch's own built-in client ID (BuiltinOAuth). setClientId exists for tests.
+    void setClientId(const QString &clientId);
     QString clientId() const { return m_clientId; }
-    bool hasClientSecret() const { return !m_clientSecret.isEmpty(); }
     void setSecretStore(SecretStore *store) { m_secrets = store; }
     // Reads saved tokens: a connector with a refresh token is connected without asking again.
     void restore();
@@ -131,7 +131,7 @@ private:
     QNetworkAccessManager m_nam;
     OAuthClient m_oauth;
     SecretStore *m_secrets = nullptr;
-    QString m_clientId, m_clientSecret;
+    QString m_clientId;
     oauth::Tokens m_tokens;
     QString m_apiBase;
     QUrl m_revokeUrl;

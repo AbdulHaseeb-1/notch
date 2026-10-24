@@ -9,6 +9,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QVariantMap>
+#include <QVector>
 
 #include <atomic>
 
@@ -23,13 +24,15 @@ class WakeWorker;
 //
 // How it works, and what that means for privacy (this is an open microphone):
 //  * off until the user turns it on, and it needs Voice input set up first;
-//  * the phrase is found on this computer: an openWakeWord model (WakeDetector,
-//    "Hey Buddy" ships with Noch) listens to the microphone through ONNX
-//    Runtime. Nothing is sent anywhere, ever: once the phrase is heard, the request
-//    that follows is transcribed on this computer too (Moonshine Tiny);
+//  * the phrase is found on this computer: openWakeWord models (WakeDetector;
+//    "Hey Buddy" ships with Noch) listen to the microphone through ONNX
+//    Runtime. More than one phrase can be on at once, and the user can add
+//    their own openWakeWord models in the settings. While it listens for the
+//    phrase nothing is sent anywhere: once a phrase is heard, the request
+//    that follows is sent to Deepgram to be transcribed;
 //  * without ONNX Runtime or the wake model it falls back to the older method:
-//    the sound is cut into utterances locally and each one is transcribed (also
-//    on this computer) and compared with the phrase;
+//    the sound is cut into utterances and each one is sent to Deepgram,
+//    transcribed and compared with the phrase;
 //  * what is heard is only compared with the phrase and then dropped: it is not
 //    stored, logged or shown unless the phrase was said at the start of it;
 //  * an utterance is only a wake-up when the phrase is at its very start
@@ -70,6 +73,29 @@ QString spokenSummary(const QString &text, int maxChars = 280);
 // of latency per extra vote). Returns true exactly once when the streak
 // reaches `needed`, and consumes the streak.
 bool confirmSustained(int &streak, float score, float threshold, int needed);
+
+// ---- the phrase models on this computer --------------------------------------------
+
+// One wake phrase the local detector can listen for: an openWakeWord
+// classifier (the third model of the pipeline; the two feature models,
+// melspectrogram.onnx and embedding_model.onnx, are shared by all phrases).
+struct PhraseModel {
+    QString fileName;        // "hey_buddy.onnx": the id the enabled set uses
+    QString name;            // "Hey Buddy": what the settings calls it
+    QString path;            // the file in effect (the user's copy, when it shadows the bundled one)
+    bool builtin = false;    // a bundled copy exists
+    bool userAdded = false;  // the file in effect is the user's own copy
+};
+
+// "hey_buddy.onnx" -> "Hey Buddy".
+QString phraseDisplayName(const QString &fileName);
+
+// Every phrase classifier in the user's folder and in the bundled models —
+// any .onnx in either that is not one of the two shared feature models. A
+// user file with the same name as a bundled one shadows it (same rule the
+// single-model picker used), but both sources are reported, not just a
+// winner. Sorted by file name.
+QList<PhraseModel> discoverPhraseModels(const QString &userFolder, const QString &bundledDir);
 
 // ---- finding utterances in a stream of audio (pure) ----------------------------------
 
@@ -136,6 +162,15 @@ class WakeWord : public QObject
     Q_PROPERTY(QString localProblem READ localProblem NOTIFY detectorChanged)
     // Where models can be dropped in to replace the bundled "Hey Buddy".
     Q_PROPERTY(QString modelFolder READ modelFolder CONSTANT)
+    // The phrases the local detector listens for, by model file name
+    // ("hey_buddy.onnx"). Any subset of `phrases` may be on at once; the
+    // detector reloads live when this changes. Default: just the bundled
+    // "Hey Buddy".
+    Q_PROPERTY(QStringList wakeWords READ wakeWords WRITE setWakeWords NOTIFY wakeWordsChanged)
+    // Every phrase found on this computer (see wake::discoverPhraseModels),
+    // each a map: id/fileName, name, source ("builtin" | "user"), builtin,
+    // userAdded, enabled, path.
+    Q_PROPERTY(QVariantList phrases READ phrases NOTIFY phrasesChanged)
     // How sure the model has to be, 0.2 (easily woken) .. 0.9 (strict). 0.5 is the model's own default.
     Q_PROPERTY(double threshold READ threshold WRITE setThreshold NOTIFY configChanged)
     // True whenever the microphone is open for this: show it, always.
@@ -169,9 +204,26 @@ public:
     void setThreshold(double t);
     // Tests point this at a folder of models (the shipped ones are read from the resources).
     void setModelFolder(const QString &folder);
+    // Tests point this at the "bundled" models (in the app: the resources).
+    void setBundledDir(const QString &dir);
     Q_INVOKABLE void openModelFolder() const;
     // What the settings shows about the wake models: the files and their state.
     Q_INVOKABLE QVariantMap detectorModelStatus() const;
+
+    QStringList wakeWords() const { return m_wakeWords; }
+    void setWakeWords(const QStringList &ids);
+    QVariantList phrases() const;
+    // Switch one discovered phrase on or off (updates wakeWords).
+    Q_INVOKABLE void setPhraseEnabled(const QString &id, bool on);
+    // Adds a wake word the user picked: `path` is a local path or a file://
+    // URL to an openWakeWord classifier (.onnx). The file is checked by
+    // really loading it, copied into the models folder, and switched on.
+    // Returns "" when it worked, else why not, in plain words.
+    Q_INVOKABLE QString addWakeWordModel(const QString &path);
+    // Deletes a phrase the user added (the file in the models folder).
+    // Built-in phrases cannot be removed, only switched off. Returns ""
+    // when it worked, else why not.
+    Q_INVOKABLE QString removeWakeWordModel(const QString &id);
     bool active() const { return m_micOpen; }
     QString error() const { return m_error; }
 
@@ -192,6 +244,11 @@ public:
 signals:
     // The phrase was heard. Come to attention (a sound, a look).
     void woke();
+    // Which phrase was heard (its model file name and display name), when
+    // the local detector found it. Emitted together with woke(). The
+    // speech-comparison fallback matches the one configured phrase and does
+    // not emit this.
+    void wokePhrase(const QString &id, const QString &name);
     // What to do, in the user's words. Comes right after woke() when the phrase
     // was followed by a request, or after the next utterance when it was not.
     void command(const QString &text);
@@ -202,6 +259,8 @@ signals:
     void configChanged();
     void errorChanged();
     void detectorChanged();
+    void wakeWordsChanged();
+    void phrasesChanged();
 
 private:
     enum class Mode { Listening, Awaiting };
@@ -212,8 +271,12 @@ private:
     bool usingLocal() const;           // local, and not known to be broken
     void startLocal();
     void stopLocal();
+    // The enabled set changed: the worker loads the new classifiers.
+    void reloadLocal();
+    // The enabled phrases that exist on this computer, in enabled-set order.
+    QList<wake::PhraseModel> enabledPhrases() const;
     void onWorkerReady(bool ok, const QString &error);
-    void onWorkerScore(float best, quint64 generation);
+    void onWorkerScores(const QVector<float> &scores, quint64 generation);
     void feedLocal(const QByteArray &pcm);
     void resetLocalDetector();
     void setLocalState(Local state, const QString &error = QString());
@@ -252,6 +315,10 @@ private:
     QString m_lastState;
 
     QString m_modelFolder;
+    QString m_bundledDir;           // where the shipped models live (the resources, in the app)
+    QStringList m_wakeWords = { QStringLiteral("hey_buddy.onnx") };   // enabled phrase ids
+    QStringList m_activeIds;        // the phrases the worker's detector was loaded with, in score order
+    QHash<QString, int> m_streaks;  // per-phrase sustain streaks (see wake::confirmSustained)
     double m_threshold = 0.5;
     Local m_local = Local::Untried;
     QString m_localError;
@@ -261,7 +328,6 @@ private:
     quint64 m_detGeneration = 0;    // scores from before the last reset are stale
     std::atomic<int> m_inflight{0}; // audio batches handed to the worker and not scored yet
     qint64 m_lastWakeMs = 0;
-    int m_wakeStreak = 0;      // consecutive above-threshold score callbacks
     bool m_handsOff = false;
     mutable int m_localWantedCache = -1;   // -1: not looked yet
     int m_dropped = 0;

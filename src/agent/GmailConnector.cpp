@@ -1,5 +1,6 @@
 #include "GmailConnector.h"
 
+#include "BuiltinOAuth.h"
 #include "SecretStore.h"
 
 #include <QDateTime>
@@ -375,6 +376,9 @@ GmailConnector::GmailConnector(QObject *parent)
     OAuthClient::Config cfg;
     cfg.authUrl = QUrl(QString::fromLatin1(gmail::kAuthUrl));
     cfg.tokenUrl = QUrl(QString::fromLatin1(gmail::kTokenUrl));
+    // Noch's own built-in Desktop-app client; PKCE-only, no client secret (public client).
+    cfg.clientId = builtinoauth::googleClientId();
+    m_clientId = cfg.clientId;
     cfg.scopes = { QString::fromLatin1(gmail::kScopeRead), QString::fromLatin1(gmail::kScopeCompose) };
     // offline + consent: Google only returns a refresh token when asked for one.
     cfg.extraAuthParams = { { QStringLiteral("access_type"), QStringLiteral("offline") },
@@ -409,18 +413,14 @@ void GmailConnector::setEndpoints(const QUrl &auth, const QUrl &token, const QUr
         m_apiBase.chop(1);
 }
 
-void GmailConnector::setClientCredentials(const QString &clientId, const QString &clientSecret)
+void GmailConnector::setClientId(const QString &clientId)
 {
     const QString id = clientId.trimmed();
-    const QString secret = clientSecret.trimmed();
     const bool changedClient = id != m_clientId;
     m_clientId = id;
-    m_clientSecret = secret;
-    if (m_secrets)
-        m_secrets->set(QStringLiteral("gmail.client_secret"), secret);
     OAuthClient::Config cfg = m_oauth.config();
     cfg.clientId = id;
-    cfg.clientSecret = secret;
+    cfg.clientSecret.clear();   // PKCE-only: a Desktop client never sends a secret
     m_oauth.setConfig(cfg);
     // Tokens belong to the client that issued them.
     if (changedClient && (m_tokens.valid() || !m_tokens.refresh.isEmpty()))
@@ -441,13 +441,6 @@ void GmailConnector::restore()
 {
     if (!m_secrets)
         return;
-    const QString secret = m_secrets->get(QStringLiteral("gmail.client_secret"));
-    if (!secret.isEmpty() && m_clientSecret.isEmpty()) {
-        m_clientSecret = secret;
-        OAuthClient::Config cfg = m_oauth.config();
-        cfg.clientSecret = secret;
-        m_oauth.setConfig(cfg);
-    }
     const QJsonObject o = QJsonDocument::fromJson(m_secrets->get(QStringLiteral("gmail.tokens")).toUtf8()).object();
     const oauth::Tokens t = oauth::Tokens::fromJson(o.value(QStringLiteral("tokens")).toObject());
     if (t.refresh.isEmpty() && !t.valid())
@@ -469,7 +462,8 @@ void GmailConnector::forget(const QString &why)
 void GmailConnector::connectAccount()
 {
     if (!configured()) {
-        setState(connectors::State::Error, tr("Enter your Google OAuth client ID first."));
+        setState(connectors::State::Error,
+                 tr("This build of Noch does not include a Google client ID yet. (One-time developer step: register Noch's Desktop app client — see docs/connectors.md.)"));
         return;
     }
     setState(connectors::State::Connecting, tr("Waiting for you in the browser…"));
@@ -538,7 +532,7 @@ QString GmailConnector::errorText(const Api &a) const
     if (msg.size() > 200)
         msg = msg.left(197) + QStringLiteral("…");
     if (a.status == 403 && (msg.contains(QLatin1String("not been used")) || msg.contains(QLatin1String("disabled"))))
-        return tr("The Gmail API is not enabled for your Google Cloud project. Enable it in the Cloud Console (APIs & Services > Library > Gmail API).");
+        return tr("The Gmail API is not enabled for Noch's Google Cloud project. (Developer step — see docs/connectors.md.)");
     if (a.status == 401)
         return tr("Gmail refused the sign-in. Disconnect and connect again.");
     if (a.status == 429)

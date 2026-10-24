@@ -151,9 +151,7 @@ and voice threads are not.
   sign of work, 10 s needs progress and a way to interrupt [NN/g, doc]. The minimal thinking dots
   now cover the 1-10 s band; the bubble's tool timeline covers the long band.
 - Anthropic's own latency guidance: pick the right model (Haiku 5.5 at low effort for speed
-  critical paths), shorter prompt and output, stream [doc]. Noch's `TurnClassifier` already routes
-  by effort; its quality is worth measuring (misrouted easy turns to a big model is the biggest
-  avoidable wait).
+  critical paths), shorter prompt and output, stream [doc].
 - Prompt caching: reads cost about 0.1x and skip reprocessing; the tool list must stay byte-stable
   and the breakpoint goes on the last identical block, not on a timestamp or the new user
   message; 5-minute TTL by default, 1-hour available; `max_tokens: 0` can pre-warm [doc]. Noch
@@ -212,7 +210,7 @@ Each step has a number to hit. Do 1 first; the rest are ordered by expected payo
 | 6 | F4/F5: audit `clip`, `antialiasing`, translucent overlaps with `QSG_VISUALIZE=batches`; shader-ise the remaining glow Shapes; `RectangularShadow` for any shadows. | Fewer batches (guideline: under 10, 3-4 opaque) | Batch count with `QSG_RENDERER_DEBUG=render` |
 | 7 | F6: flush streaming once per frame; `preferShaping: false` on live text; virtualise the word cascade. | Smoother long answers | Long-answer p99 frame time |
 | 8 | Motion: swap Euler for the closed-form spring, shorten pop to about 225/195 ms, start from 0.9 not 0.3, add an in-app calm switch. | Feel | Side-by-side recording |
-| 9 | F9: audit the cache prefix for volatile bytes; check turn-classifier routing; measure voice time-to-first-audio p50/p95. | Faster first word | TTFT and first-audio logs |
+| 9 | F9: audit the cache prefix for volatile bytes; measure voice time-to-first-audio p50/p95. | Faster first word | TTFT and first-audio logs |
 | 10 | F8: EcoQoS for background threads. | Battery | Power trace |
 
 Risks: step 4 touches the window mask and click-through logic that earlier work stabilised; the

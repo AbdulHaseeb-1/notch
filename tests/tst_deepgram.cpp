@@ -211,7 +211,7 @@ private slots:
     {
         deepgram::AgentConfig c;
         c.apiKey = kKey;
-        c.keyterms = { QStringLiteral("  Noch "), QString(), QStringLiteral("Moonshine") };
+        c.keyterms = { QStringLiteral("  Noch "), QString(), QStringLiteral("Notepad") };
         c.greeting = QStringLiteral("  Hi, I'm Buddy.  ");
         c.prompt = QStringLiteral("Speak like a pirate.");
         c.speakSpeed = 1.3;
@@ -1235,8 +1235,8 @@ private slots:
     void settingsAreNormalised()
     {
         DeepgramAgent a;
-        a.setKeyterms(QStringLiteral("Noch, buddy ;NOCH\n  Moonshine  "));
-        QCOMPARE(a.keyterms(), QStringLiteral("Noch, buddy, Moonshine"));
+        a.setKeyterms(QStringLiteral("Noch, buddy ;NOCH\n  Notepad  "));
+        QCOMPARE(a.keyterms(), QStringLiteral("Noch, buddy, Notepad"));
         a.setEotThreshold(0.1);
         QCOMPARE(a.eotThreshold(), 0.5);
         a.setSpeakSpeed(9);

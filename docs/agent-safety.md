@@ -252,19 +252,13 @@ it can do.
 ## Voice input
 
 Hold the microphone button (or Ctrl+Alt+V; Ctrl+Alt+Shift+V if that is taken) and
-speak. Off by default. Speech is turned into text **on this computer** by
-[Moonshine Tiny](https://github.com/moonshine-ai/moonshine) (English, MIT licence,
-about 30 MB quantized, run through ONNX Runtime), so nothing you say is sent to any
-service and there is no key to enter. Audio is recorded only while you hold, kept in
-memory (60 s at most, never written to disk), transcribed and then discarded. What
-comes back is text: it goes into the input field to check, or is sent straight away
-with *Send right away*. Dictation does not bypass any approval.
-
-The model files (`encoder.onnx`, `decoder.onnx`) are downloaded once when Noch is
-built and placed beside it in `models\moonshine-tiny`. To use your own copy, put
-them in `%APPDATA%\noch\models\moonshine-tiny` (Settings, *Open models folder*) or
-point `NOCH_MOONSHINE_DIR` at the folder. If they are missing, Settings says so and
-nothing is recorded.
+speak. Off by default. Speech is turned into text by **Deepgram**, a cloud
+service: the clip is sent to Deepgram with your API key and the words come back.
+Audio is recorded only while you hold, kept in memory (60 s at most, never
+written to disk on this computer), transcribed and then discarded. What comes
+back is text: it goes into the input field to check, or is sent straight away
+with *Send right away*. Dictation does not bypass any approval. Without a
+Deepgram key, Settings says so and nothing is recorded.
 
 ## Error recovery
 
@@ -362,8 +356,8 @@ through ONNX Runtime on its own thread. It listens to the microphone in 80 ms st
 (about 1.5 ms of CPU each) and scores how much the last 1.3 seconds sounded like the
 phrase. Nothing is sent anywhere while it listens. When the score passes the
 *Sensitivity* setting (the model's own default of 0.5), Buddy perks up and records
-**only the request that follows**, which is transcribed on this computer by
-Moonshine. Say it and nothing more and Buddy gives up after 7 s. If the request itself starts with the phrase again, it is stripped.
+**only the request that follows**, which is sent to Deepgram and transcribed
+there. Say it and nothing more and Buddy gives up after 7 s. If the request itself starts with the phrase again, it is stripped.
 
 - **Different wake word.** Drop an openWakeWord `.onnx` classifier into
   `%APPDATA%\noch\wakeword\` (Settings, *Open models folder*); it replaces the
@@ -373,11 +367,12 @@ Moonshine. Say it and nothing more and Buddy gives up after 7 s. If the request 
   so a missing or broken runtime never stops Noch from starting. The Windows build
   downloads it once (hash-checked) and puts it beside `noch.exe`.
 - **Fallback.** If the runtime or a wake model cannot be loaded, Settings says why
-  and Noch falls back to a method that needs only Moonshine: a small detector cuts
-  the sound into sentences and each one is transcribed on this computer to look for
-  a phrase you type (it only counts at the very start of a sentence). It is heavier
-  on the CPU than the openWakeWord model, but nothing leaves the computer. If the
-  speech model itself fails, the microphone is closed until the settings change.
+  and Noch falls back to an older method: a small detector cuts the sound into
+  sentences and each one is sent to Deepgram and transcribed to look for a
+  phrase you type (it only counts at the very start of a sentence). That path
+  sends speech to Deepgram while it listens — the on-device detector above is
+  the one that keeps everything on this computer. If transcription itself
+  fails, the microphone is closed until the settings change.
 - **What is kept.** Nothing. The detector keeps ten seconds of its own working
   numbers in memory; audio is never written anywhere, and what is transcribed
   is only used if it follows the phrase.
@@ -402,12 +397,8 @@ Moonshine. Say it and nothing more and Buddy gives up after 7 s. If the request 
 short summary of a reply out loud: the first few sentences, with code, links and
 Markdown removed, at most about 280 characters (adjustable in code, 120 to 2000). It
 reads the answers to requests started by voice, or every answer with *Read every
-answer*. Three voices can be chosen:
+answer*. Two voices can be chosen, both cloud services:
 
-- **This computer**: Windows' built-in voice (System.Speech), or `espeak-ng`/`espeak`
-  elsewhere. The text goes to the speech program on its standard input, never into a
-  command line, so nothing in a reply can run as a command. Nothing leaves the
-  computer.
 - **Google AI Studio**: Gemini TTS through the Google AI Studio API
   (`generativelanguage.googleapis.com`). You provide a key from
   <https://aistudio.google.com/apikey> and a Gemini voice name such as `Kore`,
@@ -415,14 +406,13 @@ answer*. Three voices can be chosen:
   request header, never in the address, and is stored in Noch's settings like your
   chat key. Requests are sent with `store=false` so the interaction is not kept for
   server-side conversation state.
-- **Kokoro**: a [Kokoro](https://github.com/hexgrad/Kokoro-82M) TTS server that you run,
-  for example Kokoro-FastAPI, reached through its OpenAI-style
-  `/v1/audio/speech`. It is meant to run on this computer, so the text stays here;
-  plain http is only accepted for `localhost`/`127.0.0.1`, anything else needs https.
+- **Deepgram**: Aura voices through the Deepgram text-to-speech API
+  (`api.deepgram.com`). You provide your Deepgram key and a voice name such as
+  `aura-2-thalia-en`. **The spoken summary is sent to Deepgram.**
 
-If the chosen voice cannot be used (no key, a refused request, the server is not
-running, unplayable audio) the system voice reads the text instead and Settings
-shows why, so a reply is never lost silently. A new reading replaces the old one,
+If the chosen voice cannot be used (no key, a refused request, the service is
+down, unplayable audio) nothing is read aloud and Settings shows why — there is
+no fallback voice. A new reading replaces the old one,
 *Test voice* works even while reading aloud is off, and the wake word stays paused
 while Buddy talks so it cannot wake itself.
 

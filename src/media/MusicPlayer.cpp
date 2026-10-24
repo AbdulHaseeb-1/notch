@@ -246,11 +246,6 @@ void MusicPlayer::toggleMute()
     setMuted(!m_muted);
 }
 
-void MusicPlayer::setRepeatAll(bool repeat)
-{
-    setRepeatMode(repeat ? 1 : 0);
-}
-
 void MusicPlayer::setRepeatMode(int mode)
 {
     mode = qBound(0, mode, 2);
@@ -258,7 +253,6 @@ void MusicPlayer::setRepeatMode(int mode)
         return;
     m_repeatMode = mode;
     emit repeatModeChanged();
-    emit repeatAllChanged();
     scheduleSave();
 }
 
@@ -401,46 +395,6 @@ int MusicPlayer::addUrls(const QVariantList &urls)
     return added;
 }
 
-void MusicPlayer::remove(int index)
-{
-    if (index < 0 || index >= m_tracks.size())
-        return;
-    const bool current = index == m_index;
-    const bool wasPlaying = state() == 1;
-    m_tracks.removeAt(index);
-    if (m_tracks.isEmpty()) {
-        m_index = -1;
-        if (m_player) {
-            m_player->stop();
-            m_player->setSource({});
-        }
-        setCover({});
-        emit trackChanged();
-    } else if (current) {
-        playIndex(qMin(index, m_tracks.size() - 1), wasPlaying);
-    } else if (index < m_index) {
-        --m_index;
-        emit trackChanged();
-    }
-    emit playlistChanged();
-    saveNow();
-}
-
-void MusicPlayer::clear()
-{
-    if (m_player) {
-        m_player->stop();
-        m_player->setSource({});
-    }
-    m_pendingSeek = -1;
-    m_tracks.clear();
-    m_index = -1;
-    setCover({});
-    emit trackChanged();
-    emit playlistChanged();
-    saveNow();
-}
-
 QVariantMap MusicPlayer::ingestDrop(const QVariantList &urls)
 {
     const bool startPlaying = m_tracks.isEmpty() || state() == 0;
@@ -514,7 +468,6 @@ void MusicPlayer::load()
     emit trackChanged();
     emit volumeChanged();
     emit mutedChanged();
-    emit repeatAllChanged();
     emit repeatModeChanged();
     emit shuffleChanged();
 }
@@ -734,11 +687,6 @@ QStringList MusicPlayer::persistentPaths(int *savedIndex) const
     if (savedIndex)
         *savedIndex = idx;
     return paths;
-}
-
-bool MusicPlayer::currentIsOnline() const
-{
-    return hasTrack() && m_tracks.at(m_index).online;
 }
 
 void MusicPlayer::playOnline(const OnlineTrack &online)

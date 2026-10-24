@@ -99,8 +99,8 @@ server can be chosen in Settings, Agent & tools. See
 [`docker/mem0/README.md`](docker/mem0/README.md).
 
 **Connected apps.** Settings, Connectors signs Buddy in to your accounts once: Gmail
-(read mail, draft and send, with Google OAuth and your own client ID) and any app with an
-MCP server (GitHub, Notion, Slack ...). Then ask "read my unread emails" or "draft a reply
+(read mail, draft and send) and GitHub (repositories, issues, notifications), each with a
+one-click browser sign-in — nothing to paste, no keys to copy. Then ask "read my unread emails" or "draft a reply
 to Anna". Reads run on their own; anything that sends or changes something asks you every
 time. Tokens are kept encrypted (Windows DPAPI). Setup steps for the Google client:
 [`docs/connectors.md`](docs/connectors.md).
@@ -233,9 +233,8 @@ and the simulated backend. `tst_wakeword` (phrase matching, utterance detection,
 pausing, failure handling, and the local detector's whole flow with a fake
 microphone and a fake speech engine), `tst_wakedetector` (the openWakeWord
 pipeline against the reference implementation's scores; needs ONNX Runtime, set
-`NOCH_ORT_LIBRARY` to its path, skipped otherwise) and `tst_moonshine` (the real Moonshine Tiny model on recorded speech; needs ONNX Runtime
-and the model files, set `NOCH_ORT_LIBRARY` and `NOCH_MOONSHINE_DIR`, skipped otherwise)
-and `tst_speechout` (system, Google AI Studio Gemini TTS and Kokoro voices against a fake server) cover the
+`NOCH_ORT_LIBRARY` to its path, skipped otherwise)
+and `tst_speechout` (Google AI Studio Gemini TTS and Deepgram voices against a fake server) cover the
 wake word, transcription and spoken reports. `tst_userquestions`, `tst_runjournal`,
 `tst_savedrules`, `tst_projectcontext`, `tst_skills`, `tst_chatsessions` and `tst_voice` cover
 the question, undo, saved-rule, instruction/slash-command, agent-skill, chat-session and voice

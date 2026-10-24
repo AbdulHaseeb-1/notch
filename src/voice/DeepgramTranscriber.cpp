@@ -30,7 +30,6 @@ public:
     }
 
     QString name() const override { return QStringLiteral("Deepgram %1").arg(m_settings.model); }
-    bool isLocal() const override { return false; }
     bool isAsync() const override { return true; }
 
     QString problem() const override

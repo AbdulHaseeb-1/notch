@@ -80,9 +80,6 @@ public:
     Q_INVOKABLE void cycleRepeat();
     Q_INVOKABLE void selectSession(const QString &id);
 
-    // Mirror of MusicPlayer's surface, for the QML adapter.
-    Q_INVOKABLE void toggleMute() {}
-
 signals:
     void sessionChanged();
     void sessionsChanged();

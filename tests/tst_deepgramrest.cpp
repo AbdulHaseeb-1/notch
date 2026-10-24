@@ -56,18 +56,6 @@ QByteArray deepgramPcm(double seconds, int rate = 24000)
     return pcm;
 }
 
-QByteArray readAll(const QString &path)
-{
-    QFile f(path);
-    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
-}
-
-// A voice that writes what it is told to a file (the system-voice fallback).
-void useRecorder(SpeechOut &s, const QString &file)
-{
-    s.setCommand(QStringLiteral("sh"), { QStringLiteral("-c"), QStringLiteral("cat > '%1'").arg(file) });
-}
-
 } // namespace
 
 class tst_DeepgramRest : public QObject
@@ -87,10 +75,8 @@ private slots:
         v.setDeepgramModel(QStringLiteral("nova-3"));
         v.setDeepgramLanguage(QStringLiteral("en"));
         v.setDeepgramKeyterms(QStringLiteral("Noch, Buddy"));
-        v.setSttEngine(QStringLiteral("deepgram"));
         QVERIFY(v.configured());
         QVERIFY(v.ready());                       // nothing to load for a network engine
-        QVERIFY(!v.engineIsLocal());
         QVERIFY(v.engine().contains(QStringLiteral("Deepgram")));
 
         const QByteArray clip = tone(1.0);
@@ -122,7 +108,6 @@ private slots:
         VoiceInput v;
         v.setDeepgramApiBase(api.base());
         v.setDeepgramKey(kKey);
-        v.setSttEngine(QStringLiteral("deepgram"));
         v.setEnabled(true);
         auto cap = std::make_unique<FakeCapture>();
         FakeCapture *mic = cap.get();
@@ -145,7 +130,6 @@ private slots:
         VoiceInput v;
         v.setDeepgramApiBase(api.base());
         v.setDeepgramKey(kKey);
-        v.setSttEngine(QStringLiteral("deepgram"));
         QObject ctx;
         VoiceInput::Transcription got;
         bool done = false;
@@ -178,7 +162,6 @@ private slots:
         VoiceInput v;
         v.setDeepgramApiBase(api.base());
         v.setDeepgramKey(kKey);
-        v.setSttEngine(QStringLiteral("deepgram"));
         QObject ctx;
         VoiceInput::Transcription got;
         bool done = false;
@@ -194,7 +177,6 @@ private slots:
         VoiceInput v;
         v.setDeepgramApiBase(QStringLiteral("http://127.0.0.1:1"));
         v.setDeepgramKey(kKey);
-        v.setSttEngine(QStringLiteral("deepgram"));
         QObject ctx;
         VoiceInput::Transcription got;
         bool done = false;
@@ -207,7 +189,6 @@ private slots:
     void missingKeyMeansNotConfigured()
     {
         VoiceInput v;
-        v.setSttEngine(QStringLiteral("deepgram"));
         QVERIFY(!v.configured());
         QVERIFY(v.problem().contains(QStringLiteral("API key")));
         v.setEnabled(true);
@@ -218,10 +199,6 @@ private slots:
         QVERIFY(!v.configured());
         v.setDeepgramKey(kKey);
         QVERIFY(v.configured());
-        // Back to the engine on this computer.
-        v.setSttEngine(QStringLiteral("local"));
-        QVERIFY(v.engineIsLocal());
-        QVERIFY(v.engine().contains(QStringLiteral("Moonshine")));
     }
 
     void fluxModelsFallBackToNovaForClips()
@@ -232,7 +209,6 @@ private slots:
         v.setDeepgramApiBase(api.base());
         v.setDeepgramKey(kKey);
         v.setDeepgramModel(QStringLiteral("flux-general-en"));
-        v.setSttEngine(QStringLiteral("deepgram"));
         QObject ctx;
         bool done = false;
         v.transcribe(tone(0.5), &ctx, [&](const VoiceInput::Transcription &) { done = true; });
@@ -240,7 +216,7 @@ private slots:
         QVERIFY(api.requestLine.contains("model=nova-3"));          // Flux only streams
     }
 
-    void switchingEngineAbandonsTheRequestInFlight()
+    void changingTheSettingsAbandonsTheRequestInFlight()
     {
         FakeStt api;
         api.reply = listenAnswer(QStringLiteral("late words"));
@@ -248,11 +224,10 @@ private slots:
         VoiceInput v;
         v.setDeepgramApiBase(api.base());
         v.setDeepgramKey(kKey);
-        v.setSttEngine(QStringLiteral("deepgram"));
         QObject ctx;
         bool done = false;
         v.transcribe(tone(0.5), &ctx, [&](const VoiceInput::Transcription &) { done = true; });
-        v.setSttEngine(QStringLiteral("local"));
+        v.setDeepgramModel(QStringLiteral("nova-2"));   // a settings change rebuilds the engine
         QTest::qWait(700);
         QVERIFY(!done);                              // an answer to a request nobody is waiting for is dropped
     }
@@ -263,10 +238,7 @@ private slots:
     {
         FakeStt api;
         api.reply = deepgramPcm(0.4);
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         s.streamPlayer()->setDeviceDisabled(true);
         s.setDeepgramApiBase(api.base());
         s.setEngine(QStringLiteral("deepgram"));
@@ -282,7 +254,6 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!s.speaking(), 3000);
         QVERIFY(speaking.count() >= 2);
         QVERIFY2(s.error().isEmpty(), qPrintable(s.error()));
-        QVERIFY(!QFileInfo::exists(out));                         // the system voice stayed quiet
         QVERIFY(api.requestLine.startsWith("POST /v1/speak?"));
         const QUrlQuery q{ QUrl(QString::fromLatin1(api.requestLine.split(' ').value(1))).query() };
         QCOMPARE(q.queryItemValue("model"), QStringLiteral("aura-2-zeus-en"));
@@ -314,23 +285,20 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!s.speaking(), 3000);
     }
 
-    void aRejectedKeyFallsBackToTheSystemVoiceAndSaysWhy()
+    void aRejectedKeyIsReportedAndNothingIsSpoken()
     {
         FakeStt api;
         api.status = 401;
         api.reply = "{\"err_code\":\"INVALID_AUTH\",\"err_msg\":\"Invalid credentials.\"}";
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         s.player()->setDeviceDisabled(true);
         s.setDeepgramApiBase(api.base());
         s.setEngine(QStringLiteral("deepgram"));
         s.setDeepgramKey(kKey);
         s.setEnabled(true);
         s.say(QStringLiteral("Please read me"));
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 5000);
-        QCOMPARE(QString::fromUtf8(readAll(out)), QStringLiteral("Please read me"));
+        // No fallback voice any more: the failure is reported and that is all.
+        QTRY_VERIFY_WITH_TIMEOUT(!s.error().isEmpty() && !s.speaking(), 5000);
         QVERIFY2(s.error().contains(QStringLiteral("rejected the API key")), qPrintable(s.error()));
         QCOMPARE(s.streamPlayer()->totalFrames(), qint64(0));
     }
@@ -340,9 +308,7 @@ private slots:
         FakeStt api;
         api.status = 402;
         api.reply = "{}";
-        QTemporaryDir dir;
         SpeechOut s;
-        useRecorder(s, dir.filePath("said.txt"));
         s.player()->setDeviceDisabled(true);
         s.setDeepgramApiBase(api.base());
         s.setEngine(QStringLiteral("deepgram"));
@@ -353,19 +319,16 @@ private slots:
         QVERIFY(s.error().contains(QStringLiteral("out of credit")));
     }
 
-    void withoutAKeyTheSystemVoiceReads()
+    void withoutAKeyNothingIsSpoken()
     {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         s.setEngine(QStringLiteral("deepgram"));
         s.setEnabled(true);
         QVERIFY(!s.available());
         QVERIFY(s.problem().contains(QStringLiteral("API key")));
         s.say(QStringLiteral("Hello"));
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        QVERIFY(!s.error().isEmpty());
+        QVERIFY(!s.error().isEmpty());       // the problem is the answer; nothing is spoken
+        QVERIFY(!s.speaking());
         s.setDeepgramKey(QStringLiteral("nonsense key"));
         QVERIFY(s.problem().contains(QStringLiteral("does not look")));
     }
@@ -383,7 +346,7 @@ private slots:
         QVERIFY(dg.value(QStringLiteral("ready")).toBool());
         QVERIFY(dg.value(QStringLiteral("detail")).toString().contains(QStringLiteral("Thalia")));
         s.setEngine(QStringLiteral("nonsense"));
-        QCOMPARE(s.engine(), QStringLiteral("system"));
+        QCOMPARE(s.engine(), QStringLiteral("google"));
         s.setEngine(QStringLiteral("deepgram"));
         QCOMPARE(s.engine(), QStringLiteral("deepgram"));
     }

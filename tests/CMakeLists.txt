@@ -1,278 +1,150 @@
 # Unit tests: configure with -DNOCH_BUILD_TESTS=ON and run ctest.
+#
+# Every suite links the per-area libraries from the root CMakeLists
+# (noch_agent_core, noch_connectors, noch_agent, noch_voice, noch_media,
+# noch_desktop, noch_chat) instead of recompiling the production sources
+# it needs — each production translation unit is compiled exactly once,
+# into its library, and shared by the app and all tests.
 include(${PROJECT_SOURCE_DIR}/cmake/NochTest.cmake)
 
 find_package(Qt6 REQUIRED COMPONENTS Test Network)
-
-# AgentPolicy is split by responsibility; every test that exercises it needs
-# the whole unit, so keep the source list in one place.
-set(NOCH_AGENT_POLICY_SOURCES
-    src/agent/AgentPolicy.cpp
-    src/agent/AgentPolicyEvaluate.cpp
-    src/agent/AgentPolicyInternal.h
-    src/agent/AgentPolicyRules.cpp
-    src/agent/AgentPolicySafety.cpp
-    src/agent/AgentPolicyShell.cpp
-    src/agent/ComputerUseKeys.cpp
-    src/agent/ComputerUseKeys.h
-)
-
-# Computer-use parsing, coordinate mapping and the controller are separate
-# translation units; tests need all three plus the platform backend.
-set(NOCH_COMPUTER_USE_SOURCES
-    src/agent/ComputerUse.cpp
-    src/agent/ComputerUse.h
-    src/agent/ComputerUseActions.cpp
-    src/agent/ComputerUseCoordinates.cpp
-    src/agent/ComputerUseKeys.cpp
-    src/agent/ComputerUseKeys.h
-    src/agent/ComputerUseWin.cpp
-)
-
-# Speech to text: VoiceInput, its Moonshine engine and the ONNX Runtime binding.
-set(NOCH_SPEECH_TO_TEXT_SOURCES
-    src/voice/VoiceInput.cpp
-    src/voice/VoiceInput.h
-    src/voice/Transcriber.h
-    src/voice/MoonshineTranscriber.cpp
-    src/voice/DeepgramTranscriber.cpp
-    src/voice/DeepgramProtocol.cpp
-    src/voice/DeepgramProtocol.h
-    src/voice/Moonshine.cpp
-    src/voice/Moonshine.h
-    src/voice/OrtRuntime.cpp
-    src/voice/OrtRuntime.h
-)
 
 if(WIN32)
     set(NOCH_WIN_LIBS user32 crypt32)
 else()
     set(NOCH_WIN_LIBS "")
 endif()
-
-noch_add_unit_test(tst_agentpolicy
-    SOURCES tests/tst_agentpolicy.cpp
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network)
-
-noch_add_unit_test(tst_iconset
-    SOURCES tests/tst_iconset.cpp src/desktop/IconSet.cpp src/desktop/IconSet.h
-    LIBS Qt6::Core
-    DEFS NOCH_ICON_DIR="${PROJECT_SOURCE_DIR}/qml/icons")
-
-noch_add_unit_test(tst_stream
-    SOURCES tests/tst_stream.cpp
-            src/agent/StreamAccumulator.cpp src/agent/StreamAccumulator.h
-    LIBS Qt6::Core)
-
-noch_add_unit_test(tst_toolrepair
-    SOURCES tests/tst_toolrepair.cpp
-            src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
-            src/agent/PlanValidator.cpp src/agent/PlanValidator.h
-            src/agent/HookBus.cpp src/agent/HookBus.h
-            src/agent/MemoryStore.cpp src/agent/MemoryStore.h src/agent/MemoryExtractor.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Network)
-
-noch_add_unit_test(tst_buddysfx
-    SOURCES tests/tst_buddysfx.cpp src/voice/BuddySfx.cpp src/voice/BuddySfx.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Multimedia)
-
-noch_add_unit_test(tst_userquestions
-    SOURCES tests/tst_userquestions.cpp
-            src/agent/UserQuestions.cpp src/agent/UserQuestions.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network)
-
-noch_add_unit_test(tst_voice
-    SOURCES tests/tst_voice.cpp
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            ${NOCH_SPEECH_TO_TEXT_SOURCES}
-            src/voice/PushToTalkKey.cpp src/voice/PushToTalkKey.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia ${NOCH_WIN_LIBS}
-    DEFS NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
-
-noch_add_unit_test(tst_wakeword
-    SOURCES tests/tst_wakeword.cpp
-            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
-            src/voice/WakeWord.cpp src/voice/WakeWord.h
-            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/SpeechOut.cpp src/voice/SpeechOut.h
-            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            ${NOCH_SPEECH_TO_TEXT_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia
-    DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
-         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
-
-noch_add_unit_test(tst_wakedetector
-    SOURCES tests/tst_wakedetector.cpp
-            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
-    LIBS Qt6::Core
-    DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
-         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
-
-noch_add_unit_test(tst_moonshine
-    SOURCES tests/tst_moonshine.cpp
-            src/voice/Moonshine.cpp src/voice/Moonshine.h
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            src/voice/OrtRuntime.cpp src/voice/OrtRuntime.h
-    LIBS Qt6::Core Qt6::Multimedia
-    DEFS NOCH_MOONSHINE_VOCAB="${PROJECT_SOURCE_DIR}/resources/moonshine/vocab.json"
-         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
-
-noch_add_unit_test(tst_speechout
-    SOURCES tests/tst_speechout.cpp
-            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
-            src/voice/SpeechOut.cpp src/voice/SpeechOut.h
-            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
-            src/voice/WakeWord.cpp src/voice/WakeWord.h
-            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            ${NOCH_SPEECH_TO_TEXT_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
-
-noch_add_unit_test(tst_chatsessions
-    SOURCES tests/tst_chatsessions.cpp
-            src/chat/ChatSessions.cpp src/chat/ChatSessions.h src/chat/SessionFormat.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network)
-
-noch_add_unit_test(tst_projectcontext
-    SOURCES tests/tst_projectcontext.cpp
-            src/agent/ProjectContext.cpp src/agent/ProjectContext.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network)
-
-noch_add_unit_test(tst_skills
-    SOURCES tests/tst_skills.cpp
-            src/agent/Skills.cpp src/agent/Skills.h
-            src/agent/ProjectContext.cpp src/agent/ProjectContext.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network
-    DEFS NOCH_BUILTIN_SKILLS_DIR="${PROJECT_SOURCE_DIR}/resources/skills")
-
-noch_add_unit_test(tst_savedrules
-    SOURCES tests/tst_savedrules.cpp
-            src/agent/SavedRules.cpp src/agent/SavedRules.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network)
-
-noch_add_unit_test(tst_runjournal
-    SOURCES tests/tst_runjournal.cpp
-            src/agent/RunJournal.cpp src/agent/RunJournal.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-    LIBS Qt6::Core Qt6::Network)
-
-noch_add_unit_test(tst_buddyagent
-    SOURCES tests/tst_buddyagent.cpp tests/BuddyAgentFakes.h
-            src/agent/BuddyProvider.cpp src/agent/BuddyProvider.h
-            src/agent/BuddyProviderConfig.cpp src/agent/BuddyProviderInternal.h
-            src/agent/BuddyProviderConnectors.cpp
-            src/agent/Connector.cpp src/agent/Connector.h
-            src/agent/ConnectorRegistry.cpp src/agent/ConnectorRegistry.h
-            src/agent/GmailConnector.cpp src/agent/GmailConnector.h
-            src/agent/McpConnector.cpp src/agent/McpConnector.h
-            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
-            src/agent/SecretStore.cpp src/agent/SecretStore.h
-            src/agent/BuddyProviderContext.cpp src/agent/BuddyProviderPlan.cpp
-            src/agent/BuddyProviderPrompts.cpp src/agent/BuddyProviderProtocol.cpp
-            src/agent/BuddyProviderRun.cpp src/agent/BuddyProviderStorage.cpp
-            src/agent/BuddyProviderTools.cpp src/agent/BuddyProviderWeb.cpp
-            src/agent/BuddyProviderSkills.cpp src/agent/Skills.cpp src/agent/Skills.h
-            src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
-            src/agent/PlanValidator.cpp src/agent/PlanValidator.h
-            src/agent/HookBus.cpp src/agent/HookBus.h
-            src/agent/MemoryStore.cpp src/agent/MemoryStore.h src/agent/MemoryExtractor.h
-            src/agent/TurnClassifier.cpp src/agent/TurnClassifier.h
-            src/agent/Mem0Client.cpp src/agent/Mem0Client.h
-            ${NOCH_AGENT_POLICY_SOURCES}
-            src/agent/UserQuestions.cpp src/agent/UserQuestions.h
-            src/agent/RunJournal.cpp src/agent/RunJournal.h
-            src/agent/SavedRules.cpp src/agent/SavedRules.h
-            src/agent/ProjectContext.cpp src/agent/ProjectContext.h
-            src/agent/SessionLink.cpp src/agent/SessionLink.h
-            src/agent/StreamAccumulator.cpp src/agent/StreamAccumulator.h
-            ${NOCH_COMPUTER_USE_SOURCES}
-            src/chat/ChatSessions.cpp src/chat/ChatSessions.h src/chat/SessionFormat.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Network ${NOCH_WIN_LIBS})
-
-noch_add_unit_test(tst_computeruse
-    SOURCES tests/tst_computeruse.cpp
-            ${NOCH_COMPUTER_USE_SOURCES}
-    LIBS Qt6::Core Qt6::Gui ${NOCH_WIN_LIBS})
-
-noch_add_unit_test(tst_mem0client
-    SOURCES tests/tst_mem0client.cpp
-            src/agent/Mem0Client.cpp src/agent/Mem0Client.h
-    LIBS Qt6::Core Qt6::Network)
-
-# Connectors: encrypted secret storage, OAuth (PKCE + loopback), Gmail and MCP, against fake servers.
-set(NOCH_CONNECTOR_CORE_SOURCES
-    src/agent/Connector.cpp src/agent/Connector.h
-    src/agent/SecretStore.cpp src/agent/SecretStore.h
-    src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
-)
 if(WIN32)
     set(NOCH_CRYPT_LIBS crypt32)
 else()
     set(NOCH_CRYPT_LIBS "")
 endif()
 
+noch_add_unit_test(tst_agentpolicy
+    SOURCES tests/tst_agentpolicy.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_iconset
+    SOURCES tests/tst_iconset.cpp
+    LIBS noch_desktop Qt6::Core
+    DEFS NOCH_ICON_DIR="${PROJECT_SOURCE_DIR}/qml/icons")
+
+# The output guardrails as their own component (extracted from
+# AgentPolicy); tst_agentpolicy pins the same behavior through the
+# policy's forwarding statics.
+noch_add_unit_test(tst_outputguard
+    SOURCES tests/tst_outputguard.cpp
+    LIBS noch_agent_core Qt6::Core)
+
+noch_add_unit_test(tst_stream
+    SOURCES tests/tst_stream.cpp
+    LIBS noch_agent_core Qt6::Core)
+
+noch_add_unit_test(tst_toolrepair
+    SOURCES tests/tst_toolrepair.cpp
+    # The test includes BuddyProvider.h for the tool-call declarations;
+    # noch_agent brings the chat/connectors/media headers it pulls in.
+    LIBS noch_agent noch_agent_core Qt6::Core Qt6::Gui Qt6::Network)
+
+noch_add_unit_test(tst_buddysfx
+    SOURCES tests/tst_buddysfx.cpp
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Multimedia)
+
+noch_add_unit_test(tst_userquestions
+    SOURCES tests/tst_userquestions.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_voice
+    SOURCES tests/tst_voice.cpp
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia ${NOCH_WIN_LIBS}
+    DEFS NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+
+noch_add_unit_test(tst_wakeword
+    SOURCES tests/tst_wakeword.cpp
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia
+    DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
+         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+
+noch_add_unit_test(tst_wakedetector
+    SOURCES tests/tst_wakedetector.cpp
+    LIBS noch_voice Qt6::Core
+    DEFS NOCH_WAKEWORD_DIR="${PROJECT_SOURCE_DIR}/resources/wakeword"
+         NOCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/data")
+
+noch_add_unit_test(tst_speechout
+    SOURCES tests/tst_speechout.cpp
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+
+noch_add_unit_test(tst_chatsessions
+    SOURCES tests/tst_chatsessions.cpp
+    LIBS noch_chat noch_agent_core Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_projectcontext
+    SOURCES tests/tst_projectcontext.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_skills
+    SOURCES tests/tst_skills.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network
+    DEFS NOCH_BUILTIN_SKILLS_DIR="${PROJECT_SOURCE_DIR}/resources/skills")
+
+noch_add_unit_test(tst_savedrules
+    SOURCES tests/tst_savedrules.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_runjournal
+    SOURCES tests/tst_runjournal.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network)
+
+noch_add_unit_test(tst_buddyagent
+    SOURCES tests/tst_buddyagent.cpp tests/BuddyAgentFakes.h
+    LIBS noch_agent noch_connectors noch_agent_core noch_chat
+         Qt6::Core Qt6::Gui Qt6::Network ${NOCH_WIN_LIBS})
+
+noch_add_unit_test(tst_computeruse
+    SOURCES tests/tst_computeruse.cpp
+    LIBS noch_agent noch_agent_core Qt6::Core Qt6::Gui ${NOCH_WIN_LIBS})
+
+noch_add_unit_test(tst_mem0client
+    SOURCES tests/tst_mem0client.cpp
+    LIBS noch_agent_core Qt6::Core Qt6::Network)
+
+# Connectors: encrypted secret storage, OAuth (PKCE + loopback), Gmail,
+# GitHub and MCP, against fake servers.
 noch_add_unit_test(tst_secretstore
-    SOURCES tests/tst_secretstore.cpp src/agent/SecretStore.cpp src/agent/SecretStore.h
-    LIBS Qt6::Core ${NOCH_CRYPT_LIBS})
+    SOURCES tests/tst_secretstore.cpp
+    LIBS noch_connectors Qt6::Core ${NOCH_CRYPT_LIBS})
 
 noch_add_unit_test(tst_oauth
     SOURCES tests/tst_oauth.cpp tests/FakeHttp.h
-            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
-    LIBS Qt6::Core Qt6::Gui Qt6::Network)
+    LIBS noch_connectors Qt6::Core Qt6::Gui Qt6::Network)
 
 noch_add_unit_test(tst_gmail
     SOURCES tests/tst_gmail.cpp tests/FakeHttp.h
-            src/agent/GmailConnector.cpp src/agent/GmailConnector.h
-            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
-            ${NOCH_CONNECTOR_CORE_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
+    LIBS noch_connectors Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
+
+noch_add_unit_test(tst_github
+    SOURCES tests/tst_github.cpp tests/FakeHttp.h
+    LIBS noch_connectors Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
 
 noch_add_unit_test(tst_connectorregistry
     SOURCES tests/tst_connectorregistry.cpp tests/FakeHttp.h tests/FakeMcp.h
-            src/agent/ConnectorRegistry.cpp src/agent/ConnectorRegistry.h
-            src/agent/GmailConnector.cpp src/agent/GmailConnector.h
-            src/agent/McpConnector.cpp src/agent/McpConnector.h
-            src/agent/OAuthClient.cpp src/agent/OAuthClient.h
-            ${NOCH_CONNECTOR_CORE_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
+    LIBS noch_connectors Qt6::Core Qt6::Gui Qt6::Network ${NOCH_CRYPT_LIBS})
 
 noch_add_unit_test(tst_mcp
     SOURCES tests/tst_mcp.cpp tests/FakeHttp.h tests/FakeMcp.h
-            src/agent/McpConnector.cpp src/agent/McpConnector.h
-            ${NOCH_CONNECTOR_CORE_SOURCES}
-    LIBS Qt6::Core Qt6::Network ${NOCH_CRYPT_LIBS})
-
-noch_add_unit_test(tst_turnclassifier
-    SOURCES tests/tst_turnclassifier.cpp
-            src/agent/TurnClassifier.cpp src/agent/TurnClassifier.h
-            src/agent/ToolSchemas.cpp src/agent/ToolSchemas.h
-    LIBS Qt6::Core Qt6::Network)
+    LIBS noch_connectors Qt6::Core Qt6::Network ${NOCH_CRYPT_LIBS})
 
 # Buddy's music tool against the real player, media hub and Windows media sessions.
 if(WIN32)
     find_package(Qt6 REQUIRED COMPONENTS Quick Multimedia)
     noch_add_unit_test(tst_musicagent
         SOURCES tests/tst_musicagent.cpp tests/FakeYtDlp.h
-                src/media/YtDlp.cpp src/media/YtDlp.h src/media/OnlineTrack.h
-                src/media/MusicAgentBackend.cpp src/media/MusicAgentBackend.h
-                src/media/MediaHub.cpp src/media/MediaHub.h
-                src/media/MusicPlayer.cpp src/media/MusicPlayer.h
-                src/media/SmtcMedia.cpp src/media/SmtcMedia.h
-                src/media/AudioDevices.cpp src/media/AudioDevices.h
-                src/desktop/RunningApps.cpp src/desktop/RunningApps.h
-                src/desktop/WindowMonitor.cpp src/desktop/WindowMonitor.h
-        LIBS Qt6::Core Qt6::Gui Qt6::Quick Qt6::Multimedia Qt6::Network user32 shell32 ole32 dwmapi)
+        LIBS noch_media noch_desktop
+             Qt6::Core Qt6::Gui Qt6::Quick Qt6::Multimedia Qt6::Network user32 shell32 ole32 dwmapi)
     noch_add_unit_test(tst_ytdlp
         SOURCES tests/tst_ytdlp.cpp tests/FakeYtDlp.h
-                src/media/YtDlp.cpp src/media/YtDlp.h src/media/OnlineTrack.h
-        LIBS Qt6::Core Qt6::Gui Qt6::Network)
+        LIBS noch_media Qt6::Core Qt6::Gui Qt6::Network)
 endif()
 
 # QML component tests (tests/qml): run with Qt's qmltestrunner when installed.
@@ -289,47 +161,22 @@ endif()
 # Deepgram: the WebSocket client, the wire protocol and the live voice session.
 noch_add_unit_test(tst_wsclient
     SOURCES tests/tst_wsclient.cpp tests/WsTestServer.h
-            src/voice/WsClient.cpp src/voice/WsClient.h
-    LIBS Qt6::Core Qt6::Network)
+    LIBS noch_voice Qt6::Core Qt6::Network)
 
 noch_add_unit_test(tst_echo
     SOURCES tests/tst_echo.cpp
-            src/voice/EchoCanceller.cpp src/voice/EchoCanceller.h
-    LIBS Qt6::Core)
+    LIBS noch_voice Qt6::Core)
 
 noch_add_unit_test(tst_deepgram
     SOURCES tests/tst_deepgram.cpp tests/SpeechFakes.h tests/WsTestServer.h
-            src/voice/DeepgramAgent.cpp src/voice/DeepgramAgent.h
-            src/voice/EchoCanceller.cpp src/voice/EchoCanceller.h
-            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
-            src/voice/WsClient.cpp src/voice/WsClient.h
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            ${NOCH_SPEECH_TO_TEXT_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
 
 noch_add_unit_test(tst_deepgramrest
     SOURCES tests/tst_deepgramrest.cpp tests/SpeechFakes.h
-            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
-            src/voice/SpeechOut.cpp src/voice/SpeechOut.h
-            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
-            src/voice/WakeWord.cpp src/voice/WakeWord.h
-            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            ${NOCH_SPEECH_TO_TEXT_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
 
 # The same against the real service. Skipped unless DEEPGRAM_API_KEY is set, so the
 # key stays out of the repository and the normal run stays offline.
 noch_add_unit_test(tst_deepgramlive
     SOURCES tests/tst_deepgramlive.cpp tests/SpeechFakes.h
-            src/voice/DeepgramAgent.cpp src/voice/DeepgramAgent.h
-            src/voice/EchoCanceller.cpp src/voice/EchoCanceller.h
-            src/voice/StreamingPlayer.cpp src/voice/StreamingPlayer.h
-            src/voice/WsClient.cpp src/voice/WsClient.h
-            src/voice/SpeechOut.cpp src/voice/SpeechOut.h
-            src/voice/SpeechPlayer.cpp src/voice/SpeechPlayer.h
-            src/voice/WakeWord.cpp src/voice/WakeWord.h
-            src/voice/WakeDetector.cpp src/voice/WakeDetector.h
-            src/voice/VoiceAudio.cpp src/voice/VoiceAudio.h
-            ${NOCH_SPEECH_TO_TEXT_SOURCES}
-    LIBS Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+    LIBS noch_voice Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)

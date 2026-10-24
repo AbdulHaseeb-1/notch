@@ -9,14 +9,8 @@ BuddyProvider::BuddyProvider(QObject *parent)
     connect(&m_nam, &QNetworkAccessManager::finished,
             this, &BuddyProvider::onReplyFinished);
 
-    // JEV request classifier: its own network client, so the chat provider's
+    // Long-term memory (Mem0): its own network client, so the chat provider's
     // reply handling never sees its traffic.
-    m_classifier = new TurnClassifier(this);
-    connect(m_classifier, &TurnClassifier::classified, this, &BuddyProvider::onClassified);
-    connect(m_classifier, &TurnClassifier::testFinished,
-            this, &BuddyProvider::classifierTestFinished);
-
-    // Long-term memory (Mem0): its own network client, like the classifier's.
     m_mem = new Mem0Client(this);
     connect(m_mem, &Mem0Client::searched, this, &BuddyProvider::onMemSearched);
     connect(m_mem, &Mem0Client::added, this, &BuddyProvider::onMemAdded);
@@ -120,124 +114,6 @@ void BuddyProvider::registerBuiltinHooks()
             return guarded != ctx.output ? HookResult::rewriteOutput(guarded)
                                           : HookResult::allow();
         });
-
-    // JEV intent alignment. When the classifier is confident the user only asked
-    // a question or a lookup, a call that would change something asks first.
-    // Like every hook it can only make the verdict stricter (Allow -> Ask), never
-    // looser, and it stands down in Trusted mode, where the user already chose to
-    // trust every call.
-    m_hookBus.addHook(HookEvent::PreToolUse, QStringLiteral("intent-align"),
-        [this](const HookContext &ctx) -> HookResult {
-            const turnclass::Classification &c = m_classification;
-            if (!c.valid || c.risk != turnclass::Risk::ReadOnly
-                    || c.confidence < turnclass::kAlignConfidence
-                    || m_policy.mode() == AgentPolicy::Mode::Bypass)
-                return HookResult::allow();
-            bool changes = false;
-            if (ctx.toolName == QLatin1String("bash")) {
-                changes = !AgentPolicy::isReadOnlyCommand(
-                    ctx.input.value(QStringLiteral("command")).toString());
-            } else if (ctx.toolName == QLatin1String("str_replace_editor")) {
-                changes = !AgentPolicy::isReadOnlyEditorCommand(
-                    ctx.input.value(QStringLiteral("command")).toString());
-            } else if (ctx.toolName == QLatin1String("computer")) {
-                changes = !AgentPolicy::isObservingComputerAction(
-                    ctx.input.value(QStringLiteral("action")).toString().trimmed().toLower());
-            }
-            if (!changes)
-                return HookResult::allow();
-            return HookResult::ask(QStringLiteral("ask:intent-mismatch"),
-                tr("The request looked like a question or a lookup, but Buddy wants to change something. Check it first."));
-        });
-}
-
-// ---- JEV request classifier --------------------------------------------------
-
-void BuddyProvider::setClassifierEnabled(bool on)
-{
-    if (on == m_classifier->enabled())
-        return;
-    m_classifier->setEnabled(on);
-    if (!on)
-        m_classifyPending = false;
-    emit classifierConfigChanged();
-}
-
-void BuddyProvider::setClassifierBase(const QString &base)
-{
-    const QString before = m_classifier->base();
-    m_classifier->setConfig(base, m_classifier->key(), m_classifier->model());
-    if (m_classifier->base() != before)
-        emit classifierConfigChanged();
-}
-
-void BuddyProvider::setClassifierKey(const QString &key)
-{
-    const QString before = m_classifier->key();
-    m_classifier->setConfig(m_classifier->base(), key, m_classifier->model());
-    if (m_classifier->key() != before)
-        emit classifierConfigChanged();
-}
-
-void BuddyProvider::setClassifierModel(const QString &model)
-{
-    const QString before = m_classifier->model();
-    m_classifier->setConfig(m_classifier->base(), m_classifier->key(), model);
-    if (m_classifier->model() != before)
-        emit classifierConfigChanged();
-}
-
-QVariantMap BuddyProvider::lastClassification() const
-{
-    return m_classification.valid ? m_classification.toVariantMap() : QVariantMap();
-}
-
-// The first model turn of a run waits (a few seconds at most) for the
-// classifier, so its answer can pick the specialist and the tool set that turn
-// is sent with. Anything that goes wrong just dispatches without it.
-void BuddyProvider::dispatchAfterClassify(const QString &text)
-{
-    if (!m_classifier->ready() || !m_agentMode || !hasAnyToolEnabled()
-            || text.trimmed().size() < 3) {
-        dispatchAgentTurn();
-        return;
-    }
-    m_classifyPending = true;
-    m_classifier->classify(text, m_runGeneration);
-}
-
-void BuddyProvider::onClassified(quint64 token, const turnclass::Classification &result,
-                                 int ms, const QString &error)
-{
-    // Cancelled or superseded while the request was in flight.
-    if (!m_classifyPending || token != m_runGeneration)
-        return;
-    m_classifyPending = false;
-
-    QJsonObject span{ { QStringLiteral("type"), QStringLiteral("classify") },
-                      { QStringLiteral("ms"), ms },
-                      { QStringLiteral("model"), m_classifier->model() } };
-    const bool used = result.valid && result.confidence >= turnclass::kMinConfidence;
-    if (result.valid) {
-        span[QStringLiteral("intent")] = turnclass::intentName(result.intent);
-        span[QStringLiteral("risk")] = turnclass::riskName(result.risk);
-        span[QStringLiteral("effort")] = turnclass::effortName(result.effort);
-        span[QStringLiteral("agent")] = result.agent;
-        span[QStringLiteral("tools")] = QJsonArray::fromStringList(result.tools);
-        span[QStringLiteral("confidence")] = result.confidence;
-        span[QStringLiteral("used")] = used;
-        if (!result.droppedTools.isEmpty())
-            span[QStringLiteral("droppedTools")] = QJsonArray::fromStringList(result.droppedTools);
-    } else {
-        span[QStringLiteral("error")] = error;
-    }
-    addSpan(span);
-
-    if (used) {
-        m_classification = result;
-        emit lastClassificationChanged();
-    }
-    dispatchAgentTurn();
 }
 
 // ---- long-term memory (Mem0) -------------------------------------------------
@@ -358,7 +234,7 @@ QJsonObject BuddyProvider::memProviderJson() const
 void BuddyProvider::recallThenDispatch(const QString &text)
 {
     if (!m_allowMemory || !m_mem->searchReady() || text.trimmed().size() < 3) {
-        dispatchAfterClassify(text);
+        dispatchAgentTurn();
         return;
     }
     m_memPending = true;
@@ -400,7 +276,7 @@ void BuddyProvider::onMemSearched(quint64 token, const QList<mem0::Hit> &hits, i
             }
         }
     }
-    dispatchAfterClassify(m_runUserText);
+    dispatchAgentTurn();
 }
 
 // Saving is fire-and-forget: the extraction runs a model and may take a while.
