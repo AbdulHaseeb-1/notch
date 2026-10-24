@@ -43,6 +43,13 @@ constexpr GUID kClsidPolicyConfigModern{
 constexpr GUID kClsidPolicyConfigLegacy{
     0x294935CE, 0xF637, 0x4E7C, {0xA4, 0x1B, 0xAB, 0x25, 0x54, 0x60, 0xB8, 0x62}};
 
+// COM interfaces have no virtual destructor by design: they are released
+// through IUnknown::Release(). The SDK base class cannot be changed, so keep
+// the ABI shim and silence the warning here.
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#endif
 struct IPolicyConfig : IUnknown {
     virtual HRESULT STDMETHODCALLTYPE GetMixFormat(PCWSTR, void **) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetDeviceFormat(PCWSTR, BOOL, void **) = 0;
@@ -57,6 +64,9 @@ struct IPolicyConfig : IUnknown {
     virtual HRESULT STDMETHODCALLTYPE SetDefaultEndpoint(PCWSTR, ERole) = 0;
     virtual HRESULT STDMETHODCALLTYPE SetEndpointVisibility(PCWSTR, BOOL) = 0;
 };
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
 // PKEY_Device_FriendlyName
 constexpr PROPERTYKEY kPkeyFriendlyName = {
@@ -125,6 +135,11 @@ QString deviceName(IMMDevice *device)
 // Volume and mute come to us instead of being re-read every two seconds: the
 // endpoint registry owns the change events. OnNotify marshals back on to the
 // GUI thread, since the audio system calls this from its own worker.
+// As above, COM lifetime is Release(), not a virtual destructor.
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#endif
 class EndpointVolumeCallback final : public IAudioEndpointVolumeCallback
 {
 public:
@@ -168,6 +183,9 @@ private:
     QPointer<AudioDevices> m_owner;
     ULONG m_ref = 1;
 };
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
 AudioDevices::AudioDevices(QObject *parent)
     : QObject(parent)

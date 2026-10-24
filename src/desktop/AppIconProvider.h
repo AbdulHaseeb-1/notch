@@ -31,7 +31,8 @@ private:
     // Insert-order rings behind each QHash cache: icons cycle in and out of
     // the dock / running set, so the caches would otherwise grow for the
     // lifetime of the process.
-    void insertCached(const QString &file, const QImage &image, const char *which);
+    enum class CacheKind { Colour, Mono, Ink };
+    void insertCached(const QString &file, const QImage &image, CacheKind kind);
 
     const DockController *m_dock;
     const RunningApps *m_running;

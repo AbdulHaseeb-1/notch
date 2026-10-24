@@ -18,10 +18,19 @@ namespace {
 constexpr qint64 kFileTimeToUnixMs = 11644473600000LL; // 1601 -> 1970 in ms
 constexpr qint64 kTicksPerMs = 10000LL;                // TimeSpan / DateTime ticks
 
+// WinRT interfaces are vtable mirrors released through IUnknown::Release(),
+// so they cannot have a virtual destructor.
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#endif
 template <typename T>
 struct IReferenceAbi : IInspectableAbi {
     virtual HRESULT STDMETHODCALLTYPE get_Value(T *value) = 0;
 };
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
 struct SourceClassification {
     QString appName;

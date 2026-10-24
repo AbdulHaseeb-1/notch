@@ -79,6 +79,16 @@ inline constexpr Guid kIidInputStream{0x905A0FE2, 0xBC53, 0x11DF,
 // ------------------------------------------------------------------ COM types
 // MinGW's inspectable.h is not pulled in by windows.h, so the WinRT root
 // interface is declared here with the exact three-method tail the ABI has.
+//
+// These structs are vtable mirrors, not ownership types: their lifetime is
+// managed through IUnknown::Release(), and adding a virtual destructor would
+// insert a slot the real WinRT vtable does not have. Silence the resulting
+// -Wnon-virtual-dtor rather than break the ABI.
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
+#endif
+
 struct IInspectableAbi : IUnknown {
     virtual HRESULT STDMETHODCALLTYPE GetIids(uint32_t *count, GUID **iids) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetRuntimeClassName(void **name) = 0;
@@ -248,6 +258,10 @@ struct ISessionManagerStaticsAbi : IInspectableAbi {
     virtual HRESULT STDMETHODCALLTYPE RequestAsync(void **operation) = 0;
 };
 
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
+
 // ------------------------------------------------------------------ enums
 enum AsyncStatus { AsyncStarted = 0, AsyncCompleted = 1, AsyncCanceled = 2, AsyncError = 3 };
 enum PlaybackStatus {
@@ -282,6 +296,14 @@ struct WinRtApi {
                                 && deleteString && stringRawBuffer; }
 };
 
+// GetProcAddress returns FARPROC, a generic function pointer. Resolve through
+// void* so -Wcast-function-type does not flag the deliberate ABI cast.
+template <typename Fn>
+Fn resolveProc(HMODULE module, const char *name)
+{
+    return reinterpret_cast<Fn>(reinterpret_cast<void *>(GetProcAddress(module, name)));
+}
+
 inline WinRtApi &winRtApi()
 {
     static WinRtApi api = [] {
@@ -290,12 +312,12 @@ inline WinRtApi &winRtApi()
         if (!mod)
             return a;
         a.module = mod;
-        a.roInitialize = reinterpret_cast<RoInitializeFn>(GetProcAddress(mod, "RoInitialize"));
-        a.roUninitialize = reinterpret_cast<RoUninitializeFn>(GetProcAddress(mod, "RoUninitialize"));
-        a.roGetActivationFactory = reinterpret_cast<RoGetActivationFactoryFn>(GetProcAddress(mod, "RoGetActivationFactory"));
-        a.createString = reinterpret_cast<WindowsCreateStringFn>(GetProcAddress(mod, "WindowsCreateString"));
-        a.deleteString = reinterpret_cast<WindowsDeleteStringFn>(GetProcAddress(mod, "WindowsDeleteString"));
-        a.stringRawBuffer = reinterpret_cast<WindowsGetStringRawBufferFn>(GetProcAddress(mod, "WindowsGetStringRawBuffer"));
+        a.roInitialize = resolveProc<RoInitializeFn>(mod, "RoInitialize");
+        a.roUninitialize = resolveProc<RoUninitializeFn>(mod, "RoUninitialize");
+        a.roGetActivationFactory = resolveProc<RoGetActivationFactoryFn>(mod, "RoGetActivationFactory");
+        a.createString = resolveProc<WindowsCreateStringFn>(mod, "WindowsCreateString");
+        a.deleteString = resolveProc<WindowsDeleteStringFn>(mod, "WindowsDeleteString");
+        a.stringRawBuffer = resolveProc<WindowsGetStringRawBufferFn>(mod, "WindowsGetStringRawBuffer");
         return a;
     }();
     return api;

@@ -168,30 +168,39 @@ AppIconProvider::AppIconProvider(const DockController *dock, const RunningApps *
 }
 
 // Caller must hold m_mutex. Drops the oldest entry of the named ring if the
-// cap is exceeded. `which` selects among the colour / mono / ink caches.
-void AppIconProvider::insertCached(const QString &file, const QImage &image, const char *which)
+// cap is exceeded. `kind` selects among the colour / mono / ink caches.
+void AppIconProvider::insertCached(const QString &file, const QImage &image, CacheKind kind)
 {
     QStringList *order = nullptr;
-    if (which == "colour") {
+    switch (kind) {
+    case CacheKind::Colour:
         m_cache.insert(file, image);
         order = &m_cacheOrder;
-    } else if (which == "mono") {
+        break;
+    case CacheKind::Mono:
         m_monoCache.insert(file, image);
         order = &m_monoOrder;
-    } else {
+        break;
+    case CacheKind::Ink:
         m_inkCache.insert(file, image);
         order = &m_inkOrder;
+        break;
     }
     if (!order->contains(file))
         order->append(file);
     if (order->size() > kCacheLimit) {
         const QString retire = order->takeFirst();
-        if (which == "colour")
+        switch (kind) {
+        case CacheKind::Colour:
             m_cache.remove(retire);
-        else if (which == "mono")
+            break;
+        case CacheKind::Mono:
             m_monoCache.remove(retire);
-        else
+            break;
+        case CacheKind::Ink:
             m_inkCache.remove(retire);
+            break;
+        }
     }
 }
 
@@ -209,7 +218,7 @@ QImage AppIconProvider::colourIcon(const QString &file)
 
     const QImage image = loadIcon(file, kIconExtent);
     if (!image.isNull()) {
-        insertCached(file, image, "colour");
+        insertCached(file, image, CacheKind::Colour);
         m_failedLookups.remove(file);
     } else {
         m_failedLookups.insert(file, now);
@@ -242,7 +251,7 @@ QImage AppIconProvider::requestImage(const QString &id, QSize *size, const QSize
                     image = onLight ? toInkMonochrome(colour) : toMonochrome(colour);
                 // Same rule as colourIcon(): failures stay re-retryable.
                 if (!image.isNull())
-                    insertCached(file, image, onLight ? "ink" : "mono");
+                    insertCached(file, image, onLight ? CacheKind::Ink : CacheKind::Mono);
             }
         } else {
             image = colourIcon(file);

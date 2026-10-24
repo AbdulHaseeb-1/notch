@@ -127,7 +127,11 @@ private slots:
         s.appendTurn("   ", "an answer");
         s.appendTurn("a question", "   ");
         QVERIFY(s.currentId().isEmpty());
-        s.appendTurn("Sneaky‮ question​ here", "ok");
+        // Bidi controls are built from code points rather than embedded in a
+        // literal so the compiler's -Wbidi-chars does not flag this test.
+        s.appendTurn(QStringLiteral("Sneaky") + QChar(0x202E) + QStringLiteral(" question")
+                         + QChar(0x200B) + QStringLiteral(" here"),
+                     "ok");
         QCOMPARE(s.lastTurn().value("q").toString(), QStringLiteral("Sneaky question here"));
     }
 

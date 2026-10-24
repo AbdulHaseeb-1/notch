@@ -556,7 +556,7 @@ bool BuddySfx::ensureSink()
         if (sink != m_sink)
             return;
         const QAudio::Error err = sink->error();
-        if (st == QAudio::StoppedState && err != QAudio::NoError && err != QAudio::UnderrunError) {
+        if (st == QAudio::StoppedState && err != QAudio::NoError) {
             qWarning() << "BuddySfx: sound output stopped with error" << err;
             m_formatReady = false;
             ++m_failures;
@@ -566,7 +566,7 @@ bool BuddySfx::ensureSink()
         }
     });
     m_sink->start(m_mixer);
-    if (m_sink->error() != QAudio::NoError && m_sink->error() != QAudio::UnderrunError)
+    if (m_sink->error() != QAudio::NoError)
         return fail("start failed");
     if (m_sink->state() == QAudio::StoppedState)
         return fail("device refused the format");

@@ -72,6 +72,10 @@ add_library(noch_desktop STATIC
 )
 target_include_directories(noch_desktop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/desktop)
 target_link_libraries(noch_desktop PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
+if(WIN32)
+    # WindowMonitor asks DWM for cloak state and extended frame bounds.
+    target_link_libraries(noch_desktop PUBLIC dwmapi)
+endif()
 noch_apply_warnings(noch_desktop)
 
 # platform: windowing, hotkeys, appearance, power. Uses desktop's

@@ -81,7 +81,8 @@ private slots:
     void stripsHiddenCharactersAndCapsLengths() {
         // Zero-width and bidi characters could make an option say one thing
         // and mean another; very long text would push the chips off screen.
-        const QString sneaky = QStringLiteral("Delete‮ files​");
+        const QString sneaky = QStringLiteral("Delete") + QChar(0x202E)
+                               + QStringLiteral(" files") + QChar(0x200B);
         const uq::Parsed p = uq::parse(input(QJsonArray{ question(
             QString(500, 'q'), QJsonArray{ option(sneaky, QString(900, 'd')), option(QString(200, 'l')) },
             "A very long header indeed") }));

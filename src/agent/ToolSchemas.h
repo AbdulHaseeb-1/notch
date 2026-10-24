@@ -23,7 +23,7 @@ struct ToolArgDef {
     QString type;          // "string", "integer", "number", "boolean", "array", "object"
     QString description;
     bool required = false;
-    QStringList enumValues; // optional: allowed values
+    QStringList enumValues{}; // optional: allowed values
 };
 
 struct ToolSchema {

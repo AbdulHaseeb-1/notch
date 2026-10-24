@@ -20,14 +20,14 @@ if not exist build\build.ninja (
 echo [2/3] Building...
 cmake --build --preset release || goto :err
 
-REM Copy the Qt runtime next to noch.exe once, so it also starts outside this
-REM script (for example from "Launch at startup").
-if not exist build\.deployed-v4 (
-    echo [3/3] Deploying Qt runtime...
-    if defined QTDIR (set WDQ=%QTDIR%\bin\windeployqt.exe) else (set WDQ=windeployqt)
-    "%WDQ%" --qmldir qml --no-translations --no-opengl-sw --no-system-d3d-compiler build\noch.exe >nul || goto :err
-    echo ok> build\.deployed-v4
-)
+REM Deploy the Qt runtime next to noch.exe so it also starts outside this
+REM script (for example from "Launch at startup"). Run it every time: a new
+REM QML import (for example QtQuick.Dialogs) needs its module copied, and a
+REM one-off marker would leave the app failing to start with "module ... is
+REM not installed". windeployqt only updates what changed.
+echo [3/3] Deploying Qt runtime...
+if defined QTDIR (set WDQ=%QTDIR%\bin\windeployqt.exe) else (set WDQ=windeployqt)
+"%WDQ%" --qmldir qml --no-translations --no-opengl-sw --no-system-d3d-compiler build\noch.exe >nul || goto :err
 
 echo.
 echo Launching noch...

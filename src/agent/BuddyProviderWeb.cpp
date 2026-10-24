@@ -249,11 +249,11 @@ void BuddyProvider::executeWebFetchTool(const PendingToolCall &call)
             return;
         }
 
-        const QString body = stripHtmlTags(html);
+        const QString pageText = stripHtmlTags(html);
         const QString header = title.isEmpty()
             ? QStringLiteral("URL: %1\n\n").arg(directUrl)
             : QStringLiteral("Title: %1\nURL: %2\n\n").arg(title, directUrl);
-        finishCurrentToolCall(call, header + body + partialNote, QString(), false);
+        finishCurrentToolCall(call, header + pageText + partialNote, QString(), false);
     });
 }
 

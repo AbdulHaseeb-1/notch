@@ -193,7 +193,7 @@ QList<PhraseModel> discoverPhraseModels(const QString &userFolder, const QString
     // The pipeline's own models are shared by every phrase; they are not phrases.
     static const QStringList kPipeline = { QStringLiteral("melspectrogram.onnx"),
                                            QStringLiteral("embedding_model.onnx") };
-    auto isPhrase = [&kPipeline](const QString &fileName) {
+    auto isPhrase = [](const QString &fileName) {
         for (const QString &p : kPipeline)
             if (fileName.compare(p, Qt::CaseInsensitive) == 0)
                 return false;

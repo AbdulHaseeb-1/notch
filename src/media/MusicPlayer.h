@@ -114,8 +114,8 @@ private:
         QString album;
         // A song from the internet: `path` is its page, played from `streamUrl`.
         bool online = false;
-        QString streamUrl;
-        QString thumbnailUrl;
+        QString streamUrl{};
+        QString thumbnailUrl{};
         qint64 resolvedAtMs = 0;
     };
 

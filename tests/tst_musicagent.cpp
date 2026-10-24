@@ -185,7 +185,8 @@ private slots:
         QDir().mkpath(music.filePath("album"));
         QVERIFY(writeWav(music.filePath("album/one.wav"), 2.0));
         QVERIFY(writeWav(music.filePath("album/two.wav"), 2.0));
-        QFile(music.filePath("album/notes.txt")).open(QIODevice::WriteOnly);   // not music
+        QFile notes(music.filePath("album/notes.txt"));
+        QVERIFY(notes.open(QIODevice::WriteOnly));   // not music
         const int before = backend->status().queueCount;
 
         int calls = 0, added = -1;

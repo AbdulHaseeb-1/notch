@@ -237,7 +237,7 @@ QList<MemoryStore::SearchHit> MemoryStore::search(const QList<MemoryFact> &facts
             hits.append({ facts.at(i), score });
     }
     std::sort(hits.begin(), hits.end(),
-              [](const SearchHit &a, const SearchHit &b) { return a.score > b.score; });
+              [](const SearchHit &a, const SearchHit &rhs) { return a.score > rhs.score; });
     if (hits.size() > topK)
         hits = hits.mid(0, topK);
     return hits;
