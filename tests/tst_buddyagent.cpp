@@ -4,6 +4,10 @@
 // run-generation guard on cancel. No network access, no real model.
 #include "BuddyAgentFakes.h"
 
+#include <QElapsedTimer>
+
+#include "ToolRegistry.h"
+
 class TstBuddyAgent : public QObject
 {
     Q_OBJECT
@@ -76,6 +80,164 @@ private slots:
                      .value("cache_control").toObject().value("type").toString(), QStringLiteral("ephemeral"));
         QVERIFY(first.value("tools").toArray().last().toObject().contains("cache_control"));
         QCOMPARE(bp->responseMeta().value("cachedTokens").toInt(), 80);
+    }
+
+    // Anthropic requests carry the server web_search definition INSTEAD of
+    // Noch's client schema (never both), with web_fetch still a client def.
+    void anthropicSendsServerWebSearchToolDef() {
+        bp->setStreamReplies(false);
+        fake->queue = { { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        const QJsonArray tools = fake->requests.first().value("tools").toArray();
+        QJsonObject searchDef;
+        int searchCount = 0;
+        for (const QJsonValue &t : tools) {
+            if (t.toObject().value("name").toString() == "web_search") {
+                ++searchCount;
+                searchDef = t.toObject();
+            }
+        }
+        QCOMPARE(searchCount, 1);
+        QCOMPARE(searchDef.value("type").toString(), QStringLiteral("web_search_20250305"));
+        QCOMPARE(searchDef.value("max_uses").toInt(), 5);
+        QVERIFY(!searchDef.contains("input_schema"));   // a server tool, not a client function
+        bool fetchIsClient = false;
+        for (const QJsonValue &t : tools)
+            if (t.toObject().value("name").toString() == "web_fetch")
+                fetchIsClient = t.toObject().contains("input_schema");
+        QVERIFY(fetchIsClient);
+    }
+
+    static QStringList citationUrls(const QVariantList &citations) {
+        QStringList out;
+        for (const QVariant &v : citations)
+            out << v.toMap().value("url").toString();
+        return out;
+    }
+
+    // A server search reply is recorded (step + citations), never dispatched
+    // as a client call: exactly one request, no client execution.
+    void anthropicServerSearchIsRecordedNotExecuted() {
+        bp->setStreamReplies(false);
+        fake->queue = { { 200, serverSearchReply("end_turn", "Notch 2.0 is out.") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("notch release news");
+        QVERIFY(ready.wait(5000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("Notch 2.0 is out."));
+        QCOMPARE(fake->requests.size(), 1);   // no second request: nothing was executed
+        const QStringList urls = citationUrls(bp->citations());
+        QVERIFY(urls.contains("https://example.com/notch-2"));
+        QVERIFY(urls.contains("https://example.org/changelog"));
+        const QVariantList steps = bp->toolSteps();
+        QCOMPARE(steps.size(), 1);
+        const QVariantMap step = steps.first().toMap();
+        QCOMPARE(step.value("tool").toString(), QStringLiteral("web_search"));
+        QCOMPARE(step.value("status").toString(), QStringLiteral("done"));
+        QVERIFY(step.value("output").toString().contains("Notch 2.0 released"));
+        QVERIFY(step.value("output").toString().contains("Notch changelog"));
+    }
+
+    void anthropicServerSearchStreamed() {
+        Reply r{ 200, {}, sseServerSearch("Notch 2.0 is out."), 10 };
+        fake->queue = { r };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("notch release news");
+        QVERIFY(ready.wait(5000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("Notch 2.0 is out."));
+        QCOMPARE(fake->requests.size(), 1);
+        const QStringList urls = citationUrls(bp->citations());
+        QVERIFY(urls.contains("https://example.com/notch-2"));
+        QVERIFY(urls.contains("https://example.org/changelog"));
+        const QVariantMap step = bp->toolSteps().first().toMap();
+        QCOMPARE(step.value("tool").toString(), QStringLiteral("web_search"));
+        QVERIFY(step.value("output").toString().contains("Notch 2.0 released"));
+    }
+
+    // pause_turn: the paused assistant message goes back VERBATIM (server
+    // blocks with encrypted_content intact) and the run continues.
+    void anthropicServerSearchPauseTurnContinues() {
+        bp->setStreamReplies(false);
+        fake->queue = { { 200, serverSearchReply("pause_turn", "") }, { 200, text("final answer") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("notch release news");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("final answer"));
+        QCOMPARE(fake->requests.size(), 2);
+        const QJsonArray msgs = fake->requests.at(1).value("messages").toArray();
+        bool sawServerUse = false, sawResult = false, sawEncrypted = false;
+        for (const QJsonValue &mv : msgs) {
+            const QJsonObject m = mv.toObject();
+            if (m.value("role").toString() != "assistant" || !m.value("content").isArray())
+                continue;
+            for (const QJsonValue &bv : m.value("content").toArray()) {
+                const QJsonObject b = bv.toObject();
+                if (b.value("type").toString() == "server_tool_use")
+                    sawServerUse = true;
+                if (b.value("type").toString() == "web_search_tool_result") {
+                    sawResult = true;
+                    for (const QJsonValue &rv : b.value("content").toArray())
+                        if (rv.toObject().value("encrypted_content").toString() == "enc-aaa")
+                            sawEncrypted = true;
+                }
+            }
+        }
+        QVERIFY(sawServerUse);
+        QVERIFY(sawResult);
+        QVERIFY(sawEncrypted);
+    }
+
+    // Server search + client tool in one reply: the client tool still runs
+    // (mixing rule) and the server blocks are preserved in the next request.
+    void anthropicServerSearchWithClientTool() {
+        bp->setPermissionMode("bypass");
+        bp->setStreamReplies(false);
+        fake->queue = { { 200, serverSearchPlusToolReply() }, { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("search and run");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("done"));
+        QCOMPARE(fake->requests.size(), 2);
+        const QJsonArray results = lastToolResults(fake->requests);
+        QCOMPARE(results.size(), 1);
+        QVERIFY(results.first().toObject().value("content").toString().contains("mixed-mode"));
+        const QJsonArray msgs = fake->requests.at(1).value("messages").toArray();
+        bool sawServerUse = false;
+        for (const QJsonValue &mv : msgs) {
+            const QJsonObject m = mv.toObject();
+            if (m.value("role").toString() != "assistant" || !m.value("content").isArray())
+                continue;
+            for (const QJsonValue &bv : m.value("content").toArray())
+                if (bv.toObject().value("type").toString() == "server_tool_use")
+                    sawServerUse = true;
+        }
+        QVERIFY(sawServerUse);
+        QVERIFY(citationUrls(bp->citations()).contains("https://example.com/notch-2"));
+    }
+
+    // Non-Anthropic providers keep the client web_search function def and
+    // never receive the server tool definition.
+    void openAiKeepsClientWebSearchDef() {
+        bp->setProvider("openai");
+        bp->setApiBase(fake->base() + "/v1");
+        bp->setStreamReplies(false);
+        fake->queue = { { 200, openAiText("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("hi");
+        QVERIFY(ready.wait(5000));
+        const QJsonArray tools = fake->requests.first().value("tools").toArray();
+        bool clientSearch = false, serverSearch = false;
+        for (const QJsonValue &t : tools) {
+            const QJsonObject o = t.toObject();
+            if (o.value("type").toString() == "web_search_20250305")
+                serverSearch = true;
+            if (o.value("type").toString() == "function"
+                    && o.value("function").toObject().value("name").toString() == "web_search")
+                clientSearch = true;
+        }
+        QVERIFY(clientSearch);
+        QVERIFY(!serverSearch);
     }
 
     void askThenApproveRunsInWorkspace() {
@@ -317,6 +479,38 @@ private slots:
         QCOMPARE(steps.at(2).toMap().value("status").toString(), QStringLiteral("denied"));
     }
 
+    // Latency: the next tool in a turn used to wait on a hard-coded 35 ms
+    // timer after the previous one finished. Plan mode denies every bash
+    // call synchronously in the gate, so dispatch-to-dispatch time here is
+    // pure loop overhead: with the timer, ten calls carry at least
+    // 9 x 35 ms of dead time no matter how fast the machine is (Qt timers
+    // never fire early); without it, only event-loop hops remain. The
+    // results must still reach the model in the order the calls were made.
+    void toolBatchHasNoInterToolDelay() {
+        bp->setPermissionMode("plan");
+        QList<Call> calls;
+        for (int i = 0; i < 10; ++i)
+            calls << Call{ QStringLiteral("d%1").arg(i), QStringLiteral("bash"),
+                           QJsonObject{ { "command", QStringLiteral("touch f%1").arg(i) } } };
+        fake->queue = { { 200, toolUseBatch(calls) }, { 200, text("all denied") } };
+        QElapsedTimer clock;
+        QList<qint64> stamps;
+        connect(bp, &BuddyProvider::toolExecuted, this,
+                [&stamps, &clock](const QString &, const QString &) { stamps << clock.elapsed(); });
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        clock.start();
+        bp->sendMessage("make the files");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(stamps.size(), 10);
+        QVERIFY2(stamps.constLast() - stamps.constFirst() < 200,
+                 qPrintable(QStringLiteral("dispatch span %1 ms").arg(stamps.constLast() - stamps.constFirst())));
+        QCOMPARE(bp->toolSteps().size(), 10);
+        const QJsonArray results = lastToolResults(fake->requests);
+        QCOMPARE(results.size(), 10);
+        for (int i = 0; i < 10; ++i)
+            QCOMPARE(results.at(i).toObject().value("tool_use_id").toString(), QStringLiteral("d%1").arg(i));
+    }
+
     void openAiFormatDenyAndCachedTokens() {
         bp->setProvider("openai");
         bp->setApiBase(fake->base() + "/v1");
@@ -540,6 +734,101 @@ private slots:
         QCOMPARE(ready.first().first().toString(), QStringLiteral("fine"));
     }
 
+    // Recall race: a fast search still wins — its hits are in the first prompt
+    // and the turn dispatches exactly once.
+    void mem0FastRecallWinsTheRace() {
+        FakeMem0 mem;
+        QVERIFY(mem.start());
+        mem.memories = { "User's editor is Neovim" };
+        bp->setAllowMemory(true);
+        bp->setMemBackend("custom");
+        bp->setMemUrl(mem.base());
+        bp->setMemKey("k");
+        bp->setMemEnabled(true);
+        fake->queue = { { 200, text("Sure, in Neovim then.") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("which editor should I open this file with?");
+        QVERIFY(ready.wait(8000));
+        QCOMPARE(mem.searches.size(), 1);
+        QCOMPARE(fake->requests.size(), 1);
+        QVERIFY(systemText(fake->requests.first()).contains("User's editor is Neovim"));
+    }
+
+    // Recall race: a slow search loses — the first turn dispatches on the race
+    // timer without the hits, and when the search lands mid-run its hits reach
+    // the prompt from the next step onward. Still exactly one dispatch per step.
+    void mem0SlowRecallLosesTheRaceAndLandsLate() {
+        FakeMem0 mem;
+        QVERIFY(mem.start());
+        mem.memories = { "User's editor is Neovim" };
+        mem.searchDelayMs = 1500;   // past the 400 ms race, inside the 2.5 s search timeout
+        bp->setAllowMemory(true);
+        bp->setMemBackend("custom");
+        bp->setMemUrl(mem.base());
+        bp->setMemKey("k");
+        bp->setMemEnabled(true);
+        // The slow-streamed first reply keeps the run alive across the search's
+        // return (1.5 s): its chunks land every 500 ms, the tool call completes
+        // only when the stream ends (~2 s).
+        fake->queue = { Reply{ 200, {}, sseToolUse("tm", "echo hi"), 500 }, { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QElapsedTimer clock;
+        clock.start();
+        bp->sendMessage("which editor should I open this file with?");
+        QTRY_COMPARE_WITH_TIMEOUT(fake->requests.size(), 1, 3000);
+        QVERIFY(clock.elapsed() < 1300);   // dispatched while the search was still in flight
+        QVERIFY(!systemText(fake->requests.first()).contains("Neovim"));
+        QVERIFY(ready.wait(10000));
+        QCOMPARE(ready.first().first().toString(), QStringLiteral("done"));
+        QCOMPARE(fake->requests.size(), 2);   // no second dispatch from the late search
+        QVERIFY(systemText(fake->requests.at(1)).contains("User's editor is Neovim"));
+    }
+
+    // Recall race: a slow search that then fails still fails open — the run
+    // completes, nothing is injected, and nothing dispatches twice.
+    void mem0SlowFailingRecallStillFailsOpen() {
+        FakeMem0 mem;
+        QVERIFY(mem.start());
+        mem.memories = { "User's editor is Neovim" };
+        mem.searchDelayMs = 1500;
+        mem.searchStatus = 503;
+        bp->setAllowMemory(true);
+        bp->setMemBackend("custom");
+        bp->setMemUrl(mem.base());
+        bp->setMemKey("k");
+        bp->setMemEnabled(true);
+        fake->queue = { Reply{ 200, {}, sseToolUse("tm", "echo hi"), 500 }, { 200, text("done") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        QSignalSpy err(bp, &BuddyProvider::errorOccurred);
+        bp->sendMessage("which editor should I open this file with?");
+        QVERIFY(ready.wait(10000));
+        QCOMPARE(err.size(), 0);
+        QCOMPARE(fake->requests.size(), 2);
+        QVERIFY(!systemText(fake->requests.at(1)).contains("Neovim"));
+    }
+
+    // Recall race: cancelling inside the race window means neither the timer
+    // nor the late search may dispatch anything.
+    void mem0CancelDuringTheRaceDispatchesNothing() {
+        FakeMem0 mem;
+        QVERIFY(mem.start());
+        mem.memories = { "User's editor is Neovim" };
+        mem.searchDelayMs = 1500;
+        bp->setAllowMemory(true);
+        bp->setMemBackend("custom");
+        bp->setMemUrl(mem.base());
+        bp->setMemKey("k");
+        bp->setMemEnabled(true);
+        fake->queue = { { 200, text("never sent") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("which editor should I open this file with?");
+        QTRY_COMPARE_WITH_TIMEOUT(mem.searches.size(), 1, 3000);   // the recall search is in flight
+        bp->cancel();
+        QTest::qWait(2200);   // past the race window and the search's own return
+        QCOMPARE(fake->requests.size(), 0);
+        QCOMPARE(ready.size(), 0);
+    }
+
     void mem0SaveFailureKeepsExplicitFactsLocally() {
         bp->setAllowMemory(true);
         QDir(bp->memoriesPath()).removeRecursively();
@@ -557,6 +846,36 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!QDir(bp->memoriesPath()).entryList({ "*.md" }, QDir::Files).isEmpty()
                                  || !QDir(QDir(bp->memoriesPath()).filePath("facts")).entryList({ "*.md" }, QDir::Files).isEmpty(),
                                  5000);
+        QDir(bp->memoriesPath()).removeRecursively();
+    }
+
+    // Latency: the answer must be handed over before the end-of-run memory
+    // extraction writes anything. Mem0 is not configured here, so extraction
+    // falls back to the local store synchronously inside emitFinal: at
+    // responseReady time the fact must NOT be on disk yet, and once the run
+    // has settled it must be — the bookkeeping moved after the answer, it
+    // did not go away.
+    void responseReadyPrecedesMemoryExtraction() {
+        bp->setAllowMemory(true);
+        QDir(bp->memoriesPath()).removeRecursively();
+        auto factFiles = [this] {
+            QStringList out = QDir(bp->memoriesPath()).entryList({ "*.md" }, QDir::Files);
+            out += QDir(QDir(bp->memoriesPath()).filePath("facts")).entryList({ "*.md" }, QDir::Files);
+            return out;
+        };
+        bool sawReady = false;
+        bool factOnDiskAtReady = true;
+        connect(bp, &BuddyProvider::responseReady, this, [&] {
+            sawReady = true;
+            factOnDiskAtReady = !factFiles().isEmpty();
+        });
+        fake->queue = { { 200, text("Noted.") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("Remember that my editor is Neovim");
+        QVERIFY(ready.wait(8000));
+        QVERIFY(sawReady);
+        QVERIFY2(!factOnDiskAtReady, "extracted fact was already stored when responseReady fired");
+        QVERIFY2(!factFiles().isEmpty(), "extracted fact never reached the local store");
         QDir(bp->memoriesPath()).removeRecursively();
     }
 
@@ -2280,6 +2599,23 @@ private slots:
         QVERIFY(resultText(fake->requests).contains("Error"));      // a model that asks anyway gets an answer it can act on
     }
 
+    // The missing leg of skillsCanBeSwitchedOffAsAWholeOrOneByOne: with skills
+    // ON but one skill disabled, a model that calls the skill tool for the
+    // disabled skill gets an error naming only the enabled ones — never the body.
+    void disabledSkillToolCallGetsAnError() {
+        writeSkill(userSkills(), "alpha", "Alpha things.", "A body");
+        writeSkill(userSkills(), "beta", "Beta things.", "B body");
+        bp->setDisabledSkills("beta");
+        fake->queue = { { 200, toolUseNamed("s1", "skill", QJsonObject{ { "name", "beta" } }) }, { 200, text("ok") } };
+        QSignalSpy ready(bp, &BuddyProvider::responseReady);
+        bp->sendMessage("use beta");
+        QVERIFY(ready.wait(5000));
+        const QString r = resultText(fake->requests);
+        QVERIFY(r.contains("Error"));
+        QVERIFY(!r.contains("B body"));
+        QVERIFY(r.contains("alpha"));
+    }
+
     void theSkillToolReturnsTheBodyAndTheBundledFiles() {
         writeSkill(userSkills(), "pdf-forms", "Fill in PDF forms.", "Read guide.md, then fill the form.");
         writeFile(userSkills() + "/pdf-forms/guide.md", "the guide text");
@@ -3139,6 +3475,20 @@ private slots:
         QVERIFY(BuddyProvider::detailForToolCall("gmail_create_draft", QJsonObject{ { "subject", "Hi" }, { "body", "Text" } }).contains("subject: Hi"));
     }
 
+    // P2: every core tool in the registry has exactly one dispatch
+    // binding (handler + availability gate), so a registry entry can
+    // never silently fall through to "unknown tool" at run time, and
+    // connector tools stay out of the core table.
+    void everyCoreToolHasADispatchBinding() {
+        for (const CoreToolDef &def : coreToolDefs()) {
+            const BuddyProvider::CoreToolBinding *b = BuddyProvider::bindingFor(def.schema.name);
+            QVERIFY2(b != nullptr, qPrintable(def.schema.name));
+            QCOMPARE(b->def, &def);
+            QVERIFY(b->handler != nullptr);
+        }
+        QCOMPARE(BuddyProvider::bindingFor(QStringLiteral("no_such_tool")), nullptr);
+        QCOMPARE(BuddyProvider::bindingFor(QStringLiteral("gmail_search_messages")), nullptr);
+    }
 };
 
 QTEST_MAIN(TstBuddyAgent)

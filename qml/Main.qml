@@ -25,153 +25,154 @@ Window {
         id: cfg
         location: Dock.settingsFileUrl
         category: "ui"
-        property real sizeScale: 1.0
-        property bool autoHide: true
-        property int hideDelay: 1200
-        property int focusMinutes: 25
-        property bool hotkeyPalette: true
-        property bool suppressInFullscreen: true
-        property bool buddyEnabled: true
+        property real sizeScale: SettingsSchema.defaultReal("sizeScale")
+        property bool autoHide: SettingsSchema.defaultBool("autoHide")
+        property int hideDelay: SettingsSchema.defaultInt("hideDelay")
+        property int focusMinutes: SettingsSchema.defaultInt("focusMinutes")
+        property bool hotkeyPalette: SettingsSchema.defaultBool("hotkeyPalette")
+        property bool suppressInFullscreen: SettingsSchema.defaultBool("suppressInFullscreen")
+        property bool buddyEnabled: SettingsSchema.defaultBool("buddyEnabled")
         // ---- Look & glow --------------------------------------------------------
-        property string buddyRingStyle: "neon"
-        property real buddyRingThickness: 1.0
-        property real buddyRingSpeed: 1.0
-        property bool buddyRingShader: true
-        property real buddyGlowStrength: 0.6
-        property string buddyGlowMode: "bloom"
-        property bool buddyGlowAlways: false
-        property string buddyVoiceFx: "full"
-        property real buddyX: -1
-        property real buddyY: -1
-        property string buddyPlan: ""
+        property string buddyRingStyle: SettingsSchema.defaultString("buddyRingStyle")
+        property real buddyRingThickness: SettingsSchema.defaultReal("buddyRingThickness")
+        property real buddyRingSpeed: SettingsSchema.defaultReal("buddyRingSpeed")
+        property bool buddyRingShader: SettingsSchema.defaultBool("buddyRingShader")
+        property real buddyGlowStrength: SettingsSchema.defaultReal("buddyGlowStrength")
+        property string buddyGlowMode: SettingsSchema.defaultString("buddyGlowMode")
+        property bool buddyGlowAlways: SettingsSchema.defaultBool("buddyGlowAlways")
+        property string buddyVoiceFx: SettingsSchema.defaultString("buddyVoiceFx")
+        property real buddyX: SettingsSchema.defaultReal("buddyX")
+        property real buddyY: SettingsSchema.defaultReal("buddyY")
+        property string buddyPlan: SettingsSchema.defaultString("buddyPlan")
         // Past questions and answers, newest first (JSON, capped in Buddy.qml).
-        property string buddyHistory: "[]"
+        property string buddyHistory: SettingsSchema.defaultString("buddyHistory")
         // ---- Desktop buddy AI provider ---------------------------------------
         // "none" = demo fixtures only. "openai"/"custom"/"opencode" = OpenAI-compatible
         // chat/completions endpoint. "ollama" = local Ollama. "anthropic" =
         // Anthropic Messages API.
-        property string buddyProvider: "none"
-        property string buddyApiKey: ""
-        property string buddyApiBase: ""
-        property string buddyModel: "gpt-4o-mini"
-        property real buddyTemperature: 0.7
+        property string buddyProvider: SettingsSchema.defaultString("buddyProvider")
+        // (The provider's API key is NOT a setting: it lives in the Secrets
+        // vault, per provider — see the BuddyAgent apiKey binding below.)
+        property string buddyApiBase: SettingsSchema.defaultString("buddyApiBase")
+        property string buddyModel: SettingsSchema.defaultString("buddyModel")
+        property real buddyTemperature: SettingsSchema.defaultReal("buddyTemperature")
         // Every provider's own {key, base, model, models} as JSON, so several
         // providers can be configured at once and switching loses nothing.
-        property string buddyProviderConfigs: "{}"
+        property string buddyProviderConfigs: SettingsSchema.defaultString("buddyProviderConfigs")
         // ---- Anthropic Agent SDK & Computer Use tools ------------------------
-        property bool buddyAgentMode: true
-        property bool buddyAllowBash: true
+        property bool buddyAgentMode: SettingsSchema.defaultBool("buddyAgentMode")
+        property bool buddyAllowBash: SettingsSchema.defaultBool("buddyAllowBash")
         // Computer use (mouse/keyboard control) is off until the user opts in.
-        property bool buddyAllowComputer: false
+        property bool buddyAllowComputer: SettingsSchema.defaultBool("buddyAllowComputer")
         // How computer use looks while Buddy is in control.
-        property bool buddyCuShowCursor: true
-        property bool buddyCuShowGlow: true
-        property real buddyCuGlowIntensity: 0.6
-        property string buddyCuGlowStyle: "soft"
-        property bool buddyAllowEditor: true
-        property bool buddyAllowCodeSearch: true
-        property bool buddyAllowMemory: true
-        property bool buddyAllowWebSearch: true
-        property bool buddyAllowTodoTask: true
+        property bool buddyCuShowCursor: SettingsSchema.defaultBool("buddyCuShowCursor")
+        property bool buddyCuShowGlow: SettingsSchema.defaultBool("buddyCuShowGlow")
+        property real buddyCuGlowIntensity: SettingsSchema.defaultReal("buddyCuGlowIntensity")
+        property string buddyCuGlowStyle: SettingsSchema.defaultString("buddyCuGlowStyle")
+        property bool buddyAllowEditor: SettingsSchema.defaultBool("buddyAllowEditor")
+        property bool buddyAllowCodeSearch: SettingsSchema.defaultBool("buddyAllowCodeSearch")
+        property bool buddyAllowMemory: SettingsSchema.defaultBool("buddyAllowMemory")
+        property bool buddyAllowWebSearch: SettingsSchema.defaultBool("buddyAllowWebSearch")
+        property bool buddyAllowTodoTask: SettingsSchema.defaultBool("buddyAllowTodoTask")
         // Claude's own computer-use tools (no extra fee; they add about 4,500
         // input tokens per request, only while computer use is on).
-        property bool buddyOfficialComputer: true
+        property bool buddyOfficialComputer: SettingsSchema.defaultBool("buddyOfficialComputer")
         // "sharp" sends bigger screenshots (more tokens); "standard" the smaller ones.
-        property string buddyComputerDetail: "sharp"
-        property int buddyMaxSteps: 40
-        property bool buddyAllowAskUser: true
-        property bool buddyAllowScreenshots: true
-        property bool buddyAllowMusic: true
+        property string buddyComputerDetail: SettingsSchema.defaultString("buddyComputerDetail")
+        property int buddyMaxSteps: SettingsSchema.defaultInt("buddyMaxSteps")
+        property bool buddyAllowAskUser: SettingsSchema.defaultBool("buddyAllowAskUser")
+        property bool buddyAllowScreenshots: SettingsSchema.defaultBool("buddyAllowScreenshots")
+        property bool buddyAllowMusic: SettingsSchema.defaultBool("buddyAllowMusic")
         // Connected apps (Settings > Connectors): their tools are offered to Buddy while this is on.
-        property bool buddyAllowConnectors: true
+        property bool buddyAllowConnectors: SettingsSchema.defaultBool("buddyAllowConnectors")
         // Agent Skills: folders of instructions Buddy loads when a task matches. Names switched
         // off in Settings are kept comma separated.
-        property bool buddyAllowSkills: true
-        property string buddyDisabledSkills: ""
+        property bool buddyAllowSkills: SettingsSchema.defaultBool("buddyAllowSkills")
+        property string buddyDisabledSkills: SettingsSchema.defaultString("buddyDisabledSkills")
         // ---- Push-to-talk voice (off until the user adds a speech service) --
-        property bool buddyVoiceEnabled: false
-        property bool buddyVoiceHotkey: true
-        property bool buddyVoiceAutoSend: false
+        property bool buddyVoiceEnabled: SettingsSchema.defaultBool("buddyVoiceEnabled")
+        property bool buddyVoiceHotkey: SettingsSchema.defaultBool("buddyVoiceHotkey")
+        property bool buddyVoiceAutoSend: SettingsSchema.defaultBool("buddyVoiceAutoSend")
         // ---- Wake word ("hey buddy"): off until switched on ------------------
-        property bool buddyWakeEnabled: false
-        property string buddyWakePhrase: "hey buddy"
+        property bool buddyWakeEnabled: SettingsSchema.defaultBool("buddyWakeEnabled")
+        property string buddyWakePhrase: SettingsSchema.defaultString("buddyWakePhrase")
         // Everything the microphone hears is sent to the speech service to check
         // for the phrase: a service on the internet needs this explicit yes.
         // How sure the local model has to be (0.2 easy .. 0.9 strict); 0.5 is its own default.
-        property real buddyWakeThreshold: 0.5
+        property real buddyWakeThreshold: SettingsSchema.defaultReal("buddyWakeThreshold")
         // The wake phrases switched on, by model file name, comma separated
         // (the Settings page and Wake keep this in step both ways).
-        property string buddyWakeWords: "hey_buddy.onnx"
-        property bool buddySpeakReports: false
+        property string buddyWakeWords: SettingsSchema.defaultString("buddyWakeWords")
+        property bool buddySpeakReports: SettingsSchema.defaultBool("buddySpeakReports")
         // ---- Spoken answers: "google" | "deepgram" -------------------
-        property string buddyTtsEngine: "google"
-        property string buddyTtsGoogleKey: ""
-        property string buddyTtsGoogleVoice: "Kore"
-        property real buddyTtsSpeed: 1.0
-        property bool buddyTtsSpeakAll: false
-        // ---- Deepgram: one API key for the live conversation, speech to text and the voice ----
-        property string buddyDgKey: ""
+        property string buddyTtsEngine: SettingsSchema.defaultString("buddyTtsEngine")
+        property string buddyTtsGoogleVoice: SettingsSchema.defaultString("buddyTtsGoogleVoice")
+        property real buddyTtsSpeed: SettingsSchema.defaultReal("buddyTtsSpeed")
+        property bool buddyTtsSpeakAll: SettingsSchema.defaultBool("buddyTtsSpeakAll")
+        // ---- Deepgram: one API key for the live conversation, speech to text
+        // and the voice. The key itself lives in the Secrets vault, not here.
         // Speech to text for push-to-talk and the wake word is Deepgram (the
         // wake phrase itself is still found on this computer).
         // Live conversation (Deepgram Voice Agent): listen / think / speak, all adjustable.
         // Where yt-dlp is (for songs from YouTube); "" = look in the usual places.
-        property string buddyYtDlpPath: ""
-        property bool buddyLiveEnabled: false
-        property string buddyLiveListenModel: "nova-3"
-        property string buddyLiveLanguage: "en"
+        property string buddyYtDlpPath: SettingsSchema.defaultString("buddyYtDlpPath")
+        property bool buddyLiveEnabled: SettingsSchema.defaultBool("buddyLiveEnabled")
+        property string buddyLiveListenModel: SettingsSchema.defaultString("buddyLiveListenModel")
+        property string buddyLiveLanguage: SettingsSchema.defaultString("buddyLiveLanguage")
         // Names the recognizer cannot know; add the apps you open most.
-        property string buddyLiveKeyterms: "Buddy, Noch, Notepad"
-        property real buddyLiveEot: 0.7
-        property string buddyLiveProvider: "anthropic"
-        property string buddyLiveModel: "claude-haiku-5-5"
+        property string buddyLiveKeyterms: SettingsSchema.defaultString("buddyLiveKeyterms")
+        property real buddyLiveEot: SettingsSchema.defaultReal("buddyLiveEot")
+        property string buddyLiveProvider: SettingsSchema.defaultString("buddyLiveProvider")
+        property string buddyLiveModel: SettingsSchema.defaultString("buddyLiveModel")
         // -1 = the model's own default (newer models refuse the setting).
-        property real buddyLiveTemperature: -1
-        property string buddyLivePrompt: ""
-        property string buddyLiveEndpoint: ""
-        property string buddyLiveEndpointKey: ""
-        property bool buddyLiveAskBuddy: true
-        property string buddyLiveVoice: "aura-2-thalia-en"
-        property real buddyLiveSpeed: 1.0
-        property real buddyLiveVolume: 1.0
-        property string buddyLiveGreeting: "I'm listening."
-        property string buddyLiveAudioMode: "speakers"
+        property real buddyLiveTemperature: SettingsSchema.defaultReal("buddyLiveTemperature")
+        property string buddyLivePrompt: SettingsSchema.defaultString("buddyLivePrompt")
+        property string buddyLiveEndpoint: SettingsSchema.defaultString("buddyLiveEndpoint")
+        // The live conversation's think model follows Buddy's chat model
+        // unless the user picked a different one just for voice calls
+        // (Deepgram page); see DeepgramSettings.
+        property bool buddyLiveThinkOverride: SettingsSchema.defaultBool("buddyLiveThinkOverride")
+        property bool buddyLiveAskBuddy: SettingsSchema.defaultBool("buddyLiveAskBuddy")
+        property string buddyLiveVoice: SettingsSchema.defaultString("buddyLiveVoice")
+        property real buddyLiveSpeed: SettingsSchema.defaultReal("buddyLiveSpeed")
+        property real buddyLiveVolume: SettingsSchema.defaultReal("buddyLiveVolume")
+        property string buddyLiveGreeting: SettingsSchema.defaultString("buddyLiveGreeting")
+        property string buddyLiveAudioMode: SettingsSchema.defaultString("buddyLiveAudioMode")
         // Speaker mode: take Buddy's own voice out of the microphone (talk over it, keep the first words).
-        property bool buddyLiveEchoCancel: true
+        property bool buddyLiveEchoCancel: SettingsSchema.defaultBool("buddyLiveEchoCancel")
         // Replies of a sentence or two; anything that needs thought goes to Buddy.
-        property bool buddyLiveQuick: true
+        property bool buddyLiveQuick: SettingsSchema.defaultBool("buddyLiveQuick")
         // A soft sound while Buddy thinks, so a short pause does not feel like a hang.
-        property bool buddyLiveThinkCue: true
+        property bool buddyLiveThinkCue: SettingsSchema.defaultBool("buddyLiveThinkCue")
         // After Buddy answers: keep listening for a follow-up this many seconds; 0 = not at all
         // (the wake word starts the next conversation).
-        property int buddyLiveFollowUp: 30
+        property int buddyLiveFollowUp: SettingsSchema.defaultInt("buddyLiveFollowUp")
         // ---- Agent safety (see docs/agent-safety.md) -------------------------
         // "default" asks before side effects, "acceptEdits" auto-approves file
         // edits inside the workspace, "plan" is read-only, "bypass" trusts all
         // (hard-deny rules still apply).
-        property string buddyPermissionMode: "default"
-        property string buddyWorkspaceRoot: ""
-        property bool buddyRedactSecrets: true
-        property bool buddyKeepTraces: true
-        property bool buddyStreamReplies: true
+        property string buddyPermissionMode: SettingsSchema.defaultString("buddyPermissionMode")
+        property string buddyWorkspaceRoot: SettingsSchema.defaultString("buddyWorkspaceRoot")
+        property bool buddyRedactSecrets: SettingsSchema.defaultBool("buddyRedactSecrets")
+        property bool buddyKeepTraces: SettingsSchema.defaultBool("buddyKeepTraces")
+        property bool buddyStreamReplies: SettingsSchema.defaultBool("buddyStreamReplies")
         // Show what Buddy is doing while it works (steps, draft, reasoning).
-        property bool buddyShowThinking: true
+        property bool buddyShowThinking: SettingsSchema.defaultBool("buddyShowThinking")
         // ---- Long-term memory (Mem0) ------------------------------------------
         // "local" is the Docker stack in docker/mem0 (nothing leaves this computer),
         // "platform" is api.mem0.ai, "custom" is any address that serves the same API.
-        property bool buddyMemEnabled: true
-        property string buddyMemBackend: "local"
-        property string buddyMemUrl: ""
-        property string buddyMemKey: ""
-        property string buddyMemUserId: "noch"
+        property bool buddyMemEnabled: SettingsSchema.defaultBool("buddyMemEnabled")
+        property string buddyMemBackend: SettingsSchema.defaultString("buddyMemBackend")
+        property string buddyMemUrl: SettingsSchema.defaultString("buddyMemUrl")
+        property string buddyMemUserId: SettingsSchema.defaultString("buddyMemUserId")
         // Local Mem0 borrows the chat provider; blank model = the chat model.
-        property string buddyMemLlmModel: ""
-        property string buddyMemEmbedModel: ""
-        property string buddyMemEmbedBase: ""
-        property string buddyMemEmbedKey: ""
+        property string buddyMemLlmModel: SettingsSchema.defaultString("buddyMemLlmModel")
+        property string buddyMemEmbedModel: SettingsSchema.defaultString("buddyMemEmbedModel")
+        property string buddyMemEmbedBase: SettingsSchema.defaultString("buddyMemEmbedBase")
         // ---- Desktop buddy sound effects -------------------------------------
-        property bool buddySfxEnabled: true
-        property real buddySfxVolume: 0.75
-        property string buddySfxStyle: "warm"
+        property bool buddySfxEnabled: SettingsSchema.defaultBool("buddySfxEnabled")
+        property real buddySfxVolume: SettingsSchema.defaultReal("buddySfxVolume")
+        property string buddySfxStyle: SettingsSchema.defaultString("buddySfxStyle")
     }
 
     readonly property string snapshotKey: [
@@ -186,9 +187,9 @@ Window {
         cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots, cfg.buddyAllowMusic, cfg.buddyAllowConnectors, cfg.buddyAllowSkills, cfg.buddyDisabledSkills,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceAutoSend,
         cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddyWakeWords, cfg.buddySpeakReports,
-        cfg.buddyLiveEnabled, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel,
+        cfg.buddyLiveEnabled, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel, cfg.buddyLiveThinkOverride,
         cfg.buddyLiveVoice, cfg.buddyLiveSpeed, cfg.buddyLiveVolume, cfg.buddyLiveAudioMode, cfg.buddyLiveFollowUp, cfg.buddyLiveAskBuddy, cfg.buddyLiveEchoCancel, cfg.buddyLiveQuick, cfg.buddyLiveThinkCue,
-        cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
+        cfg.buddyTtsEngine, cfg.buddyTtsGoogleVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking,
         cfg.buddyMemEnabled, cfg.buddyMemBackend, cfg.buddyMemUrl, cfg.buddyMemUserId, cfg.buddyMemLlmModel, cfg.buddyMemEmbedModel, cfg.buddyMemEmbedBase,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
@@ -941,7 +942,10 @@ Window {
 
     // Keep the C++ buddy provider and sound synthesizer in sync with saved settings.
     Binding { target: BuddyAgent; property: "provider"; value: cfg.buddyProvider }
-    Binding { target: BuddyAgent; property: "apiKey"; value: cfg.buddyApiKey }
+    // The current provider's key comes from the vault. (Secrets.revision is
+    // listed so the binding re-reads providerKey() when the vault changes;
+    // a plain function call has no property for QML to track.)
+    Binding { target: BuddyAgent; property: "apiKey"; value: (Secrets.revision, Secrets.providerKey(cfg.buddyProvider)) }
     Binding { target: BuddyAgent; property: "apiBase"; value: cfg.buddyApiBase }
     Binding { target: BuddyAgent; property: "model"; value: cfg.buddyModel }
     Binding { target: BuddyAgent; property: "temperature"; value: cfg.buddyTemperature }
@@ -974,12 +978,12 @@ Window {
     Binding { target: BuddyAgent; property: "showThinking"; value: cfg.buddyShowThinking }
     Binding { target: BuddyAgent; property: "memBackend"; value: cfg.buddyMemBackend }
     Binding { target: BuddyAgent; property: "memUrl"; value: cfg.buddyMemUrl }
-    Binding { target: BuddyAgent; property: "memKey"; value: cfg.buddyMemKey }
+    Binding { target: BuddyAgent; property: "memKey"; value: Secrets.memKey }
     Binding { target: BuddyAgent; property: "memUserId"; value: cfg.buddyMemUserId }
     Binding { target: BuddyAgent; property: "memLlmModel"; value: cfg.buddyMemLlmModel }
     Binding { target: BuddyAgent; property: "memEmbedModel"; value: cfg.buddyMemEmbedModel }
     Binding { target: BuddyAgent; property: "memEmbedBase"; value: cfg.buddyMemEmbedBase }
-    Binding { target: BuddyAgent; property: "memEmbedKey"; value: cfg.buddyMemEmbedKey }
+    Binding { target: BuddyAgent; property: "memEmbedKey"; value: Secrets.memEmbedKey }
     Binding { target: BuddyAgent; property: "memEnabled"; value: cfg.buddyMemEnabled }
     Binding { target: BuddyAgent; property: "officialComputerTools"; value: cfg.buddyOfficialComputer }
     Binding { target: BuddyAgent; property: "computerDetail"; value: cfg.buddyComputerDetail }
@@ -1011,32 +1015,53 @@ Window {
     Binding { target: Wake; property: "handsOff"; value: cfg.buddyLiveEnabled }
     Binding { target: Speech; property: "enabled"; value: cfg.buddySpeakReports }
     Binding { target: Speech; property: "engine"; value: cfg.buddyTtsEngine }
-    Binding { target: Speech; property: "googleKey"; value: cfg.buddyTtsGoogleKey }
+    Binding { target: Speech; property: "googleKey"; value: Secrets.googleTtsKey }
     Binding { target: Speech; property: "googleVoice"; value: cfg.buddyTtsGoogleVoice }
     Binding { target: Speech; property: "speed"; value: cfg.buddyTtsSpeed }
     Binding { target: Speech; property: "speakAll"; value: cfg.buddyTtsSpeakAll }
-    // Deepgram: one key for the conversation, the listener and the voice.
-    Binding { target: Speech; property: "deepgramKey"; value: cfg.buddyDgKey }
-    Binding { target: Speech; property: "deepgramVoice"; value: cfg.buddyLiveVoice }
-    Binding { target: Voice; property: "deepgramKey"; value: cfg.buddyDgKey }
-    Binding { target: Voice; property: "deepgramModel"; value: cfg.buddyLiveListenModel }
-    Binding { target: Voice; property: "deepgramLanguage"; value: cfg.buddyLiveLanguage }
-    Binding { target: Voice; property: "deepgramKeyterms"; value: cfg.buddyLiveKeyterms }
+    // Deepgram: one configuration object for the conversation, the listener
+    // and the voice. Push-to-talk, spoken answers and the live agent read
+    // from it in C++ (see main.cpp); these bindings only feed it from the
+    // settings store, the vault and Buddy's chat configuration.
+    Binding { target: Deepgram; property: "apiKey"; value: Secrets.deepgramKey }
+    Binding { target: Deepgram; property: "listenModel"; value: cfg.buddyLiveListenModel }
+    Binding { target: Deepgram; property: "listenLanguage"; value: cfg.buddyLiveLanguage }
+    Binding { target: Deepgram; property: "keyterms"; value: cfg.buddyLiveKeyterms }
+    Binding { target: Deepgram; property: "speakVoice"; value: cfg.buddyLiveVoice }
+    Binding { target: Deepgram; property: "thinkOverride"; value: cfg.buddyLiveThinkOverride }
+    Binding { target: Deepgram; property: "thinkProvider"; value: cfg.buddyLiveProvider }
+    Binding { target: Deepgram; property: "thinkModel"; value: cfg.buddyLiveModel }
+    Binding { target: Deepgram; property: "thinkTemperature"; value: cfg.buddyLiveTemperature }
+    Binding { target: Deepgram; property: "thinkEndpointUrl"; value: cfg.buddyLiveEndpoint }
+    Binding { target: Deepgram; property: "thinkEndpointKey"; value: Secrets.liveEndpointKey }
+    Binding { target: Deepgram; property: "buddyProvider"; value: BuddyAgent.provider }
+    Binding { target: Deepgram; property: "buddyModel"; value: BuddyAgent.model }
+    Binding { target: Deepgram; property: "buddyTemperature"; value: BuddyAgent.temperature }
+    Binding { target: Deepgram; property: "buddyApiBase"; value: BuddyAgent.apiBase }
+    Binding { target: Deepgram; property: "buddyApiKey"; value: BuddyAgent.apiKey }
+    // The settings pages edit Deepgram (not the store) directly; write those
+    // edits back so they survive a restart. (The bindings above push the
+    // saved values down; this is the only way they come back up — the same
+    // pattern as Wake's wakeWords just above.)
+    Connections {
+        target: Deepgram
+        function onConfigChanged() {
+            if (cfg.buddyLiveListenModel !== Deepgram.listenModel) cfg.buddyLiveListenModel = Deepgram.listenModel
+            if (cfg.buddyLiveLanguage !== Deepgram.listenLanguage) cfg.buddyLiveLanguage = Deepgram.listenLanguage
+            if (cfg.buddyLiveKeyterms !== Deepgram.keyterms) cfg.buddyLiveKeyterms = Deepgram.keyterms
+            if (cfg.buddyLiveVoice !== Deepgram.speakVoice) cfg.buddyLiveVoice = Deepgram.speakVoice
+            if (cfg.buddyLiveThinkOverride !== Deepgram.thinkOverride) cfg.buddyLiveThinkOverride = Deepgram.thinkOverride
+            if (cfg.buddyLiveProvider !== Deepgram.thinkProvider) cfg.buddyLiveProvider = Deepgram.thinkProvider
+            if (cfg.buddyLiveModel !== Deepgram.thinkModel) cfg.buddyLiveModel = Deepgram.thinkModel
+            if (cfg.buddyLiveTemperature !== Deepgram.thinkTemperature) cfg.buddyLiveTemperature = Deepgram.thinkTemperature
+            if (cfg.buddyLiveEndpoint !== Deepgram.thinkEndpointUrl) cfg.buddyLiveEndpoint = Deepgram.thinkEndpointUrl
+        }
+    }
     Binding { target: Youtube; property: "configuredPath"; value: cfg.buddyYtDlpPath }
     Binding { target: Live; property: "enabled"; value: cfg.buddyLiveEnabled }
-    Binding { target: Live; property: "apiKey"; value: cfg.buddyDgKey }
-    Binding { target: Live; property: "listenModel"; value: cfg.buddyLiveListenModel }
-    Binding { target: Live; property: "listenLanguage"; value: cfg.buddyLiveLanguage }
-    Binding { target: Live; property: "keyterms"; value: cfg.buddyLiveKeyterms }
     Binding { target: Live; property: "eotThreshold"; value: cfg.buddyLiveEot }
-    Binding { target: Live; property: "thinkProvider"; value: cfg.buddyLiveProvider }
-    Binding { target: Live; property: "thinkModel"; value: cfg.buddyLiveModel }
-    Binding { target: Live; property: "temperature"; value: cfg.buddyLiveTemperature }
     Binding { target: Live; property: "prompt"; value: cfg.buddyLivePrompt }
-    Binding { target: Live; property: "endpointUrl"; value: cfg.buddyLiveEndpoint }
-    Binding { target: Live; property: "endpointKey"; value: cfg.buddyLiveEndpointKey }
     Binding { target: Live; property: "askBuddy"; value: cfg.buddyLiveAskBuddy }
-    Binding { target: Live; property: "speakModel"; value: cfg.buddyLiveVoice }
     Binding { target: Live; property: "speakSpeed"; value: cfg.buddyLiveSpeed }
     Binding { target: Live; property: "volume"; value: cfg.buddyLiveVolume }
     Binding { target: Live; property: "greeting"; value: cfg.buddyLiveGreeting }

@@ -230,6 +230,94 @@ QByteArray text(const QString &t)
     return QJsonDocument(msg).toJson(QJsonDocument::Compact);
 }
 
+// The content blocks of an Anthropic server-side web_search reply: the
+// server_tool_use call, its result (two results with encrypted_content),
+// and a text block citing the first result. `answer` is the final text.
+QJsonArray serverSearchBlocks(const QString &answer)
+{
+    return QJsonArray{
+        QJsonObject{ { "type", "server_tool_use" }, { "id", "srvtoolu_1" }, { "name", "web_search" },
+                     { "input", QJsonObject{ { "query", "notch release news" } } } },
+        QJsonObject{ { "type", "web_search_tool_result" }, { "tool_use_id", "srvtoolu_1" },
+                     { "content", QJsonArray{
+                         QJsonObject{ { "type", "web_search_result" }, { "title", "Notch 2.0 released" },
+                                      { "url", "https://example.com/notch-2" },
+                                      { "encrypted_content", "enc-aaa" }, { "page_age", "2 days" } },
+                         QJsonObject{ { "type", "web_search_result" }, { "title", "Notch changelog" },
+                                      { "url", "https://example.org/changelog" },
+                                      { "encrypted_content", "enc-bbb" } } } } },
+        QJsonObject{ { "type", "text" }, { "text", answer },
+                     { "citations", QJsonArray{ QJsonObject{
+                         { "type", "web_search_result_location" },
+                         { "url", "https://example.com/notch-2" }, { "title", "Notch 2.0 released" },
+                         { "encrypted_index", "enc-idx" }, { "cited_text", "Notch 2.0 is out" } } } } },
+    };
+}
+
+// Non-streamed Anthropic reply containing server search blocks.
+QByteArray serverSearchReply(const QString &stopReason, const QString &answer)
+{
+    QJsonObject msg{
+        { "id", "msg_ws" }, { "type", "message" }, { "role", "assistant" },
+        { "content", serverSearchBlocks(answer) },
+        { "stop_reason", stopReason },
+        { "usage", QJsonObject{ { "input_tokens", 50 }, { "output_tokens", 5 },
+                                { "server_tool_use", QJsonObject{ { "web_search_requests", 1 } } } } },
+    };
+    return QJsonDocument(msg).toJson(QJsonDocument::Compact);
+}
+
+// Server search blocks PLUS a client bash call in the same reply, with
+// stop_reason tool_use: per the API's mixing rule the search does not run
+// until the client results come back, so the reply must still dispatch bash.
+QByteArray serverSearchPlusToolReply()
+{
+    QJsonArray content = serverSearchBlocks(QString());
+    content.append(QJsonObject{ { "type", "tool_use" }, { "id", "call_mix" }, { "name", "bash" },
+                                { "input", QJsonObject{ { "command", "echo mixed-mode" } } } });
+    QJsonObject msg{
+        { "id", "msg_mix" }, { "type", "message" }, { "role", "assistant" }, { "content", content },
+        { "stop_reason", "tool_use" },
+        { "usage", QJsonObject{ { "input_tokens", 50 }, { "output_tokens", 5 } } },
+    };
+    return QJsonDocument(msg).toJson(QJsonDocument::Compact);
+}
+
+// Anthropic SSE for a server search reply: server_tool_use input arrives as
+// input_json_delta halves (like sseToolUse); the result block arrives whole
+// in its content_block_start, then the cited text.
+QByteArray sseEvent(const char *event, const QJsonObject &data);   // defined below, after openAiText
+QList<QByteArray> sseServerSearch(const QString &answer)
+{
+    const QByteArray json = QJsonDocument(QJsonObject{ { "query", "notch release news" } }).toJson(QJsonDocument::Compact);
+    const int half = json.size() / 2;
+    const QJsonArray blocks = serverSearchBlocks(answer);
+    QList<QByteArray> out;
+    out << sseEvent("message_start", { { "type", "message_start" }, { "message", QJsonObject{
+              { "id", "msg_ws" }, { "type", "message" }, { "role", "assistant" }, { "content", QJsonArray() },
+              { "usage", QJsonObject{ { "input_tokens", 20 } } } } } })
+        << sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 0 },
+              { "content_block", QJsonObject{ { "type", "server_tool_use" }, { "id", "srvtoolu_1" },
+                                              { "name", "web_search" }, { "input", QJsonObject() } } } })
+        << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+              { "delta", QJsonObject{ { "type", "input_json_delta" }, { "partial_json", QString::fromUtf8(json.left(half)) } } } })
+        << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 0 },
+              { "delta", QJsonObject{ { "type", "input_json_delta" }, { "partial_json", QString::fromUtf8(json.mid(half)) } } } })
+           + sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 0 } })
+        << sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 1 },
+              { "content_block", blocks.at(1).toObject() } })
+           + sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 1 } })
+        << sseEvent("content_block_start", { { "type", "content_block_start" }, { "index", 2 },
+              { "content_block", QJsonObject{ { "type", "text" }, { "text", "" } } } })
+        << sseEvent("content_block_delta", { { "type", "content_block_delta" }, { "index", 2 },
+              { "delta", QJsonObject{ { "type", "text_delta" }, { "text", answer } } } })
+           + sseEvent("content_block_stop", { { "type", "content_block_stop" }, { "index", 2 } })
+           + sseEvent("message_delta", { { "type", "message_delta" }, { "delta", QJsonObject{ { "stop_reason", "end_turn" } } },
+                                         { "usage", QJsonObject{ { "output_tokens", 6 } } } })
+           + sseEvent("message_stop", { { "type", "message_stop" } });
+    return out;
+}
+
 // The tool_result blocks the client sent in its latest request.
 QJsonArray lastToolResults(const QList<QJsonObject> &reqs)
 {
@@ -421,6 +509,8 @@ struct FakeMem0 {
     QTcpServer server;
     QStringList memories;
     int addStatus = 200;
+    int searchStatus = 200;
+    int searchDelayMs = 0;   // searches answer this late (the reply is held, not the request)
     QList<QByteArray> searches;   // request bodies
     QList<QByteArray> adds;
 
@@ -433,7 +523,12 @@ struct FakeMem0 {
                     const int end = buf->indexOf("\r\n\r\n");
                     if (end < 0)
                         return;
-                    const int len = QString::fromLatin1(buf->left(end)).section("Content-Length:", 1)
+                    // Qt 6.9's QNetworkAccessManager sends header names
+                    // lowercase ("content-length:"); a case-sensitive parse
+                    // reads the length as 0 and every recorded request body
+                    // comes out empty, which made the save-payload and
+                    // provider assertions fail on unmodified code.
+                    const int len = QString::fromLatin1(buf->left(end)).toLower().section("content-length:", 1)
                                         .section("\r\n", 0, 0).trimmed().toInt();
                     if (buf->size() < end + 4 + len)
                         return;
@@ -447,15 +542,31 @@ struct FakeMem0 {
                         reply = "{\"status\":\"SUCCEEDED\",\"results\":[]}";
                     } else {
                         searches.append(body);
-                        QJsonArray results;
-                        for (const QString &m : std::as_const(memories))
-                            results.append(QJsonObject{ { "id", "m1" }, { "memory", m }, { "score", 0.9 } });
-                        reply = QJsonDocument(QJsonObject{ { "results", results } }).toJson(QJsonDocument::Compact);
+                        status = searchStatus;
+                        if (searchStatus == 200) {
+                            QJsonArray results;
+                            for (const QString &m : std::as_const(memories))
+                                results.append(QJsonObject{ { "id", "m1" }, { "memory", m }, { "score", 0.9 } });
+                            reply = QJsonDocument(QJsonObject{ { "results", results } }).toJson(QJsonDocument::Compact);
+                        } else {
+                            reply = "{\"detail\":\"fake search failure\"}";
+                        }
                     }
                     buf->clear();
-                    s->write("HTTP/1.1 " + QByteArray::number(status) + " X\r\nContent-Type: application/json\r\nContent-Length: "
-                             + QByteArray::number(reply.size()) + "\r\nConnection: close\r\n\r\n" + reply);
-                    s->disconnectFromHost();
+                    const QByteArray out = "HTTP/1.1 " + QByteArray::number(status) + " X\r\nContent-Type: application/json\r\nContent-Length: "
+                             + QByteArray::number(reply.size()) + "\r\nConnection: close\r\n\r\n" + reply;
+                    if (!isAdd && searchDelayMs > 0) {
+                        QPointer<QTcpSocket> sp(s);
+                        QTimer::singleShot(searchDelayMs, s, [sp, out] {
+                            if (!sp)
+                                return;
+                            sp->write(out);
+                            sp->disconnectFromHost();
+                        });
+                    } else {
+                        s->write(out);
+                        s->disconnectFromHost();
+                    }
                 });
             }
         });

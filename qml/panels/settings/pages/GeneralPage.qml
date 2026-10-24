@@ -136,6 +136,13 @@ SettingsPage {
             checked: panel.prefs.hotkeyPalette
             onToggled: (c) => panel.prefs.hotkeyPalette = c
         }
+        SettingsCardDivider {}
+        SettingsToggleRow {
+            label: qsTr("Clipboard history")
+            sub: qsTr("Remember what you copy, so it can be copied again from the notch's Clipboard tab. Text only and kept in memory only: nothing is written to disk, copies an app marks private are skipped, and switching this off forgets everything kept.")
+            checked: Clipboard.enabled
+            onToggled: (c) => Clipboard.enabled = c
+        }
         SettingsCardDivider { visible: panel.startupSupported }
         SettingsToggleRow {
             visible: panel.startupSupported
@@ -143,6 +150,46 @@ SettingsPage {
             sub: qsTr("Start Noch automatically when you sign in to Windows.")
             checked: panel.launchAtStartup
             onToggled: (c) => panel.startupToggled(c)
+        }
+    }
+
+    SettingsSectionHeader {
+        title: qsTr("Focus timer")
+        rightText: qsTr("%1 min").arg(panel.prefs.focusMinutes)
+    }
+
+    SettingsGroupCard {
+        Column {
+            width: parent.width
+            spacing: 6
+
+            Text {
+                width: parent.width
+                text: qsTr("Default length")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                font.weight: Font.DemiBold
+            }
+            Segmented {
+                width: parent.width
+                height: 34
+                options: [
+                    { label: "25", value: 25 },
+                    { label: "45", value: 45 },
+                    { label: "60", value: 60 }
+                ]
+                value: panel.prefs.focusMinutes
+                onPicked: (v) => panel.prefs.focusMinutes = v
+            }
+            Text {
+                width: parent.width
+                text: qsTr("How long a focus session runs when you start one. The timer panel can still add five minutes or pick another length for a single session.")
+                color: Theme.textDim
+                font.family: Theme.font
+                font.pixelSize: Theme.fontSm
+                wrapMode: Text.WordWrap
+            }
         }
     }
 }

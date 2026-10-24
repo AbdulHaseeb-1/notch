@@ -37,7 +37,7 @@ Item {
 
     readonly property var pageList: [
         { id: "general", group: qsTr("Notch"), label: qsTr("General"), icon: "settings",
-          keys: "size scale notch auto hide delay fullscreen hotkey palette startup launch position" },
+          keys: "size scale notch auto hide delay fullscreen hotkey palette startup launch position timer focus clipboard history music" },
         { id: "buddy", group: qsTr("Buddy"), label: qsTr("Buddy"), icon: "spark",
           keys: "desktop buddy orb companion sound effects chime volume position chat" },
         { id: "look", group: qsTr("Buddy"), label: qsTr("Look & glow"), icon: "droplet",
@@ -49,7 +49,7 @@ Item {
         { id: "model", group: qsTr("Agent"), label: qsTr("AI model"), icon: "cpu",
           keys: "provider openai anthropic ollama custom api key model endpoint temperature test connection" },
         { id: "agent", group: qsTr("Agent"), label: qsTr("Agent & tools"), icon: "terminal",
-          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking intent request mem0 memory remember docker long-term" },
+          keys: "tools bash shell computer use editor code search memory web fetch tasks steps screenshots detail stream thinking intent request mem0 memory remember docker long-term skills skill music" },
         { id: "connectors", group: qsTr("Agent"), label: qsTr("Connectors"), icon: "layers",
           keys: "connectors apps accounts gmail google email mail inbox draft reply calendar drive slack github notion mcp server oauth sign in connect disconnect integrations" },
         { id: "safety", group: qsTr("Agent"), label: qsTr("Safety"), icon: "shield-check",
@@ -112,35 +112,28 @@ Item {
     }
 
     // ---- AI provider (Buddy tab) -----------------------------------------
-    readonly property var providerInfo: ({
-        openai: {
-            label: "OpenAI", base: "https://api.openai.com", needsKey: true,
-            models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini"]
-        },
-        ollama: {
-            label: "Ollama", base: "http://localhost:11434", needsKey: false,
-            models: ["llama3.2", "llama3.1", "qwen2.5", "gemma3"]
-        },
-        anthropic: {
-            label: "Anthropic", base: "https://api.anthropic.com", needsKey: true,
-            models: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-5",
-                     "claude-opus-4-1", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"]
-        },
-        opencode: {
-            label: "OpenCode", base: "https://opencode.ai/zen", needsKey: true,
-            keyHint: "Free from opencode.ai (email sign-up, no card). The *-free models cost nothing.",
-            // OpenCode Zen's free models (verified against /zen/v1/models,
-            // Oct 2026); "Test connection" refreshes this list from the server.
-            models: ["glm-5.3-flash-free", "deepseek-v4.1-flash-free", "big-pickle",
-                     "beam-free", "mimo-v2.6-flash-free", "nemotron-3.5-super-vl-free",
-                     "nemotron-3.5-lightning-free", "minimax-m3.1-flash-free",
-                     "jev-1.13-free", "longcat-2.5-preview-free"]
-        },
-        custom: { label: "Custom", base: "", needsKey: false, models: [] }
-    })
+    // Provider metadata (labels, bases, presets) comes from the C++
+    // ProviderProfile table via BuddyAgent.providerProfiles() — this file no
+    // longer carries its own copy of the endpoint map. The "custom" row is
+    // the fallback for unknown ids and for contexts where the provider
+    // object is not available (its shape matches the C++ row).
+    readonly property var providerInfo: {
+        const out = {}
+        if (BuddyAgent) {
+            const list = BuddyAgent.providerProfiles()
+            for (let i = 0; i < list.length; ++i)
+                out[list[i].id] = list[i]
+        }
+        if (!out.custom)
+            out.custom = { label: "Custom", base: "", needsKey: false, showKey: true,
+                           keyHint: "", models: [], chatPath: "/v1/chat/completions" }
+        return out
+    }
     property string lastProvider: ""
-    // Every configured provider's {key, base, model, models}: persists across
+    // Every configured provider's {base, model, models}: persists across
     // restarts (as JSON in prefs), so switching providers loses nothing.
+    // API keys are not part of it: they live in the Secrets vault, one per
+    // provider, and the current provider's key reaches Buddy automatically.
     property var providerMemory: ({})
     function loadProviderMemory() {
         try {
@@ -149,6 +142,12 @@ Item {
         } catch (e) {
             providerMemory = {}
         }
+        // A file from before the vault can still carry keys in this JSON
+        // (startup migration sweeps the stored copy; keep this one clean too).
+        for (const id in providerMemory) {
+            if (providerMemory[id])
+                delete providerMemory[id].key
+        }
     }
     function saveProviderMemory() {
         if (!prefs)
@@ -156,12 +155,13 @@ Item {
         prefs.buddyProviderConfigs = JSON.stringify(providerMemory || {})
     }
     function rememberProvider(p) {
-        // Stash the full config of the provider being left.
-        providerMemory[p] = {
-            key: String(prefs.buddyApiKey || ""),
-            base: String(prefs.buddyApiBase || ""),
-            model: String(prefs.buddyModel || "")
-        }
+        // Stash the config of the provider being left (its key is already in
+        // the Secrets vault: the model page saves it as it is typed).
+        const entry = providerMemory[p] || {}
+        entry.base = String(prefs.buddyApiBase || "")
+        entry.model = String(prefs.buddyModel || "")
+        delete entry.key
+        providerMemory[p] = entry
         saveProviderMemory()
     }
     property var remoteModels: []
@@ -176,19 +176,16 @@ Item {
     function infoFor(p) { return settings.providerInfo[p] || settings.providerInfo.custom }
     function presetsFor(p) { return settings.infoFor(p).models }
     function labelFor(p) { return settings.infoFor(p).label }
-    function showsKeyFor(p) { return p !== "ollama" }
+    function showsKeyFor(p) { return settings.infoFor(p).showKey }
 
     function chatEndpoint() {
         const p = settings.prefs ? settings.prefs.buddyProvider : "none"
         const base = settings.prefs ? settings.prefs.buddyApiBase : ""
         if (BuddyAgent)
             return BuddyAgent.chatUrl()
-        const b = (String(base).trim() || settings.infoFor(p).base).replace(/\/+$/, "")
-        if (p === "ollama")
-            return b + "/api/chat"
-        if (p === "anthropic")
-            return b + "/v1/messages"
-        return b + "/v1/chat/completions"
+        const info = settings.infoFor(p)
+        const b = (String(base).trim() || info.base).replace(/\/+$/, "")
+        return b + (info.chatPath || "/v1/chat/completions")
     }
 
     readonly property var modelChips: {
@@ -234,7 +231,8 @@ Item {
         const presets = settings.presetsFor(v)
         settings.prefs.buddyApiBase = (was.base !== undefined && was.base.length > 0)
             ? was.base : settings.infoFor(v).base
-        settings.prefs.buddyApiKey = was.key !== undefined ? was.key : ""
+        // No key to restore here: Buddy's key binding follows buddyProvider
+        // and reads the newly picked provider's key from the Secrets vault.
         settings.prefs.buddyModel = (was.model && was.model.length > 0)
             ? was.model : (presets.length > 0 ? presets[0] : "")
         settings.markDirty()

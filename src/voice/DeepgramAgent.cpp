@@ -45,6 +45,10 @@ QString clamp1(const QString &s) { return s.trimmed(); }
 DeepgramAgent::DeepgramAgent(QObject *parent)
     : QObject(parent)
 {
+    // The fallback settings object is the live one until a shared one is
+    // attached, so edits to it refresh m_cfg just the same.
+    connect(&m_fallbackSettings, &DeepgramSettings::configChanged, this, [this] { syncFromSettings(); });
+    syncFromSettings();
     m_keepAlive.setInterval(deepgram::kKeepAliveMs);
     connect(&m_keepAlive, &QTimer::timeout, this, [this] {
         if (m_ws.isOpen())
@@ -196,16 +200,36 @@ void DeepgramAgent::setEnabled(bool on)
         m_cfg.member = v;                               \
         setConfigChanged();                             \
     }
-NOCH_DG_STRING(setApiKey, apiKey)
-NOCH_DG_STRING(setListenModel, listenModel)
-NOCH_DG_STRING(setListenLanguage, listenLanguage)
-NOCH_DG_STRING(setThinkProvider, thinkProvider)
-NOCH_DG_STRING(setThinkModel, thinkModel)
-NOCH_DG_STRING(setEndpointUrl, endpointUrl)
-NOCH_DG_STRING(setEndpointKey, endpointKey)
-NOCH_DG_STRING(setSpeakModel, speakModel)
 NOCH_DG_STRING(setGreeting, greeting)
 #undef NOCH_DG_STRING
+
+// The shared Deepgram fields (key, listen, think, speak voice) live in the
+// settings object; this class keeps a working copy in m_cfg and refreshes
+// it whenever the object changes, so a running conversation live-updates
+// what it can and flags the rest as needing a restart, exactly as before.
+void DeepgramAgent::setDeepgramSettings(DeepgramSettings *settings)
+{
+    // Drop both possible live connections (the old effective object and the
+    // fallback the constructor wired) so the new one is connected exactly once.
+    disconnect(deepgramSettings(), &DeepgramSettings::configChanged, this, nullptr);
+    m_fallbackSettings.disconnect(this);
+    m_settings = settings;
+    connect(deepgramSettings(), &DeepgramSettings::configChanged, this, [this] { syncFromSettings(); });
+    syncFromSettings();
+}
+
+void DeepgramAgent::syncFromSettings()
+{
+    const deepgram::AgentConfig before = m_cfg;
+    deepgramSettings()->applyToAgentConfig(m_cfg);
+    if (before.apiKey != m_cfg.apiKey || before.listenModel != m_cfg.listenModel
+        || before.listenLanguage != m_cfg.listenLanguage || before.keyterms != m_cfg.keyterms
+        || before.thinkProvider != m_cfg.thinkProvider || before.thinkModel != m_cfg.thinkModel
+        || !qFuzzyCompare(before.temperature + 2.0, m_cfg.temperature + 2.0)
+        || before.endpointUrl != m_cfg.endpointUrl || before.endpointKey != m_cfg.endpointKey
+        || before.speakModel != m_cfg.speakModel)
+        setConfigChanged();
+}
 
 void DeepgramAgent::setPrompt(const QString &p)
 {
@@ -218,35 +242,12 @@ void DeepgramAgent::setPrompt(const QString &p)
     setConfigChanged();
 }
 
-void DeepgramAgent::setKeyterms(const QString &terms)
-{
-    QStringList list;
-    for (const QString &t : terms.split(QRegularExpression(QStringLiteral("[,\\n;]")), Qt::SkipEmptyParts)) {
-        const QString term = t.simplified();
-        if (!term.isEmpty() && !list.contains(term, Qt::CaseInsensitive))
-            list << term;
-    }
-    if (list == m_cfg.keyterms)
-        return;
-    m_cfg.keyterms = list;
-    setConfigChanged();
-}
-
 void DeepgramAgent::setEotThreshold(double t)
 {
     const double v = std::clamp(t, 0.5, 1.0);
     if (qFuzzyCompare(v, m_cfg.eotThreshold))
         return;
     m_cfg.eotThreshold = v;
-    setConfigChanged();
-}
-
-void DeepgramAgent::setTemperature(double t)
-{
-    const double v = t < 0 ? -1.0 : std::clamp(t, 0.0, 2.0);
-    if (qFuzzyCompare(v + 2.0, m_cfg.temperature + 2.0))
-        return;
-    m_cfg.temperature = v;
     setConfigChanged();
 }
 

@@ -245,3 +245,34 @@ summaries. `tst_qml` (needs `qmltestrunner`; skipped otherwise) runs the QML
 component tests in `tests/qml` against the real `Theme.qml`.
 `tst_buddysfx` checks the synthesized buddy cues (no NaN, headroom, silent
 edges, no pops), resampling, pacing, the speak-run cap, mute and volume.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` builds and tests every push and pull request on
+two legs — `windows-latest` (the shipping target, MSVC with the Qt
+`msvc2022_64` kit) and `ubuntu-latest` — with Qt pinned to 6.9.3. Both legs
+always report (`fail-fast` is off). Coverage differs by platform by design:
+`tst_musicagent`/`tst_ytdlp` register only on Windows, and `tst_qml`
+registers only off Windows, so the Linux leg is the only place it runs.
+
+Six suites carry pre-existing failures on HEAD. They are tagged with the
+CTest label `known-failing` in `tests/CMakeLists.txt` (each with its
+reason), and CI has two test steps:
+
+- **Gate** — `ctest -LE known-failing` excludes the quarantined suites and
+  must be 100% green.
+- **Full suite (informational)** — everything runs; the quarantined
+  suites' known failures are printed but do not fail the job
+  (`continue-on-error`), so a regression inside them stays visible. They
+  are not skipped and nothing is hidden with `WILL_FAIL`.
+
+When you fix a quarantined suite, remove its `known-failing` label in the
+same change — the gate then covers it again. To run the exact CI gate
+locally:
+
+```sh
+cmake -S . -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DNOCH_BUILD_TESTS=ON
+cmake --build build-tests --parallel
+ctest --test-dir build-tests -LE known-failing --output-on-failure   # the gate
+ctest --test-dir build-tests --output-on-failure                    # everything
+```

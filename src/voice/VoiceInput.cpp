@@ -123,6 +123,9 @@ private:
 VoiceInput::VoiceInput(QObject *parent)
     : QObject(parent)
 {
+    // The fallback settings object is the live one until a shared one is
+    // attached, so edits to it rebuild the engine just the same.
+    connect(&m_fallbackSettings, &DeepgramSettings::configChanged, this, [this] { applyEngine(); });
     applyEngine();   // the one engine: Deepgram, from the settings as they are now
     m_maxTimer.setSingleShot(true);
     connect(&m_maxTimer, &QTimer::timeout, this, [this] {
@@ -146,31 +149,31 @@ QString VoiceInput::engine() const
     return m_transcriber ? m_transcriber->name() : QString();
 }
 
-// Rebuilds the engine from the Deepgram settings. A request in flight is
-// abandoned (its answer is dropped), which is what changing the settings means.
+// Rebuilds the engine from the shared Deepgram settings. A request in flight
+// is abandoned (its answer is dropped), which is what changing the settings means.
 void VoiceInput::applyEngine()
 {
-    setTranscriber(makeDeepgramTranscriber(m_dg));
+    DeepgramListenSettings s = deepgramSettings()->listenSettings();
+    s.apiBase = m_apiBase;
+    setTranscriber(makeDeepgramTranscriber(s));
 }
 
-#define NOCH_VOICE_DG_SETTER(Name, member)                                          void VoiceInput::Name(const QString &value)                                     {                                                                                   const QString v = value.trimmed();                                              if (v == m_dg.member)                                                               return;                                                                     m_dg.member = v;                                                                applyEngine();                                                          }
-NOCH_VOICE_DG_SETTER(setDeepgramKey, apiKey)
-NOCH_VOICE_DG_SETTER(setDeepgramModel, model)
-NOCH_VOICE_DG_SETTER(setDeepgramLanguage, language)
-NOCH_VOICE_DG_SETTER(setDeepgramApiBase, apiBase)
-#undef NOCH_VOICE_DG_SETTER
-
-void VoiceInput::setDeepgramKeyterms(const QString &terms)
+void VoiceInput::setDeepgramSettings(DeepgramSettings *settings)
 {
-    QStringList list;
-    for (const QString &t : terms.split(QRegularExpression(QStringLiteral("[,\n;]")), Qt::SkipEmptyParts)) {
-        const QString term = t.simplified();
-        if (!term.isEmpty() && !list.contains(term, Qt::CaseInsensitive))
-            list << term;
-    }
-    if (list == m_dg.keyterms)
+    // Drop both possible live connections (the old effective object and the
+    // fallback the constructor wired) so the new one is connected exactly once.
+    disconnect(deepgramSettings(), &DeepgramSettings::configChanged, this, nullptr);
+    m_fallbackSettings.disconnect(this);
+    m_settings = settings;
+    connect(deepgramSettings(), &DeepgramSettings::configChanged, this, [this] { applyEngine(); });
+    applyEngine();
+}
+
+void VoiceInput::setDeepgramApiBase(const QString &base)
+{
+    if (base == m_apiBase)
         return;
-    m_dg.keyterms = list;
+    m_apiBase = base;
     applyEngine();
 }
 

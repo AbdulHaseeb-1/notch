@@ -12,6 +12,7 @@
 #include <memory>
 
 #include "DeepgramProtocol.h"
+#include "DeepgramSettings.h"
 #include "EchoCanceller.h"
 #include "StreamingPlayer.h"
 #include "VoiceInput.h"
@@ -41,25 +42,17 @@ class DeepgramAgent : public QObject
     Q_OBJECT
     // The feature switch: voice conversation is available (not started).
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY configChanged)
-    Q_PROPERTY(QString apiKey READ apiKey WRITE setApiKey NOTIFY configChanged)
-    // listen (speech to text)
-    Q_PROPERTY(QString listenModel READ listenModel WRITE setListenModel NOTIFY configChanged)
-    Q_PROPERTY(QString listenLanguage READ listenLanguage WRITE setListenLanguage NOTIFY configChanged)
-    Q_PROPERTY(QString keyterms READ keyterms WRITE setKeyterms NOTIFY configChanged)
+    // The Deepgram key, listen fields, think choice and speak voice come
+    // from the shared DeepgramSettings object (see setDeepgramSettings),
+    // not from properties of this class.
     Q_PROPERTY(double eotThreshold READ eotThreshold WRITE setEotThreshold NOTIFY configChanged)
     Q_PROPERTY(bool flux READ flux NOTIFY configChanged)
-    // think (the language model)
-    Q_PROPERTY(QString thinkProvider READ thinkProvider WRITE setThinkProvider NOTIFY configChanged)
-    Q_PROPERTY(QString thinkModel READ thinkModel WRITE setThinkModel NOTIFY configChanged)
-    Q_PROPERTY(double temperature READ temperature WRITE setTemperature NOTIFY configChanged)
+    // think (the language model): whether the effective model takes a temperature.
     Q_PROPERTY(bool temperatureApplies READ temperatureApplies NOTIFY configChanged)
     Q_PROPERTY(QString prompt READ prompt WRITE setPrompt NOTIFY configChanged)
     Q_PROPERTY(QString defaultPrompt READ defaultPrompt CONSTANT)
-    Q_PROPERTY(QString endpointUrl READ endpointUrl WRITE setEndpointUrl NOTIFY configChanged)
-    Q_PROPERTY(QString endpointKey READ endpointKey WRITE setEndpointKey NOTIFY configChanged)
     Q_PROPERTY(bool askBuddy READ askBuddy WRITE setAskBuddy NOTIFY configChanged)
     // speak (the voice)
-    Q_PROPERTY(QString speakModel READ speakModel WRITE setSpeakModel NOTIFY configChanged)
     Q_PROPERTY(double speakSpeed READ speakSpeed WRITE setSpeakSpeed NOTIFY configChanged)
     Q_PROPERTY(double volume READ volume WRITE setVolume NOTIFY configChanged)
     Q_PROPERTY(QString greeting READ greeting WRITE setGreeting NOTIFY configChanged)
@@ -125,39 +118,26 @@ public:
     // ---- configuration ----------------------------------------------------------------
     bool enabled() const { return m_enabled; }
     void setEnabled(bool on);
-    QString apiKey() const { return m_cfg.apiKey; }
-    void setApiKey(const QString &key);
-    QString listenModel() const { return m_cfg.listenModel; }
-    void setListenModel(const QString &m);
-    QString listenLanguage() const { return m_cfg.listenLanguage; }
-    void setListenLanguage(const QString &l);
-    QString keyterms() const { return m_cfg.keyterms.join(QStringLiteral(", ")); }
-    void setKeyterms(const QString &terms);
+    // The one Deepgram configuration, shared with push-to-talk and spoken
+    // answers: key, listen fields, think choice and speak voice are read
+    // from it (m_cfg is refreshed from it on every change). Until one is
+    // attached, a private default is used.
+    void setDeepgramSettings(DeepgramSettings *settings);
+    DeepgramSettings *deepgramSettings() { return m_settings ? m_settings : &m_fallbackSettings; }
+    const DeepgramSettings *deepgramSettings() const { return m_settings ? m_settings : &m_fallbackSettings; }
     double eotThreshold() const { return m_cfg.eotThreshold; }
     void setEotThreshold(double t);
     bool flux() const { return deepgram::isFluxModel(m_cfg.listenModel); }
-    QString thinkProvider() const { return m_cfg.thinkProvider; }
-    void setThinkProvider(const QString &p);
-    QString thinkModel() const { return m_cfg.thinkModel; }
-    void setThinkModel(const QString &m);
-    double temperature() const { return m_cfg.temperature; }
-    void setTemperature(double t);
     bool temperatureApplies() const { return deepgram::modelAcceptsTemperature(m_cfg.thinkProvider, m_cfg.thinkModel); }
     QString prompt() const { return m_cfg.prompt; }
     void setPrompt(const QString &p);
     QString defaultPrompt() const { return deepgram::defaultPrompt(); }
-    QString endpointUrl() const { return m_cfg.endpointUrl; }
-    void setEndpointUrl(const QString &u);
-    QString endpointKey() const { return m_cfg.endpointKey; }
-    void setEndpointKey(const QString &k);
     bool askBuddy() const { return m_cfg.askBuddy; }
     void setAskBuddy(bool on);
     bool quickReplies() const { return m_cfg.quickReplies; }
     void setQuickReplies(bool on);
     bool echoCancel() const { return m_echoCancel; }
     void setEchoCancel(bool on);
-    QString speakModel() const { return m_cfg.speakModel; }
-    void setSpeakModel(const QString &m);
     double speakSpeed() const { return m_cfg.speakSpeed; }
     void setSpeakSpeed(double s);
     double volume() const { return m_volume; }
@@ -266,7 +246,6 @@ private:
     enum class State { Off, Connecting, Listening, Thinking, Speaking };
     struct Call { QString name; QTimer *timeout = nullptr; };
 
-    void configure();
     void setState(State s);
     void fail(const QString &message);
     void setNotice(const QString &message);
@@ -298,8 +277,13 @@ private:
 
     // connection test
     void finishTest(bool ok, const QString &message);
+    // Copies the shared Deepgram fields into m_cfg; emits configChanged
+    // (and live-updates a running conversation) when anything moved.
+    void syncFromSettings();
 
     deepgram::AgentConfig m_cfg;
+    DeepgramSettings *m_settings = nullptr;
+    DeepgramSettings m_fallbackSettings;
     bool m_enabled = false;
     QString m_audioMode = QStringLiteral("speakers");
     int m_followUp = 30;

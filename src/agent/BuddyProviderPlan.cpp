@@ -11,7 +11,7 @@ QString BuddyProvider::checkForPlan(const QString &text)
     // M7: validate availability for THIS run (agent profile + tool diet),
     // not just registry existence: a step may only name a tool that
     // buildToolsArray() offers the model in this run.
-    const bool anthropic = m_provider == QLatin1String("anthropic");
+    const bool anthropic = profile().dialect == provider::Dialect::Anthropic;
     QStringList offered;
     for (const QJsonValue &tv : buildToolsArray()) {
         const QJsonObject t = tv.toObject();

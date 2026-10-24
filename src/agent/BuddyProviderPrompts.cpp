@@ -87,7 +87,12 @@ QString BuddyProvider::systemPrompt() const
             caps << QStringLiteral("- Long-term memory: facts about the user from past conversations are recalled automatically (see below) and `memory_search` also searches them. What the user tells you is saved to it after each reply, so you do not need to copy it into `/memories` yourself.");
     }
     if (m_allowWebSearch) {
-        caps << QStringLiteral("- `web_search`: Search the live web (`query`, `max_results`) for current information, news, prices, or documentation.");
+        // Anthropic runs search server-side: the tool takes only `query`.
+        // Other providers run Noch's client tool (`query`, `max_results`).
+        if (webSearchBackendFor(m_provider) == WebSearchBackend::AnthropicServer)
+            caps << QStringLiteral("- `web_search`: Search the live web (`query`) for current information, news, prices, or documentation (runs on Anthropic's servers).");
+        else
+            caps << QStringLiteral("- `web_search`: Search the live web (`query`, `max_results`) for current information, news, prices, or documentation.");
         caps << QStringLiteral("- `web_fetch`: Fetch and extract readable content, links, or metadata from any `http://` or `https://` URL (`url`, `extract_mode`: `\"text\"` | `\"links\"` | `\"metadata\"`).");
     }
     if (m_allowTodoTask)
@@ -174,7 +179,7 @@ QString BuddyProvider::systemPrompt() const
     // already constrains the shape. H1: also applies after a 400 tool
     // rejection disabled tools for the turn (any provider).
     const bool textProto = m_toolsDisabledForTurn
-        || (m_provider == QLatin1String("ollama")
+        || (profile().dialect == provider::Dialect::Ollama
             && structuredLevel() == StructuredLevel::JsonMode && hasAnyToolEnabled());
     const QString textProtoNote = textProto
         ? QStringLiteral("\n\nTo use a tool, reply with JSON of the form "
@@ -196,7 +201,7 @@ QJsonArray BuddyProvider::buildToolsArray() const
         return tools;
 
     const auto wrapSchema = [this](const QString &name, const QString &desc, const QJsonObject &schema) -> QJsonObject {
-        if (m_provider == QLatin1String("anthropic")) {
+        if (profile().dialect == provider::Dialect::Anthropic) {
             return QJsonObject{
                 { QStringLiteral("name"), name },
                 { QStringLiteral("description"), desc },
@@ -498,28 +503,36 @@ QJsonArray BuddyProvider::buildToolsArray() const
     }
 
     if (m_allowWebSearch) {
-        QJsonObject searchProps{
-            { QStringLiteral("query"), QJsonObject{
-                { QStringLiteral("type"), QStringLiteral("string") },
-                { QStringLiteral("description"), QStringLiteral("Search query to look up on the live web.") }
-            }},
-            { QStringLiteral("url"), QJsonObject{
-                { QStringLiteral("type"), QStringLiteral("string") },
-                { QStringLiteral("description"), QStringLiteral("Optional direct URL (https://...) to fetch and extract readable page text.") }
-            }},
-            { QStringLiteral("max_results"), QJsonObject{
-                { QStringLiteral("type"), QStringLiteral("integer") },
-                { QStringLiteral("description"), QStringLiteral("Maximum number of search results to return (default 5, max 8).") }
-            }}
-        };
-        QJsonObject searchSchema{
-            { QStringLiteral("type"), QStringLiteral("object") },
-            { QStringLiteral("properties"), searchProps }
-        };
-        tools.append(wrapSchema(
-            QStringLiteral("web_search"),
-            QStringLiteral("Anthropic Web Search tool: search the live web for current information, news, or documentation."),
-            searchSchema));
+        // Anthropic: send the server tool definition INSTEAD of the client
+        // schema — never both. The server tool runs on Anthropic's servers;
+        // the model invokes it itself and results return as
+        // server_tool_use / web_search_tool_result blocks.
+        if (webSearchBackendFor(m_provider) == WebSearchBackend::AnthropicServer) {
+            tools.append(anthropicWebSearchTool());
+        } else {
+            QJsonObject searchProps{
+                { QStringLiteral("query"), QJsonObject{
+                    { QStringLiteral("type"), QStringLiteral("string") },
+                    { QStringLiteral("description"), QStringLiteral("Search query to look up on the live web.") }
+                }},
+                { QStringLiteral("url"), QJsonObject{
+                    { QStringLiteral("type"), QStringLiteral("string") },
+                    { QStringLiteral("description"), QStringLiteral("Optional direct URL (https://...) to fetch and extract readable page text.") }
+                }},
+                { QStringLiteral("max_results"), QJsonObject{
+                    { QStringLiteral("type"), QStringLiteral("integer") },
+                    { QStringLiteral("description"), QStringLiteral("Maximum number of search results to return (default 5, max 8).") }
+                }}
+            };
+            QJsonObject searchSchema{
+                { QStringLiteral("type"), QStringLiteral("object") },
+                { QStringLiteral("properties"), searchProps }
+            };
+            tools.append(wrapSchema(
+                QStringLiteral("web_search"),
+                QStringLiteral("Search the live web for current information, news, or documentation."),
+                searchSchema));
+        }
 
         QJsonObject fetchProps{
             { QStringLiteral("url"), QJsonObject{
@@ -720,7 +733,7 @@ QJsonObject BuddyProvider::buildAgentPayload() const
     // tools parameter is withheld and the reply is constrained to the
     // tool-call envelope instead (`format` = the envelope schema). The
     // system prompt carries the text-protocol instructions.
-    const bool ollamaJsonMode = m_provider == QLatin1String("ollama")
+    const bool ollamaJsonMode = profile().dialect == provider::Dialect::Ollama
         && structuredLevel() == StructuredLevel::JsonMode && !tools.isEmpty();
     if (ollamaJsonMode) {
         payload.remove(QStringLiteral("tools"));
@@ -733,7 +746,7 @@ QJsonObject BuddyProvider::buildAgentPayload() const
     // tool-free turns.
     const double structuredTemp = tools.isEmpty() ? m_temperature : 0.0;
 
-    if (m_provider == QLatin1String("anthropic")) {
+    if (profile().dialect == provider::Dialect::Anthropic) {
         payload[QStringLiteral("max_tokens")] = m_outputTokenLimit;
         // Prompt caching: the system prompt and tool definitions are identical
         // on every turn of the loop, so mark them as a cacheable prefix
@@ -763,7 +776,7 @@ QJsonObject BuddyProvider::buildAgentPayload() const
             payload[QStringLiteral("tools")] = cached;
         }
         payload[QStringLiteral("temperature")] = structuredTemp;
-    } else if (m_provider == QLatin1String("ollama")) {
+    } else if (profile().dialect == provider::Dialect::Ollama) {
         payload[QStringLiteral("stream")] = false;
         if (!tools.isEmpty())
             payload[QStringLiteral("options")] = QJsonObject{ { QStringLiteral("temperature"), 0.0 } };
@@ -774,7 +787,7 @@ QJsonObject BuddyProvider::buildAgentPayload() const
         payload[QStringLiteral("stream")] = true;
         // Final usage chunk (token counts, cached tokens) on OpenAI itself;
         // other OpenAI-compatible servers may reject unknown options.
-        if (m_provider == QLatin1String("openai"))
+        if (profile().streamUsageOption)
             payload[QStringLiteral("stream_options")] = QJsonObject{ { QStringLiteral("include_usage"), true } };
     }
     return payload;
@@ -787,11 +800,17 @@ QNetworkRequest BuddyProvider::buildRequest(const QString &url) const
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
     request.setTransferTimeout(90000);
-    if (m_provider == QLatin1String("anthropic")) {
+    switch (profile().auth) {
+    case provider::AuthStyle::AnthropicHeaders:
         request.setRawHeader("x-api-key", m_apiKey.toUtf8());
         request.setRawHeader("anthropic-version", "2023-06-01");
-    } else if (!m_apiKey.isEmpty()) {
-        request.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
+        break;
+    case provider::AuthStyle::Bearer:
+        if (!m_apiKey.isEmpty())
+            request.setRawHeader("Authorization", ("Bearer " + m_apiKey).toUtf8());
+        break;
+    case provider::AuthStyle::None:
+        break;
     }
     return request;
 }

@@ -48,6 +48,7 @@ endfunction()
 # common: header-only helpers, no dependencies.
 add_library(noch_common INTERFACE
     src/common/ImageAlpha.h
+    src/common/SecretKeys.h
     src/common/ShapeRegion.h
 )
 target_include_directories(noch_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src/common)
@@ -67,15 +68,14 @@ add_library(noch_desktop STATIC
     src/desktop/IconSet.h
     src/desktop/RunningApps.cpp
     src/desktop/RunningApps.h
+    src/desktop/SettingsRegistry.cpp
+    src/desktop/SettingsRegistry.h
     src/desktop/WindowMonitor.cpp
     src/desktop/WindowMonitor.h
 )
 target_include_directories(noch_desktop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/desktop)
-target_link_libraries(noch_desktop PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
-if(WIN32)
-    # WindowMonitor asks DWM for cloak state and extended frame bounds.
-    target_link_libraries(noch_desktop PUBLIC dwmapi)
-endif()
+target_link_libraries(noch_desktop PUBLIC Qt6::Core Qt6::Gui Qt6::Quick
+                      PRIVATE noch_common)
 noch_apply_warnings(noch_desktop)
 
 # platform: windowing, hotkeys, appearance, power. Uses desktop's
@@ -135,6 +135,8 @@ add_library(noch_voice STATIC
     src/voice/DeepgramAgent.h
     src/voice/DeepgramProtocol.cpp
     src/voice/DeepgramProtocol.h
+    src/voice/DeepgramSettings.cpp
+    src/voice/DeepgramSettings.h
     src/voice/DeepgramTranscriber.cpp
     src/voice/OrtRuntime.cpp
     src/voice/OrtRuntime.h
@@ -183,8 +185,14 @@ add_library(noch_agent_core STATIC
     src/agent/ComputerUseKeys.h
     src/agent/HookBus.cpp
     src/agent/HookBus.h
+    src/agent/LocalMemoryBackend.cpp
+    src/agent/LocalMemoryBackend.h
     src/agent/Mem0Client.cpp
     src/agent/Mem0Client.h
+    src/agent/Mem0MemoryBackend.cpp
+    src/agent/Mem0MemoryBackend.h
+    src/agent/MemoryBackend.cpp
+    src/agent/MemoryBackend.h
     src/agent/MemoryExtractor.h
     src/agent/MemoryStore.cpp
     src/agent/MemoryStore.h
@@ -202,6 +210,8 @@ add_library(noch_agent_core STATIC
     src/agent/Skills.h
     src/agent/StreamAccumulator.cpp
     src/agent/StreamAccumulator.h
+    src/agent/ToolRegistry.cpp
+    src/agent/ToolRegistry.h
     src/agent/ToolSchemas.cpp
     src/agent/ToolSchemas.h
     src/agent/UserQuestions.cpp
@@ -230,6 +240,8 @@ noch_apply_warnings(noch_chat)
 # Connector implementation in this library, registered with
 # ConnectorRegistry, and nothing else in the app needs to know.
 add_library(noch_connectors STATIC
+    src/agent/AppSecrets.cpp
+    src/agent/AppSecrets.h
     src/agent/BuiltinOAuth.cpp
     src/agent/BuiltinOAuth.h
     src/agent/Connector.cpp
@@ -250,7 +262,8 @@ add_library(noch_connectors STATIC
     src/agent/SecretStore.h
 )
 target_include_directories(noch_connectors PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/agent)
-target_link_libraries(noch_connectors PUBLIC noch_agent_core Qt6::Core Qt6::Gui Qt6::Network)
+target_link_libraries(noch_connectors PUBLIC noch_agent_core Qt6::Core Qt6::Gui Qt6::Network
+                      PRIVATE noch_common)
 # McpConnector reports this as the client version; the app target has
 # always compiled it with the definition, so the library carries it too.
 target_compile_definitions(noch_connectors PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
@@ -278,6 +291,8 @@ add_library(noch_agent STATIC
     src/agent/BuddyProviderStorage.cpp
     src/agent/BuddyProviderTools.cpp
     src/agent/BuddyProviderWeb.cpp
+    src/agent/ProviderProfile.cpp
+    src/agent/ProviderProfile.h
     src/agent/ComputerUse.cpp
     src/agent/ComputerUse.h
     src/agent/ComputerUseActions.cpp

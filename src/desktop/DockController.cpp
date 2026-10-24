@@ -1,5 +1,6 @@
 #include "DockController.h"
 
+#include "SecretKeys.h"
 #include "WindowMonitor.h"
 
 #include <QCoreApplication>
@@ -510,6 +511,28 @@ void DockController::openDataFolder() const
         QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
+QJsonObject DockController::settingsSnapshot(QSettings &settings)
+{
+    QJsonObject allSettings;
+    const QStringList keys = settings.allKeys();
+    for (const QString &key : keys) {
+        // Never write a credential into the plain-text snapshot, even if
+        // one is still sitting in settings (an old file the startup
+        // migration has not swept yet, or one restored by hand).
+        if (noch::secretkeys::isSecretIniKey(key))
+            continue;
+        const QVariant val = settings.value(key);
+        if (val.typeId() == QMetaType::QByteArray) {
+            allSettings.insert(key, QString::fromUtf8(val.toByteArray()));
+        } else if (val.typeId() == QMetaType::QStringList) {
+            allSettings.insert(key, QJsonArray::fromStringList(val.toStringList()));
+        } else {
+            allSettings.insert(key, QJsonValue::fromVariant(val));
+        }
+    }
+    return allSettings;
+}
+
 void DockController::syncStateSnapshot() const
 {
     QSettings settings;
@@ -539,19 +562,7 @@ void DockController::syncStateSnapshot() const
     }
     root.insert(QStringLiteral("pinnedApps"), pinned);
 
-    QJsonObject allSettings;
-    const QStringList keys = settings.allKeys();
-    for (const QString &key : keys) {
-        const QVariant val = settings.value(key);
-        if (val.typeId() == QMetaType::QByteArray) {
-            allSettings.insert(key, QString::fromUtf8(val.toByteArray()));
-        } else if (val.typeId() == QMetaType::QStringList) {
-            allSettings.insert(key, QJsonArray::fromStringList(val.toStringList()));
-        } else {
-            allSettings.insert(key, QJsonValue::fromVariant(val));
-        }
-    }
-    root.insert(QStringLiteral("settings"), allSettings);
+    root.insert(QStringLiteral("settings"), settingsSnapshot(settings));
 
     QSaveFile out(QDir(dir).filePath(QStringLiteral("noch-state.json")));
     if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

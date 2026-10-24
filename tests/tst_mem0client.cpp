@@ -27,7 +27,9 @@ struct FakeServer {
                 const int end = seen.indexOf("\r\n\r\n");
                 if (end < 0)
                     return;
-                const int len = QString::fromLatin1(seen.left(end)).section("Content-Length:", 1)
+                // Qt 6.9's QNetworkAccessManager sends header names
+                // lowercase ("content-length:"); see BuddyAgentFakes.h.
+                const int len = QString::fromLatin1(seen.left(end)).toLower().section("content-length:", 1)
                                     .section("\r\n", 0, 0).trimmed().toInt();
                 if (seen.size() < end + 4 + len)
                     return;
@@ -123,7 +125,8 @@ private slots:
         QCOMPARE(hits.first().memory, QStringLiteral("User prefers dark mode"));
 
         QVERIFY(fake.seen.startsWith("POST /v3/memories/search/ "));
-        QVERIFY(fake.seen.contains("Authorization: Token secret-key"));
+        // Header names are case-insensitive; Qt 6.9 sends them lowercase.
+        QVERIFY(QString::fromLatin1(fake.seen).toLower().contains("authorization: token secret-key"));
         const QJsonObject sent = fake.sentJson();
         QCOMPARE(sent.value("query").toString(), QStringLiteral("theme"));
         QCOMPARE(sent.value("filters").toObject().value("user_id").toString(), QStringLiteral("alice"));

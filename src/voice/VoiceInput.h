@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 
+#include "DeepgramSettings.h"
 #include "Transcriber.h"
 
 class TranscribeWorker;
@@ -53,10 +54,6 @@ class VoiceInput : public QObject
     // The engine is ready; a network engine is ready as soon as it is configured.
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
     Q_PROPERTY(QString engine READ engine NOTIFY configChanged)
-    Q_PROPERTY(QString deepgramKey READ deepgramKey WRITE setDeepgramKey NOTIFY configChanged)
-    Q_PROPERTY(QString deepgramModel READ deepgramModel WRITE setDeepgramModel NOTIFY configChanged)
-    Q_PROPERTY(QString deepgramLanguage READ deepgramLanguage WRITE setDeepgramLanguage NOTIFY configChanged)
-    Q_PROPERTY(QString deepgramKeyterms READ deepgramKeyterms WRITE setDeepgramKeyterms NOTIFY configChanged)
     // "idle" | "listening" | "transcribing"
     Q_PROPERTY(QString state READ state NOTIFY stateChanged)
     Q_PROPERTY(bool listening READ listening NOTIFY stateChanged)
@@ -78,14 +75,11 @@ public:
     QString problem() const;
     bool ready() const { return m_ready; }
     QString engine() const;
-    QString deepgramKey() const { return m_dg.apiKey; }
-    void setDeepgramKey(const QString &key);
-    QString deepgramModel() const { return m_dg.model; }
-    void setDeepgramModel(const QString &model);
-    QString deepgramLanguage() const { return m_dg.language; }
-    void setDeepgramLanguage(const QString &language);
-    QString deepgramKeyterms() const { return m_dg.keyterms.join(QStringLiteral(", ")); }
-    void setDeepgramKeyterms(const QString &terms);
+    // The one Deepgram configuration, shared with the live agent and spoken
+    // answers. Until one is attached, a private default is used (so a bare
+    // VoiceInput still works in tests).
+    void setDeepgramSettings(DeepgramSettings *settings);
+    DeepgramSettings *deepgramSettings() { return m_settings ? m_settings : &m_fallbackSettings; }
     // Tests: send Deepgram requests here instead of api.deepgram.com.
     void setDeepgramApiBase(const QString &base);
 
@@ -147,7 +141,9 @@ private:
     void onFinished(quint64 ticket, const QString &text, const QString &error);
 
     std::unique_ptr<Transcriber> m_transcriber;
-    DeepgramListenSettings m_dg;
+    DeepgramSettings *m_settings = nullptr;
+    DeepgramSettings m_fallbackSettings;
+    QString m_apiBase;   // tests: requests go here instead of api.deepgram.com
     QThread m_thread;
     TranscribeWorker *m_worker = nullptr;
     QHash<quint64, Pending> m_pending;
