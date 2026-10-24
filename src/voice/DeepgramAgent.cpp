@@ -21,7 +21,8 @@ namespace {
 constexpr int kFrameBytes = 1280;                 // 40 ms of 16 kHz mono 16-bit
 constexpr qint64 kMaxBacklogBytes = 512 * 1024;   // a stalled network drops audio instead of queueing it
 constexpr int kBargeInDropMs = 150;               // stale agent audio still in flight after a barge-in
-constexpr int kGateTailMs = 150;                  // the room still rings a moment after the speakers stop
+constexpr int kGateTailMs = 300;                  // the room still rings a moment after the speakers stop;
+                                                  // the 320 ms pre-roll keeps the first words safe across it
 // Speaker mode barge-in: the microphone hears the agent's own voice, so a voice counts as the
 // user talking over it only when it is clearly louder than that echo, for a few frames in a row.
 constexpr double kBargeMinLevel = 0.12;          // quieter than this is never a voice over the agent
@@ -83,6 +84,10 @@ DeepgramAgent::DeepgramAgent(QObject *parent)
         const qint64 quiet = QDateTime::currentMSecsSinceEpoch() - m_lastAudioMs;
         if (m_state == State::Speaking || !m_player.idle() || quiet < kAckFirstMs) {
             m_ackTimer.start(500);          // it is talking: look again when it has finished
+            return;
+        }
+        if (m_userSpeaking) {
+            m_ackTimer.start(500);          // the user is talking: never speak over them, look again
             return;
         }
         say(m_ackCount == 0 ? tr("One moment.")
@@ -494,6 +499,7 @@ void DeepgramAgent::openSocket(bool resume)
     m_settingsApplied = false;
     m_agentAudioDone = true;
     m_dropAgentAudio = false;
+    m_userSpeaking = false;
     m_lastWsError.clear();
     m_oddByte.clear();
     setState(State::Connecting);
@@ -524,6 +530,7 @@ void DeepgramAgent::finishSession(bool graceful)
                           << m_stalls << "stalls, echo reduced by" << int(m_aec.erleDb()) << "dB";
     m_settingsApplied = false;
     m_queuedText.clear();
+    m_userSpeaking = false;
     dropCalls();
     if (m_level != 0.0) {
         m_level = 0.0;
@@ -810,8 +817,13 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
         break;
     case E::UserStartedSpeaking:
         // Barge-in: stop talking at once, and ignore the tail of the old answer still on its way.
+        // The drop lasts until the next answer explicitly starts (AgentStartedSpeaking): the
+        // binary stream carries no turn marker, so audio still in flight from the old answer
+        // is otherwise indistinguishable from the new one and splices into its opening.
         m_player.flush();
         m_turnEndMs = 0;
+        m_userSpeaking = true;
+        m_dropAgentAudio = true;
         m_dropUntilMs = QDateTime::currentMSecsSinceEpoch() + kBargeInDropMs;
         m_agentAudioDone = true;
         m_oddByte.clear();
@@ -824,8 +836,10 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
         if (e.role == QLatin1String("user")) {
             m_userText = e.text;
             m_turnEndMs = QDateTime::currentMSecsSinceEpoch();     // the clock for "until the first sound"
-            m_dropAgentAudio = false;
-            m_dropUntilMs = 0;      // the final words are in: whatever audio comes next answers them
+            m_userSpeaking = false;
+            // The final words are in, but the drop stays: audio still in flight from an
+            // interrupted answer must not play as the opening of the reply. Only the next
+            // answer's own AgentStartedSpeaking reopens the speakers (see there).
             remember(QStringLiteral("user"), e.text);
             emit transcriptChanged();
             emit userSaid(e.text);
@@ -847,11 +861,15 @@ void DeepgramAgent::handleEvent(const deepgram::Event &e)
             setState(State::Thinking);
         break;
     case E::AgentStartedSpeaking:
+        // A new answer is really starting: stale audio from anything before it is done being
+        // dropped, including the first 150 ms window (a fast turnaround must not clip its opening).
         m_dropAgentAudio = false;
+        m_dropUntilMs = 0;
         break;
     case E::AgentAudioDone:
         m_agentAudioDone = true;
-        m_dropAgentAudio = false;
+        // Deliberately not clearing the drop here: for an interrupted answer this event is
+        // about the OLD answer, and clearing it would let its tail audio through again.
         m_player.setStreaming(false);    // the answer is complete: what is left plays out
         if (m_player.idle() && m_state == State::Speaking) {
             setState(State::Listening);

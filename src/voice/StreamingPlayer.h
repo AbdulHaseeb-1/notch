@@ -43,8 +43,8 @@ public:
     // to kMaxPrebufferMs), and each clean answer shrinks it back, so a good connection pays only
     // the small delay and a bad one gets the cushion it needs.
     void write(const QByteArray &pcm16);
-    static constexpr int kPrebufferMs = 300;
-    static constexpr int kMaxPrebufferMs = 700;
+    static constexpr int kPrebufferMs = 400;
+    static constexpr int kMaxPrebufferMs = 1000;
     static constexpr int kPrebufferStepMs = 100;
     static constexpr int kPrebufferMaxWaitMs = 600;
     static constexpr int kRebufferMaxWaitMs = 600;
