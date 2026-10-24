@@ -16,6 +16,7 @@
 #include <QtQml/qqmlregistration.h>
 
 #include "AppSearch.h"
+#include "AppSecrets.h"
 #include "Appearance.h"
 #include "AudioDevices.h"
 #include "BuddyProvider.h"
@@ -24,6 +25,7 @@
 #include "ClipboardHistory.h"
 #include "ComputerUse.h"
 #include "DeepgramAgent.h"
+#include "DeepgramSettings.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
 #include "GlobalHotkey.h"
@@ -34,6 +36,7 @@
 #include "PowerActions.h"
 #include "PushToTalkKey.h"
 #include "RunningApps.h"
+#include "SettingsRegistry.h"
 #include "SpeechOut.h"
 #include "VoiceInput.h"
 #include "WakeWord.h"
@@ -128,6 +131,34 @@ public:
     static BuddyProvider *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
+// The API-key vault (AppSecrets over the connectors' SecretStore): settings
+// pages and the Main.qml bindings read/write keys through here, never
+// through the plain settings store.
+struct SecretsSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(AppSecrets)
+    QML_NAMED_ELEMENT(Secrets)
+    QML_SINGLETON
+public:
+    inline static AppSecrets *s_singletonInstance = nullptr;
+    static AppSecrets *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+// The settings schema (src/common/SettingsSchema.h): every key, its type,
+// default, range and secret flag. Main.qml's Settings object reads its
+// defaults from here instead of declaring literals inline.
+struct SettingsSchemaSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(SettingsRegistry)
+    QML_NAMED_ELEMENT(SettingsSchema)
+    QML_SINGLETON
+public:
+    inline static SettingsRegistry *s_singletonInstance = nullptr;
+    static SettingsRegistry *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
 // Buddy's saved chats: resume, branch, summaries.
 struct SessionsSingleton
 {
@@ -196,6 +227,20 @@ struct LiveSingleton
 public:
     inline static DeepgramAgent *s_singletonInstance = nullptr;
     static DeepgramAgent *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
+};
+
+// The one Deepgram configuration (see DeepgramSettings.h): key, listen
+// fields, think choice and speak voice, shared by push-to-talk, the live
+// agent and spoken answers.
+struct DeepgramSingleton
+{
+    Q_GADGET
+    QML_FOREIGN(DeepgramSettings)
+    QML_NAMED_ELEMENT(Deepgram)
+    QML_SINGLETON
+public:
+    inline static DeepgramSettings *s_singletonInstance = nullptr;
+    static DeepgramSettings *create(QQmlEngine *, QJSEngine *engine) { return nochSingletonCreate(s_singletonInstance, engine); }
 };
 
 // Finding songs on YouTube without a browser (yt-dlp): status and install for Settings.

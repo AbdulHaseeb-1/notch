@@ -17,6 +17,7 @@
 
 #include "AppIconProvider.h"
 #include "AppSearch.h"
+#include "AppSecrets.h"
 #include "Appearance.h"
 #include "AudioDevices.h"
 #include "BuddyProvider.h"
@@ -24,6 +25,7 @@
 #include "ChatSessions.h"
 #include "ClipboardHistory.h"
 #include "DeepgramAgent.h"
+#include "DeepgramSettings.h"
 #include "DockController.h"
 #include "FullscreenWatcher.h"
 #include "GlobalHotkey.h"
@@ -37,6 +39,7 @@
 #include "PushToTalkKey.h"
 #include "RunningApps.h"
 #include "SessionLink.h"
+#include "SettingsRegistry.h"
 #include "SmtcMedia.h"
 #include "SpeechOut.h"
 #include "VoiceInput.h"
@@ -154,19 +157,38 @@ int main(int argc, char *argv[])
     auto *appearance = new Appearance(&app);
     auto *buddyProvider = new BuddyProvider(&app);
     buddyProvider->startConnectors();   // saved sign-ins and MCP servers (Settings > Connectors)
+    // API keys live in the same encrypted store as the connector tokens.
+    // Sweep any key an older version left in the plain settings file into
+    // the store (and out of the file) before QML reads a single setting.
+    auto *appSecrets = new AppSecrets(buddyProvider->connectors()->secrets(), &app);
+    {
+        QSettings ini;
+        appsecrets::migrateLegacySecrets(ini, *buddyProvider->connectors()->secrets());
+        // Older versions had no "follow Buddy" choice for the live agent's
+        // think model: a think configuration the user actually changed
+        // becomes an explicit override, an untouched one follows Buddy.
+        migrateDeepgramSettings(ini);
+    }
     auto *buddySfx = new BuddySfx(&app);
     auto *chatSessions = new ChatSessions(&app);
     chatSessions->setRoot(chatSessions->sessionsPath());   // loads the saved chats
     new SessionLink(chatSessions, buddyProvider, &app);     // long chats get a rolling summary
+    // The one Deepgram configuration: key (from the Secrets vault), listen
+    // fields, think choice and speak voice. Push-to-talk, spoken answers
+    // and the live agent all read from this object and nowhere else.
+    auto *deepgramSettings = new DeepgramSettings(&app);
     auto *voiceInput = new VoiceInput(&app);
+    voiceInput->setDeepgramSettings(deepgramSettings);
     auto *talkKey = new PushToTalkKey(&app);
     // "Hey buddy": listens for the phrase through the same speech service, and
     // stays quiet while Buddy talks (so it never wakes itself up).
     auto *wakeWord = new WakeWord(voiceInput, &app);
     auto *speechOut = new SpeechOut(&app);
+    speechOut->setDeepgramSettings(deepgramSettings);
     // The live conversation (Deepgram Voice Agent). While it is open it owns the
     // microphone: push-to-talk and the wake word step aside so nothing else listens.
     auto *live = new DeepgramAgent(&app);
+    live->setDeepgramSettings(deepgramSettings);
     const auto syncWakePause = [wakeWord, live, speechOut] {
         wakeWord->setPaused(live->active() || speechOut->speaking());
     };
@@ -194,6 +216,8 @@ int main(int argc, char *argv[])
     auto *fullscreen = new FullscreenWatcher(windowMonitor, &app);
     auto *hotkey = new GlobalHotkey(&app);
     auto *search = new AppSearch(openApps, &app);
+    // The settings schema: stateless, so it can be created last.
+    auto *settingsRegistry = new SettingsRegistry(&app);
 
     // The engine takes ownership of the providers.
     engine.addImageProvider(QStringLiteral("appicon"),
@@ -210,6 +234,7 @@ int main(int argc, char *argv[])
     AppearanceSingleton::s_singletonInstance = appearance;
     IconsSingleton::s_singletonInstance = iconSet;
     BuddyAgentSingleton::s_singletonInstance = buddyProvider;
+    SecretsSingleton::s_singletonInstance = appSecrets;
     AgentControlSingleton::s_singletonInstance = buddyProvider->computer();
     BuddySoundSingleton::s_singletonInstance = buddySfx;
     SessionsSingleton::s_singletonInstance = chatSessions;
@@ -217,6 +242,7 @@ int main(int argc, char *argv[])
     TalkKeySingleton::s_singletonInstance = talkKey;
     WakeSingleton::s_singletonInstance = wakeWord;
     LiveSingleton::s_singletonInstance = live;
+    DeepgramSingleton::s_singletonInstance = deepgramSettings;
     YoutubeSingleton::s_singletonInstance = youtube;
     SpeechSingleton::s_singletonInstance = speechOut;
     OpenAppsSingleton::s_singletonInstance = openApps;
@@ -227,6 +253,7 @@ int main(int argc, char *argv[])
     FullscreenSingleton::s_singletonInstance = fullscreen;
     HotkeySingleton::s_singletonInstance = hotkey;
     AppIndexSingleton::s_singletonInstance = search;
+    SettingsSchemaSingleton::s_singletonInstance = settingsRegistry;
     engine.loadFromModule("noch", "Main");
 
     if (engine.rootObjects().isEmpty())

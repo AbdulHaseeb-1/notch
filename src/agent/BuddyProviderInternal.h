@@ -63,6 +63,8 @@ constexpr int kMaxContinuations = 3;        // "continue" requests per run after
 constexpr int kHistoryMsgChars = 6000;      // per message of earlier turns sent as context
 constexpr int kStreamIdleTimeoutMs = 120000;      // streamed: no bytes for this long = dead
 constexpr int kBufferedReplyTimeoutMs = 600000;   // buffered: the whole answer arrives at once
+constexpr int kMemRecallRaceMs = 400;   // the first turn waits this long for Mem0 recall, then dispatches without it (the search itself keeps its 2.5 s timeout)
+constexpr int kSnapshotMemoryCap = 14;  // the prompt snapshot's combined cap: local top-8 + Mem0 top-6, the most it ever held
 
 // An earlier turn longer than the history cap keeps its opening and, most
 // importantly, its ending (what a follow-up like "continue" refers to),
@@ -192,6 +194,36 @@ inline QString parseDuckDuckGoHtml(const QString &html, int maxResults,
     return results.join(QStringLiteral("\n\n"));
 }
 
+// Web search backends — the search tool is chosen per provider, not hard-wired.
+// Anthropic: the Messages API's server-side web_search tool runs on Anthropic's
+// servers (tool definition `web_search_20250305`, no client implementation;
+// the Claude Agent SDK's WebSearch is the same capability inside the SDK's own
+// agent runtime and is NOT embeddable in a C++/Qt app — see
+// docs/web-search.md). Every other provider: the client-side DuckDuckGo +
+// Wikipedia implementation above (executeWebSearchTool).
+enum class WebSearchBackend { AnthropicServer, DuckDuckGo };
+
+inline WebSearchBackend webSearchBackendFor(const QString &provider)
+{
+    return provider == QLatin1String("anthropic") ? WebSearchBackend::AnthropicServer
+                                                  : WebSearchBackend::DuckDuckGo;
+}
+
+// The server tool definition sent to Anthropic INSTEAD of Noch's client
+// web_search schema (never both: the name is the same, the search is not).
+// `max_uses` caps searches per request (Anthropic bills $10 per 1,000
+// searches, plus the result tokens). Deliberately the basic 20250305 version:
+// it is the only version supported on every Anthropic surface that supports
+// search at all (Vertex AI supports only this one; Bedrock not at all).
+inline QJsonObject anthropicWebSearchTool()
+{
+    return QJsonObject{
+        { QStringLiteral("type"), QStringLiteral("web_search_20250305") },
+        { QStringLiteral("name"), QStringLiteral("web_search") },
+        { QStringLiteral("max_uses"), 5 }
+    };
+}
+
 // Sandboxes any Anthropic memory path (e.g., "/memories", "/memories/notes.md", "notes.md")
 // strictly inside `memoriesRoot` and rejects "../" escapes.
 inline bool resolveMemorySandboxPath(const QString &memoriesRoot, const QString &rawInput,
@@ -294,35 +326,10 @@ inline QString joinPath(const QString &base, const QStringList &parts)
     return path;
 }
 
-inline QString defaultBaseFor(const QString &provider)
-{
-    if (provider == QLatin1String("ollama"))
-        return QStringLiteral("http://localhost:11434");
-    if (provider == QLatin1String("anthropic"))
-        return QStringLiteral("https://api.anthropic.com");
-    if (provider == QLatin1String("openai"))
-        return QStringLiteral("https://api.openai.com");
-    if (provider == QLatin1String("opencode"))
-        return QStringLiteral("https://opencode.ai/zen");
-    return QString();
-}
-
-inline QStringList chatPathFor(const QString &provider)
-{
-    if (provider == QLatin1String("ollama"))
-        return { QStringLiteral("api"), QStringLiteral("chat") };
-    if (provider == QLatin1String("anthropic"))
-        return { QStringLiteral("v1"), QStringLiteral("messages") };
-    return { QStringLiteral("v1"), QStringLiteral("chat"), QStringLiteral("completions") };
-}
-
-inline QStringList modelsPathFor(const QString &provider)
-{
-    if (provider == QLatin1String("ollama"))
-        return { QStringLiteral("api"), QStringLiteral("tags") };
-    return { QStringLiteral("v1"), QStringLiteral("models") };
-}
-
+// Default bases and endpoint paths used to live here as if-chains over the
+// provider string (defaultBaseFor/chatPathFor/modelsPathFor). They now live
+// in the ProviderProfile table (src/agent/ProviderProfile.{h,cpp}); call
+// sites use BuddyProvider::profile() instead.
 inline QString tidyTransportError(const QString &fallback, int status)
 {
     QString msg = fallback.trimmed();

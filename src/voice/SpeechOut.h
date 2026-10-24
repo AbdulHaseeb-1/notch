@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 
+#include "DeepgramSettings.h"
 #include "SpeechPlayer.h"
 #include "StreamingPlayer.h"
 
@@ -38,8 +39,6 @@ class SpeechOut : public QObject
     Q_PROPERTY(QString engine READ engine WRITE setEngine NOTIFY configChanged)
     Q_PROPERTY(QString googleKey READ googleKey WRITE setGoogleKey NOTIFY configChanged)
     Q_PROPERTY(QString googleVoice READ googleVoice WRITE setGoogleVoice NOTIFY configChanged)
-    Q_PROPERTY(QString deepgramKey READ deepgramKey WRITE setDeepgramKey NOTIFY configChanged)
-    Q_PROPERTY(QString deepgramVoice READ deepgramVoice WRITE setDeepgramVoice NOTIFY configChanged)
     // 0.7 .. 1.5. Gemini TTS has no rate parameter, so for Google this is sent
     // as a speaking-style hint; Deepgram takes it as its speed parameter.
     Q_PROPERTY(double speed READ speed WRITE setSpeed NOTIFY configChanged)
@@ -68,10 +67,12 @@ public:
     void setGoogleKey(const QString &key);
     QString googleVoice() const { return m_googleVoice; }
     void setGoogleVoice(const QString &voice);
-    QString deepgramKey() const { return m_deepgramKey; }
-    void setDeepgramKey(const QString &key);
-    QString deepgramVoice() const { return m_deepgramVoice; }
-    void setDeepgramVoice(const QString &voice);
+    // The one Deepgram configuration, shared with push-to-talk and the live
+    // agent: the Deepgram key and voice come from it, not from properties
+    // of this class. Until one is attached, a private default is used.
+    void setDeepgramSettings(DeepgramSettings *settings);
+    DeepgramSettings *deepgramSettings() { return m_settings ? m_settings : &m_fallbackSettings; }
+    const DeepgramSettings *deepgramSettings() const { return m_settings ? m_settings : &m_fallbackSettings; }
     double speed() const { return m_speed; }
     void setSpeed(double speed);
     int maxChars() const { return m_maxChars; }
@@ -159,8 +160,8 @@ private:
     QString m_activeEngine = QStringLiteral("google");   // the engine the current utterance uses
     QString m_googleKey;
     QString m_googleVoice = QStringLiteral("Kore");
-    QString m_deepgramKey;
-    QString m_deepgramVoice = QStringLiteral("aura-2-thalia-en");
+    DeepgramSettings *m_settings = nullptr;
+    DeepgramSettings m_fallbackSettings;
     QString m_deepgramBase = QStringLiteral("https://api.deepgram.com");
     QString m_googleEndpoint = QStringLiteral("https://generativelanguage.googleapis.com/v1beta/interactions");
     double m_speed = 1.0;

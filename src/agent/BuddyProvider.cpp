@@ -1,4 +1,5 @@
 #include "BuddyProviderInternal.h"
+#include "ToolRegistry.h"
 #include "MemoryStore.h"
 
 using namespace noch::buddyprovider;
@@ -9,13 +10,17 @@ BuddyProvider::BuddyProvider(QObject *parent)
     connect(&m_nam, &QNetworkAccessManager::finished,
             this, &BuddyProvider::onReplyFinished);
 
-    // Long-term memory (Mem0): its own network client, so the chat provider's
-    // reply handling never sees its traffic.
+    // Long-term memory: its own network client, so the chat provider's
+    // reply handling never sees its traffic. The client keeps owning the
+    // transport and the settings surface; both stores are reached through
+    // the MemoryBackend interface, and the client's searched/added
+    // signals are consumed by the Mem0 backend, not here.
     m_mem = new Mem0Client(this);
-    connect(m_mem, &Mem0Client::searched, this, &BuddyProvider::onMemSearched);
-    connect(m_mem, &Mem0Client::added, this, &BuddyProvider::onMemAdded);
     connect(m_mem, &Mem0Client::testFinished, this, &BuddyProvider::memTestFinished);
     m_mem->setProviderSupplier([this] { return memProviderJson(); });
+    m_mem0Backend = new Mem0MemoryBackend(m_mem, this);
+    m_localBackend.setRootSupplier([this] { return memoriesPath(); });
+    m_localBackend.setSanitizer([this](const QString &text) { return redact(text); });
 
     // Connected apps. Nothing is read from disk until startConnectors() (tests never touch real files).
     m_connectors = new ConnectorRegistry(this);
@@ -51,6 +56,8 @@ BuddyProvider::BuddyProvider(QObject *parent)
     connect(&m_streamEmitTimer, &QTimer::timeout, this, [this] { emit streamTextChanged(); });
     m_retryTimer.setSingleShot(true);
     connect(&m_retryTimer, &QTimer::timeout, this, &BuddyProvider::dispatchAgentTurn);
+    m_memRaceTimer.setSingleShot(true);
+    connect(&m_memRaceTimer, &QTimer::timeout, this, &BuddyProvider::onMemRecallRaceTimeout);
     m_policy.setWorkspaceRoots({ effectiveWorkspace() });
     syncPrivatePaths();
     registerBuiltinHooks();
@@ -68,17 +75,15 @@ void BuddyProvider::registerBuiltinHooks()
             QJsonObject in = ctx.input;
             bool changed = false;
             const QString base = effectiveWorkspace();
-            if (ctx.toolName == QLatin1String("str_replace_editor")) {
-                const QString path = in.value(QStringLiteral("path")).toString();
-                if (!path.isEmpty() && QDir::isRelativePath(path)) {
-                    in[QStringLiteral("path")] = QDir(base).absoluteFilePath(path);
-                    changed = true;
-                }
-            } else if (ctx.toolName == QLatin1String("bash")) {
-                const QString wd = in.value(QStringLiteral("working_dir")).toString();
-                if (!wd.isEmpty() && QDir::isRelativePath(wd)) {
-                    in[QStringLiteral("working_dir")] = QDir(base).absoluteFilePath(wd);
-                    changed = true;
+            // P2: which argument is a workspace-relative path is
+            // registry metadata (bash: working_dir, editor: path).
+            if (const CoreToolDef *def = coreToolDef(ctx.toolName)) {
+                if (!def->workspacePathArg.isEmpty()) {
+                    const QString raw = in.value(def->workspacePathArg).toString();
+                    if (!raw.isEmpty() && QDir::isRelativePath(raw)) {
+                        in[def->workspacePathArg] = QDir(base).absoluteFilePath(raw);
+                        changed = true;
+                    }
                 }
             }
             return changed ? HookResult::rewriteInput(in) : HookResult::allow();
@@ -123,8 +128,11 @@ void BuddyProvider::setMemEnabled(bool on)
     if (on == m_mem->enabled())
         return;
     m_mem->setEnabled(on);
-    if (!on)
+    if (!on) {
         m_memPending = false;
+        m_memLatePending = false;
+        m_memRaceTimer.stop();
+    }
     emit memConfigChanged();
 }
 
@@ -208,12 +216,13 @@ QString openAiBase(const QString &base)
 
 QJsonObject BuddyProvider::memProviderJson() const
 {
-    if (m_provider == QLatin1String("none") || m_provider == QLatin1String("anthropic"))
+    if (profile().dialect == provider::Dialect::None
+            || profile().dialect == provider::Dialect::Anthropic)
         return {};
-    const QString rawBase = m_apiBase.trimmed().isEmpty() ? defaultBaseFor(m_provider) : m_apiBase;
+    const QString rawBase = m_apiBase.trimmed().isEmpty() ? profile().defaultBase : m_apiBase;
     if (rawBase.trimmed().isEmpty())
         return {};
-    const bool ollama = m_provider == QLatin1String("ollama");
+    const bool ollama = profile().dialect == provider::Dialect::Ollama;
     const QString base = openAiBase(forContainer(rawBase));
     const QString key = !m_apiKey.trimmed().isEmpty() ? m_apiKey.trimmed()
                       : ollama ? QStringLiteral("ollama") : QString();
@@ -228,44 +237,77 @@ QJsonObject BuddyProvider::memProviderJson() const
     return QJsonObject{ { QStringLiteral("llm"), llm }, { QStringLiteral("embedder"), emb } };
 }
 
-// The first model turn of a run waits (2.5 s at most) for recall, so what Mem0 knows
-// about the user is already in the system prompt. Anything that goes wrong just
-// dispatches without it.
+// The first model turn of a run gives recall a short head start (kMemRecallRaceMs),
+// so what Mem0 knows about the user is usually already in the system prompt —
+// but a slow or cold memory backend must not hold the run hostage: when the race
+// timer wins, the turn dispatches with the local snapshot only and the search
+// stays in flight; its hits still land in the prompt from the next step onward.
+// Anything that goes wrong just dispatches without it.
 void BuddyProvider::recallThenDispatch(const QString &text)
 {
-    if (!m_allowMemory || !m_mem->searchReady() || text.trimmed().size() < 3) {
+    if (!m_allowMemory || !m_mem0Backend->recallReady() || text.trimmed().size() < 3) {
         dispatchAgentTurn();
         return;
     }
     m_memPending = true;
-    m_mem->search(text, m_runGeneration, 6);
+    m_memLatePending = false;
+    const QPointer<BuddyProvider> self(this);
+    m_mem0Backend->recall(text, 6, m_runGeneration,
+        [self](quint64 token, const QList<MemoryHit> &hits, const QString &error, int ms) {
+            if (self)
+                self->onRecallCompleted(token, hits, error, ms);
+        });
+    m_memRaceTimer.start(kMemRecallRaceMs);
 }
 
-void BuddyProvider::onMemSearched(quint64 token, const QList<mem0::Hit> &hits, int ms, const QString &error)
+void BuddyProvider::onMemRecallRaceTimeout()
+{
+    if (!m_memPending)
+        return;   // recall landed first (or the run was cancelled meanwhile)
+    m_memPending = false;
+    m_memLatePending = true;   // the search is still out; its hits are welcome late
+    dispatchAgentTurn();
+}
+
+void BuddyProvider::onRecallCompleted(quint64 token, const QList<MemoryHit> &hits, const QString &error, int ms)
 {
     if (token != m_runGeneration)
         return;   // cancelled or superseded while the request was in flight
 
-    if (m_memToolPending) {
-        m_memToolPending = false;
-        finishMemorySearch(m_memToolCall, m_memToolQuery, m_memToolLocal, hits, error);
-        return;
-    }
-    if (!m_memPending)
+    // Two ways to get here: recall beat the race (m_memPending — the turn is
+    // still waiting, dispatch below), or it lost (m_memLatePending — the turn
+    // already dispatched; fold the hits into the prompt for the next step and
+    // never dispatch again). Neither flag set means the run ended meanwhile
+    // (finishTrace clears m_memLatePending): drop the hits silently.
+    const bool late = m_memLatePending;
+    if (!m_memPending && !late)
         return;
     m_memPending = false;
+    m_memLatePending = false;
+    m_memRaceTimer.stop();
 
     QJsonObject span{ { QStringLiteral("type"), QStringLiteral("memory") },
                       { QStringLiteral("event"), QStringLiteral("recall") },
                       { QStringLiteral("backend"), m_mem->backend() },
                       { QStringLiteral("ms"), ms },
                       { QStringLiteral("hits"), int(hits.size()) } };
+    if (late)
+        span[QStringLiteral("late")] = true;
     if (!error.isEmpty())
         span[QStringLiteral("error")] = error;
     addSpan(span);
 
     if (!hits.isEmpty()) {
-        m_memoryIndexSnapshot += redact(mem0::recallSection(hits));
+        // The one merge point: the snapshot's local hits and the recall
+        // hits are deduped, ranked and capped, then split back by source
+        // for rendering (the local lines keep their /memories paths, the
+        // recalled ones their fenced block).
+        const QList<MemoryHit> merged = mergeMemoryHits(m_snapshotLocalHits, hits, kSnapshotMemoryCap);
+        QList<MemoryHit> local, remote;
+        for (const MemoryHit &h : merged)
+            (h.backend == QLatin1String("mem0") ? remote : local).append(h);
+        m_snapshotLocalHits = local;
+        m_memoryIndexSnapshot = renderLocalMemorySection(local) + redact(memoryPromptSection(remote));
         // The system prompt was built before recall: rebuild it with the new section.
         // (Anthropic builds it per request, so it picks the snapshot up by itself.)
         if (!m_agentMessages.isEmpty()) {
@@ -276,7 +318,18 @@ void BuddyProvider::onMemSearched(quint64 token, const QList<mem0::Hit> &hits, i
             }
         }
     }
-    dispatchAgentTurn();
+    if (!late)
+        dispatchAgentTurn();
+}
+
+void BuddyProvider::onToolSearchCompleted(quint64 token, const QList<MemoryHit> &hits, const QString &error)
+{
+    if (token != m_runGeneration)
+        return;   // cancelled or superseded while the request was in flight
+    if (!m_memToolPending)
+        return;   // the tool call already finished or was superseded
+    m_memToolPending = false;
+    finishMemorySearch(m_memToolCall, m_memToolQuery, m_memToolLocalHits, hits, error);
 }
 
 // Saving is fire-and-forget: the extraction runs a model and may take a while.
@@ -289,7 +342,7 @@ void BuddyProvider::saveExchangeToMem0(const QString &finalText, const QStringLi
         return;
     constexpr int kUserChars = 2000;
     constexpr int kReplyChars = 1200;
-    QList<mem0::Message> msgs;
+    QList<MemoryMessage> msgs;
     msgs.append({ QStringLiteral("user"), redact(user.left(kUserChars)) });
     const QString reply = finalText.trimmed();
     if (!reply.isEmpty())
@@ -297,13 +350,18 @@ void BuddyProvider::saveExchangeToMem0(const QString &finalText, const QStringLi
     const quint64 seq = ++m_memAddSeq;
     if (!fallbackFacts.isEmpty())
         m_memFallback.insert(seq, fallbackFacts);
-    m_mem->add(msgs, seq, QJsonObject{ { QStringLiteral("source"), QStringLiteral("noch") } });
+    const QPointer<BuddyProvider> self(this);
+    m_mem0Backend->addExchange(msgs, seq, QJsonObject{ { QStringLiteral("source"), QStringLiteral("noch") } },
+        [self](quint64 token, bool ok, const QString &error) {
+            if (self)
+                self->onExchangeSaved(token, ok, error);
+        });
     addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
                          { QStringLiteral("event"), QStringLiteral("save-sent") },
                          { QStringLiteral("backend"), m_mem->backend() } });
 }
 
-void BuddyProvider::onMemAdded(quint64 token, bool ok, const QString &error)
+void BuddyProvider::onExchangeSaved(quint64 token, bool ok, const QString &error)
 {
     const QStringList fallback = m_memFallback.take(token);
     if (ok)
@@ -381,7 +439,7 @@ void BuddyProvider::setMaxSteps(int n)
 // only gets a note that the screenshot was withheld.
 bool BuddyProvider::modelVisionCapable() const
 {
-    if (m_provider == QLatin1String("anthropic"))
+    if (profile().supportsVision)
         return true;
     const QString m = m_model.toLower();
     static const QStringList hints{
@@ -412,7 +470,7 @@ bool BuddyProvider::modelVisionCapable() const
 // anything else gets the text parser.
 BuddyProvider::StructuredLevel BuddyProvider::structuredLevel() const
 {
-    if (m_provider != QLatin1String("ollama"))
+    if (profile().dialect != provider::Dialect::Ollama)
         return StructuredLevel::FunctionCalling;
     const QString m = m_model.toLower();
     static const QStringList toolCapable{
@@ -485,7 +543,7 @@ QString BuddyProvider::computerModeName(ComputerMode m)
 
 BuddyProvider::ComputerMode BuddyProvider::computerMode() const
 {
-    if (m_provider != QLatin1String("anthropic") || !m_officialComputer)
+    if (profile().dialect != provider::Dialect::Anthropic || !m_officialComputer)
         return ComputerMode::Custom;
     return ComputerMode(qMax(int(computerModeForModel(m_model)), m_computerFallback));
 }
@@ -518,7 +576,7 @@ void BuddyProvider::applyComputerProfile() const
 // request only when it actually carries one. The toolset needs none.
 void BuddyProvider::addBetaHeaders(QNetworkRequest &request, const QJsonObject &payload) const
 {
-    if (m_provider != QLatin1String("anthropic"))
+    if (profile().dialect != provider::Dialect::Anthropic)
         return;
     QStringList betas;
     for (const QJsonValue &t : payload.value(QStringLiteral("tools")).toArray()) {
@@ -578,32 +636,44 @@ void BuddyProvider::setShowThinking(bool on)
 // P8: the per-run memory snapshot is now top-K by relevance to the
 // current request (BM25 over /memories) with one-line gists, not a raw
 // file listing. Stable per run so the prompt cache stays warm; the model
-// can pull full files via memory_search/memory.
-QString BuddyProvider::memoryIndex(const QString &query) const
+// can pull full files via memory_search/memory. The hits are kept
+// structured (m_snapshotLocalHits) so recall can re-merge them with its
+// remote hits through mergeMemoryHits instead of string-appending.
+QString BuddyProvider::memoryIndex(const QString &query)
 {
-    if (!m_allowMemory)
+    if (!m_allowMemory) {
+        m_snapshotLocalHits.clear();
+        m_snapshotLocalFallback = false;
+        m_snapshotCorpusEmpty = false;
         return QString();
-    MemoryStore store(memoriesPath());
-    const QList<MemoryFact> all = store.list();
-    if (all.isEmpty())
-        return QStringLiteral("\n\nYour /memories directory is empty.");
+    }
+    // Routed through the one merge point too (dedupe within the local
+    // results); the backend already caps at 8 hits / 4 newest.
+    m_snapshotLocalHits = mergeMemoryHits(
+        m_localBackend.snapshotHits(query, &m_snapshotCorpusEmpty, &m_snapshotLocalFallback), {}, 8);
+    return renderLocalMemorySection(m_snapshotLocalHits);
+}
 
-    const QList<MemoryStore::SearchHit> hits = store.search(all, query, 8);  // P0: search the list we already loaded
+// The local half of the prompt snapshot, from structured hits. The
+// "newest" fallback lines carry no [procedure] tag, exactly as before.
+QString BuddyProvider::renderLocalMemorySection(const QList<MemoryHit> &hits) const
+{
+    if (m_snapshotCorpusEmpty)
+        return QStringLiteral("\n\nYour /memories directory is empty.");
+    if (hits.isEmpty())
+        return QString();
     QStringList entries;
-    if (hits.isEmpty()) {
-        // Nothing relevant: fall back to the 4 newest, so the model at
-        // least knows what exists.
-        for (int i = 0; i < qMin(4, all.size()); ++i)
-            entries << QStringLiteral("- /memories/%1 — %2").arg(all.at(i).id, all.at(i).gist);
+    for (const MemoryHit &h : hits) {
+        entries << (m_snapshotLocalFallback
+            ? QStringLiteral("- /memories/%1 — %2").arg(h.id, h.text)
+            : QStringLiteral("- /memories/%1%2 — %3")
+                       .arg(h.id,
+                            h.procedure ? QStringLiteral(" [procedure]") : QString(),
+                            h.text));
+    }
+    if (m_snapshotLocalFallback)
         return QStringLiteral("\n\nSaved memories (newest; use memory_search to recall by topic):\n")
              + entries.join(QChar('\n'));
-    }
-    for (const MemoryStore::SearchHit &h : hits) {
-        entries << QStringLiteral("- /memories/%1%2 — %3")
-                       .arg(h.fact.id,
-                            h.fact.procedure ? QStringLiteral(" [procedure]") : QString(),
-                            h.fact.gist);
-    }
     return QStringLiteral("\n\nMemories relevant to this request (use memory_search to dig deeper, "
                           "and keep them up to date):\n") + entries.join(QChar('\n'));
 }
@@ -611,8 +681,8 @@ QString BuddyProvider::memoryIndex(const QString &query) const
 bool BuddyProvider::wantsStreaming() const
 {
     // Ollama's native /api/chat streams NDJSON, not SSE; keep it buffered.
-    return m_streamReplies && m_provider != QLatin1String("ollama")
-        && m_provider != QLatin1String("none");
+    // (The supportsStreaming flag is false exactly for ollama and none.)
+    return m_streamReplies && profile().supportsStreaming;
 }
 
 void BuddyProvider::setStreamText(const QString &text, bool live)

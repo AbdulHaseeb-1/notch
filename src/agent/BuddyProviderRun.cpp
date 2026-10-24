@@ -1,4 +1,5 @@
 #include "BuddyProviderInternal.h"
+#include "ToolRegistry.h"
 
 using namespace noch::buddyprovider;
 
@@ -80,7 +81,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
         // Older / smaller models allow fewer output tokens than our default
         // ("max_tokens: 8192 > 4096, which is the maximum allowed ..."):
         // lower the limit to what the error names and resend once.
-        if (status == 400 && m_provider == QLatin1String("anthropic")
+        if (status == 400 && profile().dialect == provider::Dialect::Anthropic
                 && errMsg.contains(QLatin1String("max_tokens"))) {
             static const QRegularExpression rx(QStringLiteral(">\\s*(\\d+)"));
             const QRegularExpressionMatch mm = rx.match(errMsg);
@@ -98,7 +99,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
         // schema - and send the same turn again. Only while no computer call
         // is in the history: those blocks are in the old format and would not
         // match the new tool definitions.
-        if ((status == 400 || status == 404 || status == 422) && m_provider == QLatin1String("anthropic")
+        if ((status == 400 || status == 404 || status == 422) && profile().dialect == provider::Dialect::Anthropic
                 && m_allowComputer && !m_toolsDisabledForTurn && computerMode() != ComputerMode::Custom
                 && mentionsComputerTool(errMsg) && !historyHasComputerToolUse()) {
             const ComputerMode from = computerMode();
@@ -161,7 +162,7 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
         m_cachedTokens += usage.value(QStringLiteral("cache_read_input_tokens")).toInt(
             usage.value(QStringLiteral("prompt_tokens_details")).toObject()
                 .value(QStringLiteral("cached_tokens")).toInt(0));
-    } else if (m_provider == QLatin1String("ollama")) {
+    } else if (profile().dialect == provider::Dialect::Ollama) {
         m_totalInputTokens += root.value(QStringLiteral("prompt_eval_count")).toInt(0);
         m_totalOutputTokens += root.value(QStringLiteral("eval_count")).toInt(0);
     }
@@ -180,9 +181,9 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
     // Did the model stop because it ran out of output tokens? Then the text
     // is only the first part of the answer (and any tool call in it is half
     // written), so it must not be shown or run as if it were complete.
-    const QString stopNow = m_provider == QLatin1String("anthropic")
+    const QString stopNow = profile().dialect == provider::Dialect::Anthropic
         ? root.value(QStringLiteral("stop_reason")).toString()
-        : m_provider == QLatin1String("ollama")
+        : profile().dialect == provider::Dialect::Ollama
             ? root.value(QStringLiteral("done_reason")).toString()
             : root.value(QStringLiteral("choices")).toArray().first().toObject()
                   .value(QStringLiteral("finish_reason")).toString();
@@ -191,9 +192,13 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
 
     // Extract tool calls & Anthropic Agent SDK blocks across Anthropic, OpenAI/Custom, and Ollama
     QList<PendingToolCall> toolCalls;
-    if (m_provider == QLatin1String("anthropic")) {
+    if (profile().dialect == provider::Dialect::Anthropic) {
         m_lastStopReason = root.value(QStringLiteral("stop_reason")).toString();
         const QJsonArray content = root.value(QStringLiteral("content")).toArray();
+        // Index into m_toolSteps of the most recent server_tool_use step, so
+        // its paired web_search_tool_result can fill in the output below.
+        // Server blocks are never client tool calls: they are never dispatched.
+        int lastServerStep = -1;
         for (const QJsonValue &v : content) {
             const QJsonObject block = v.toObject();
             const QString bType = block.value(QStringLiteral("type")).toString();
@@ -239,20 +244,51 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 step[QStringLiteral("icon")] = iconForTool(sName, sInput);
                 step[QStringLiteral("title")] = summarizeToolCall(sName, sInput);
                 step[QStringLiteral("detail")] = detailForToolCall(sName, sInput);
-                step[QStringLiteral("output")] = tr("Executed via Anthropic server-side SDK runtime.");
+                // The result block below replaces this once it arrives.
+                step[QStringLiteral("output")] = tr("Running on Anthropic's servers…");
                 step[QStringLiteral("status")] = QStringLiteral("done");
                 step[QStringLiteral("durationMs")] = 0;
+                lastServerStep = m_toolSteps.size();
                 m_toolSteps.append(step);
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("server-tool") },
+                                     { QStringLiteral("event"), QStringLiteral("use") },
+                                     { QStringLiteral("tool"), sName },
+                                     { QStringLiteral("query"), sInput.value(QStringLiteral("query")).toString() } });
                 emit toolStepsChanged();
             } else if (bType == QLatin1String("web_search_tool_result")) {
-                const QJsonArray srArr = block.value(QStringLiteral("content")).toArray();
-                for (const QJsonValue &sv : srArr) {
-                    const QJsonObject so = sv.toObject();
-                    if (so.value(QStringLiteral("type")).toString() == QLatin1String("web_search_result")) {
-                        addCitation(so.value(QStringLiteral("title")).toString(),
-                                    so.value(QStringLiteral("url")).toString());
+                const QJsonValue srContent = block.value(QStringLiteral("content"));
+                QString errorCode;
+                QStringList resultLines;
+                if (srContent.isObject()
+                        && srContent.toObject().value(QStringLiteral("type")).toString()
+                               == QLatin1String("web_search_tool_result_error")) {
+                    errorCode = srContent.toObject().value(QStringLiteral("error_code")).toString();
+                } else {
+                    for (const QJsonValue &sv : srContent.toArray()) {
+                        const QJsonObject so = sv.toObject();
+                        if (so.value(QStringLiteral("type")).toString() == QLatin1String("web_search_result")) {
+                            const QString title = so.value(QStringLiteral("title")).toString();
+                            const QString url = so.value(QStringLiteral("url")).toString();
+                            addCitation(title, url);
+                            resultLines << title + QStringLiteral(" — ") + url;
+                        }
                     }
                 }
+                if (lastServerStep >= 0 && lastServerStep < m_toolSteps.size()) {
+                    QVariantMap step = m_toolSteps.at(lastServerStep).toMap();
+                    if (!errorCode.isEmpty())
+                        step[QStringLiteral("output")] = tr("Anthropic web search failed (%1).").arg(errorCode);
+                    else
+                        step[QStringLiteral("output")] = tr("Anthropic web search returned %n result(s).", "", resultLines.size())
+                            + (resultLines.isEmpty() ? QString() : QStringLiteral("\n") + resultLines.join(QStringLiteral("\n")));
+                    m_toolSteps[lastServerStep] = step;
+                }
+                addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("server-tool") },
+                                     { QStringLiteral("event"), QStringLiteral("result") },
+                                     { QStringLiteral("tool"), QStringLiteral("web_search") },
+                                     { QStringLiteral("results"), resultLines.size() },
+                                     { QStringLiteral("error"), errorCode } });
+                emit toolStepsChanged();
             }
         }
         if (!cutByLimit && !toolCalls.isEmpty() && m_agentIteration < m_maxSteps) {
@@ -261,7 +297,25 @@ void BuddyProvider::onReplyFinished(QNetworkReply *reply)
                 { QStringLiteral("content"), content }
             });
         }
-    } else if (m_provider == QLatin1String("ollama")) {
+        // pause_turn: a long-running server search ended the reply before the
+        // model finished. The paused assistant message must go back VERBATIM
+        // (including encrypted_content / encrypted_index) or the API returns
+        // 400 — then the turn continues exactly like the max_tokens path.
+        // No client tools are involved, so nothing is dispatched here.
+        if (!cutByLimit && toolCalls.isEmpty() && m_lastStopReason == QLatin1String("pause_turn")
+                && m_agentIteration < m_maxSteps) {
+            m_agentMessages.append(QJsonObject{
+                { QStringLiteral("role"), QStringLiteral("assistant") },
+                { QStringLiteral("content"), content }
+            });
+            ++m_agentIteration;
+            addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("server-tool") },
+                                 { QStringLiteral("event"), QStringLiteral("pause_turn") } });
+            setActiveToolState(QString(), tr("Continuing…"));
+            dispatchAgentTurn();
+            return;
+        }
+    } else if (profile().dialect == provider::Dialect::Ollama) {
         m_lastStopReason = root.value(QStringLiteral("done_reason")).toString(QStringLiteral("stop"));
         const QJsonObject msg = root.value(QStringLiteral("message")).toObject();
         const QJsonArray tcs = msg.value(QStringLiteral("tool_calls")).toArray();
@@ -560,7 +614,7 @@ void BuddyProvider::processNextToolCall()
             return;
         }
         // All tools in this turn finished: append tool_result messages and continue loop
-        if (m_provider == QLatin1String("anthropic")) {
+        if (profile().dialect == provider::Dialect::Anthropic) {
             QJsonArray resultsContent;
             for (const ToolOutcome &out : m_completedTools) {
                 QJsonObject block{
@@ -596,7 +650,7 @@ void BuddyProvider::processNextToolCall()
                 { QStringLiteral("role"), QStringLiteral("user") },
                 { QStringLiteral("content"), resultsContent }
             });
-        } else if ((m_provider == QLatin1String("ollama")
+        } else if ((profile().dialect == provider::Dialect::Ollama
                    && structuredLevel() == StructuredLevel::JsonMode)
                    || m_toolsDisabledForTurn) {
             // P2: JSON mode has no role:"tool" messages — results go back as
@@ -626,7 +680,7 @@ void BuddyProvider::processNextToolCall()
                 if (!out.imageBase64.isEmpty() && canSee) {
                     const QString mediaType = out.imageMediaType.isEmpty()
                         ? QStringLiteral("image/png") : out.imageMediaType;
-                    if (m_provider == QLatin1String("ollama")) {
+                    if (profile().dialect == provider::Dialect::Ollama) {
                         // Ollama /api/chat carries images in a top-level array.
                         toolMsg[QStringLiteral("content")] = out.output;
                         toolMsg[QStringLiteral("images")] = QJsonArray{ out.imageBase64 };
@@ -826,99 +880,92 @@ void BuddyProvider::gateAndExecute(const PendingToolCall &call)
     executeToolCall(effective);
 }
 
+// P2: the dispatch bindings — one row per core-tool registry entry:
+// its handler, the availability gate that guards it, and the exact
+// "disabled" message the model gets when the gate is off. A test
+// (tst_buddyagent) asserts every registry entry has a binding, so the
+// table and the registry cannot drift apart.
+const QList<BuddyProvider::CoreToolBinding> &BuddyProvider::coreToolBindings()
+{
+    static const QList<CoreToolBinding> bindings = [] {
+        QList<CoreToolBinding> out;
+        const auto add = [&out](const QString &name,
+                                void (BuddyProvider::*handler)(const PendingToolCall &),
+                                bool (BuddyProvider::*available)() const,
+                                const QString &disabledError) {
+            CoreToolBinding b;
+            b.def = coreToolDef(name);
+            b.handler = handler;
+            b.available = available;
+            b.disabledError = disabledError;
+            out << b;
+        };
+        add(QStringLiteral("bash"), &BuddyProvider::executeBashTool, &BuddyProvider::allowBash,
+            QStringLiteral("Error: bash command execution is disabled in Settings > Buddy."));
+        add(QStringLiteral("computer"), &BuddyProvider::executeComputerTool, &BuddyProvider::allowComputer,
+            QStringLiteral("Error: computer use tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("str_replace_editor"), &BuddyProvider::executeEditorTool, &BuddyProvider::allowEditor,
+            QStringLiteral("Error: file editor tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("glob_grep"), &BuddyProvider::executeCodeSearchTool, &BuddyProvider::allowCodeSearch,
+            QStringLiteral("Error: code search tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("memory"), &BuddyProvider::executeMemoryTool, &BuddyProvider::allowMemory,
+            QStringLiteral("Error: memory tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("memory_search"), &BuddyProvider::executeMemorySearchTool, &BuddyProvider::allowMemory,
+            QStringLiteral("Error: memory search is disabled in Settings > Buddy."));
+        add(QStringLiteral("web_search"), &BuddyProvider::executeWebSearchTool, &BuddyProvider::allowWebSearch,
+            QStringLiteral("Error: web search tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("web_fetch"), &BuddyProvider::executeWebFetchTool, &BuddyProvider::allowWebSearch,
+            QStringLiteral("Error: web fetch tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("todo_write"), &BuddyProvider::executeTodoTaskTool, &BuddyProvider::allowTodoTask,
+            QStringLiteral("Error: task & desktop context tool is disabled in Settings > Buddy."));
+        add(QStringLiteral("share_screenshot"), &BuddyProvider::executeScreenshotTool, &BuddyProvider::allowScreenshots,
+            QStringLiteral("Error: sending screenshots is disabled in Settings > Buddy."));
+        add(QStringLiteral("music"), &BuddyProvider::executeMusicTool, &BuddyProvider::musicAvailable,
+            QStringLiteral("Error: the music tool is disabled in Settings > Buddy or there is no music player."));
+        add(QStringLiteral("ask_user_question"), &BuddyProvider::executeAskUserTool, &BuddyProvider::allowAskUser,
+            QStringLiteral("Error: asking questions is disabled in Settings > Buddy. Make a reasonable assumption and say so."));
+        add(QStringLiteral("skill"), &BuddyProvider::executeSkillTool, nullptr, QString());
+        return out;
+    }();
+    return bindings;
+}
+
+const BuddyProvider::CoreToolBinding *BuddyProvider::bindingFor(const QString &name)
+{
+    for (const CoreToolBinding &b : coreToolBindings())
+        if (b.def && b.def->schema.name == name)
+            return &b;
+    return nullptr;
+}
+
 void BuddyProvider::executeToolCall(const PendingToolCall &call)
 {
     journalBefore(call);
-    if (call.name == QLatin1String("bash")) {
-        if (!m_allowBash) {
-            finishCurrentToolCall(call, QStringLiteral("Error: bash command execution is disabled in Settings > Buddy."), QString(), true);
+    if (const CoreToolBinding *b = bindingFor(call.name)) {
+        if (b->available && !(this->*b->available)()) {
+            finishCurrentToolCall(call, b->disabledError, QString(), true);
             return;
         }
-        executeBashTool(call);
-    } else if (call.name == QLatin1String("computer")) {
-        if (!m_allowComputer) {
-            finishCurrentToolCall(call, QStringLiteral("Error: computer use tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeComputerTool(call);
-    } else if (call.name == QLatin1String("str_replace_editor")) {
-        if (!m_allowEditor) {
-            finishCurrentToolCall(call, QStringLiteral("Error: file editor tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeEditorTool(call);
-    } else if (call.name == QLatin1String("glob_grep")) {
-        if (!m_allowCodeSearch) {
-            finishCurrentToolCall(call, QStringLiteral("Error: code search tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeCodeSearchTool(call);
-    } else if (call.name == QLatin1String("memory")) {
-        if (!m_allowMemory) {
-            finishCurrentToolCall(call, QStringLiteral("Error: memory tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeMemoryTool(call);
-    } else if (call.name == QLatin1String("memory_search")) {
-        if (!m_allowMemory) {
-            finishCurrentToolCall(call, QStringLiteral("Error: memory search is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeMemorySearchTool(call);
-    } else if (call.name == QLatin1String("web_search")) {
-        if (!m_allowWebSearch) {
-            finishCurrentToolCall(call, QStringLiteral("Error: web search tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeWebSearchTool(call);
-    } else if (call.name == QLatin1String("web_fetch")) {
-        if (!m_allowWebSearch) {
-            finishCurrentToolCall(call, QStringLiteral("Error: web fetch tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeWebFetchTool(call);
-    } else if (call.name == QLatin1String("todo_write")) {
-        if (!m_allowTodoTask) {
-            finishCurrentToolCall(call, QStringLiteral("Error: task & desktop context tool is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeTodoTaskTool(call);
-    } else if (call.name == QLatin1String("share_screenshot")) {
-        if (!m_allowScreenshots) {
-            finishCurrentToolCall(call, QStringLiteral("Error: sending screenshots is disabled in Settings > Buddy."), QString(), true);
-            return;
-        }
-        executeScreenshotTool(call);
-    } else if (call.name == QLatin1String("music")) {
-        if (!musicAvailable()) {
-            finishCurrentToolCall(call, QStringLiteral("Error: the music tool is disabled in Settings > Buddy or there is no music player."), QString(), true);
-            return;
-        }
-        executeMusicTool(call);
-    } else if (call.name == QLatin1String("ask_user_question")) {
-        if (!m_allowAskUser) {
-            finishCurrentToolCall(call, QStringLiteral("Error: asking questions is disabled in Settings > Buddy. Make a reasonable assumption and say so."), QString(), true);
-            return;
-        }
-        executeAskUserTool(call);
-    } else if (call.name == QLatin1String("skill")) {
-        executeSkillTool(call);
-    } else if (m_connectors && m_connectors->hasTool(call.name)) {
+        (this->*b->handler)(call);
+        return;
+    }
+    if (m_connectors && m_connectors->hasTool(call.name)) {
         if (!m_allowConnectors) {
             finishCurrentToolCall(call, QStringLiteral("Error: connected apps are switched off in Settings > Connectors."), QString(), true);
             return;
         }
         executeConnectorTool(call);
-    } else {
-        finishCurrentToolCall(call, QStringLiteral("Error: unknown tool '%1'.").arg(call.name), QString(), true);
+        return;
     }
+    finishCurrentToolCall(call, QStringLiteral("Error: unknown tool '%1'.").arg(call.name), QString(), true);
 }
 
 QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QString &output, bool *flagged) const
 {
     // What the user typed or tapped is theirs: no fence, no injection check
     // (they may well write "ignore the previous option"). Only secrets are masked.
-    if (call.name == QLatin1String("ask_user_question")) {
+    const CoreToolDef *def = coreToolDef(call.name);
+    if (def && def->outputTrust == ToolOutputTrust::UserOwned) {
         if (flagged)
             *flagged = false;
         return redact(output);
@@ -941,7 +988,7 @@ QString BuddyProvider::guardToolOutput(const PendingToolCall &call, const QStrin
     // injection attempts. Neutralise any attempt to close the fence early.
     out = AgentPolicy::neutralizeFence(out);
     // Mail, tickets, pages: what a connected app returns was written by other people.
-    const bool external = call.name == QLatin1String("web_fetch") || call.name == QLatin1String("web_search")
+    const bool external = (def && def->outputTrust == ToolOutputTrust::External)
         || (m_connectors && m_connectors->hasTool(call.name));
     const bool suspicious = AgentPolicy::looksLikePromptInjection(out);
     if (flagged)
@@ -1144,10 +1191,14 @@ void BuddyProvider::finishCurrentToolCall(const PendingToolCall &call, const QSt
     outcome.isError = isError;
     m_completedTools.append(outcome);
 
-    // Deferred so the UI can paint the finished step; dropped if the run was
-    // cancelled (or replaced) in the meantime.
+    // Deferred (zero delay) so the UI can paint the finished step before the
+    // next call starts; dropped if the run was cancelled (or replaced) in
+    // the meantime. This used to wait a hard-coded 35 ms — a pure per-tool
+    // tax on every call in the turn: streamed text is already coalesced by
+    // the 40 ms stream-emit timer, and step updates paint on the next frame
+    // via toolStepsChanged either way.
     const quint64 gen = m_runGeneration;
-    QTimer::singleShot(35, this, [this, gen] {
+    QTimer::singleShot(0, this, [this, gen] {
         if (gen == m_runGeneration)
             processNextToolCall();
     });

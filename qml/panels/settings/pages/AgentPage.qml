@@ -520,8 +520,8 @@ SettingsPage {
                 placeholder: panel.prefs.buddyMemBackend === "platform" ? "m0-..." : qsTr("Server key")
                 secret: true
                 mono: true
-                text: panel.prefs.buddyMemKey
-                onEdited: (v) => { panel.prefs.buddyMemKey = v; panel.memEdited() }
+                text: Secrets.memKey
+                onEdited: (v) => { Secrets.memKey = v; panel.memEdited() }
             }
         }
 
@@ -570,8 +570,8 @@ SettingsPage {
                 placeholder: qsTr("Same as the chat provider")
                 secret: true
                 mono: true
-                text: panel.prefs.buddyMemEmbedKey
-                onEdited: (v) => { panel.prefs.buddyMemEmbedKey = v; panel.memEdited() }
+                text: Secrets.memEmbedKey
+                onEdited: (v) => { Secrets.memEmbedKey = v; panel.memEdited() }
             }
         }
 
@@ -583,8 +583,8 @@ SettingsPage {
             hint: qsTr("Leave blank to use the key setup.ps1 saved in %1.").arg(BuddyAgent.memLocalKeyPath())
             secret: true
             mono: true
-            text: panel.prefs.buddyMemKey
-            onEdited: (v) => { panel.prefs.buddyMemKey = v; panel.memEdited() }
+            text: Secrets.memKey
+            onEdited: (v) => { Secrets.memKey = v; panel.memEdited() }
         }
 
         SettingsFieldBox {

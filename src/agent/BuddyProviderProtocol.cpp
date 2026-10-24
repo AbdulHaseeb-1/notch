@@ -5,7 +5,7 @@ using namespace noch::buddyprovider;
 QString BuddyProvider::extractText(const QJsonDocument &doc) const
 {
     const QJsonObject root = doc.object();
-    if (m_provider == QLatin1String("anthropic")) {
+    if (profile().dialect == provider::Dialect::Anthropic) {
         QStringList texts;
         const QJsonArray content = root[QStringLiteral("content")].toArray();
         for (const QJsonValue &v : content) {
@@ -19,7 +19,7 @@ QString BuddyProvider::extractText(const QJsonDocument &doc) const
         }
         return texts.join(QStringLiteral("\n\n"));
     }
-    if (m_provider == QLatin1String("ollama")) {
+    if (profile().dialect == provider::Dialect::Ollama) {
         const QJsonObject msg = root[QStringLiteral("message")].toObject();
         return msg[QStringLiteral("content")].toString();
     }
@@ -44,7 +44,7 @@ QString BuddyProvider::extractText(const QJsonDocument &doc) const
 QString BuddyProvider::rawAnswerText(const QJsonDocument &doc) const
 {
     const QJsonObject root = doc.object();
-    if (m_provider == QLatin1String("anthropic")) {
+    if (profile().dialect == provider::Dialect::Anthropic) {
         QString out;
         for (const QJsonValue &v : root.value(QStringLiteral("content")).toArray()) {
             const QJsonObject block = v.toObject();
@@ -82,7 +82,7 @@ QStringList BuddyProvider::modelsIn(const QJsonDocument &doc, const QString &pro
     if (!doc.isObject())
         return ids;
     const QJsonObject root = doc.object();
-    const QJsonArray rows = provider == QLatin1String("ollama")
+    const QJsonArray rows = provider::profileFor(provider).dialect == provider::Dialect::Ollama
         ? root.value(QStringLiteral("models")).toArray()
         : root.value(QStringLiteral("data")).toArray();
     for (const QJsonValue &row : rows) {
@@ -99,7 +99,7 @@ QStringList BuddyProvider::modelsIn(const QJsonDocument &doc, const QString &pro
 
 void BuddyProvider::probe()
 {
-    if (m_provider == QLatin1String("none")) {
+    if (profile().dialect == provider::Dialect::None) {
         emit testFinished(false, tr("No provider selected yet."));
         return;
     }
@@ -123,7 +123,7 @@ void BuddyProvider::probe()
 
 void BuddyProvider::sendMessage(const QString &text, const QVariantList &context, bool spoken)
 {
-    if (m_provider == QLatin1String("none") || !m_enabled) {
+    if (profile().dialect == provider::Dialect::None || !m_enabled) {
         emit errorOccurred(QStringLiteral("No chat provider configured. Open Settings > Buddy to add one."));
         return;
     }
@@ -186,7 +186,7 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_pendingTools.clear();
     m_completedTools.clear();
 
-    if (m_provider != QLatin1String("anthropic")) {
+    if (profile().dialect != provider::Dialect::Anthropic) {
         m_agentMessages.append(QJsonObject{
             { QStringLiteral("role"), QStringLiteral("system") },
             { QStringLiteral("content"), systemPrompt() }
@@ -283,8 +283,9 @@ void BuddyProvider::dispatchAgentTurn()
     addBetaHeaders(request, payload);
     QJsonDocument doc(payload);
     m_streamConsumed = false;
-    m_stream.reset(m_provider == QLatin1String("anthropic") ? StreamAccumulator::Format::Anthropic
-                                                           : StreamAccumulator::Format::OpenAI);
+    m_stream.reset(profile().dialect == provider::Dialect::Anthropic
+                       ? StreamAccumulator::Format::Anthropic
+                       : StreamAccumulator::Format::OpenAI);
     // A continuation keeps showing the text written so far.
     setStreamText(m_continuedText, false);
     m_chatReply = m_nam.post(request, doc.toJson(QJsonDocument::Compact));
@@ -388,8 +389,10 @@ void BuddyProvider::cancel()
 {
     ++m_runGeneration;
     m_memPending = false;
+    m_memLatePending = false;
+    m_memRaceTimer.stop();
     m_memToolPending = false;
-    m_mem->cancelSearch();   // a save already on its way is left alone
+    m_mem0Backend->cancelRecall();   // a save already on its way is left alone
     m_pendingTools.clear();
     m_completedTools.clear();
     m_retryTimer.stop();

@@ -78,6 +78,9 @@ QString normalisedGoogleVoice(const QString &voice)
 SpeechOut::SpeechOut(QObject *parent)
     : QObject(parent)
 {
+    // The fallback settings object is the live one until a shared one is
+    // attached, so edits to it refresh availability just the same.
+    connect(&m_fallbackSettings, &DeepgramSettings::configChanged, this, [this] { emit configChanged(); });
     connect(&m_player, &SpeechPlayer::finished, this, &SpeechOut::setSpeaking);
     connect(&m_player, &SpeechPlayer::finished, this, &SpeechOut::onPlayerChunkFinished);
     m_stream.setInputRate(24000);
@@ -105,11 +108,13 @@ QString SpeechOut::problem() const
 QString SpeechOut::problemFor(const QString &engine) const
 {
     if (engine == QLatin1String("deepgram")) {
-        if (m_deepgramKey.isEmpty())
+        const QString key = deepgramSettings()->apiKey();
+        const QString voice = deepgramSettings()->speakVoice();
+        if (key.isEmpty())
             return tr("Add your Deepgram API key to use this voice.");
-        if (!deepgram::keyLooksValid(m_deepgramKey))
+        if (!deepgram::keyLooksValid(key))
             return tr("That does not look like a Deepgram API key.");
-        return m_deepgramVoice.trimmed().isEmpty() ? tr("Choose a Deepgram voice.") : QString();
+        return voice.trimmed().isEmpty() ? tr("Choose a Deepgram voice.") : QString();
     }
     // google (and anything else, which setEngine maps to google)
     return m_googleKey.trimmed().isEmpty() ? tr("Add a Google AI Studio API key to use this voice.") : QString();
@@ -125,11 +130,13 @@ QVariantMap SpeechOut::engineStatuses() const
                                           m_googleKey.trimmed().isEmpty()
                                               ? tr("Add a Google AI Studio API key (aistudio.google.com/apikey).")
                                               : tr("Voice %1 with Gemini TTS.").arg(m_googleVoice));
-    const bool dgKey = deepgram::keyLooksValid(m_deepgramKey);
-    out[QStringLiteral("deepgram")] = entry(dgKey && !m_deepgramVoice.isEmpty(),
-                                            m_deepgramKey.isEmpty() ? tr("Add your Deepgram API key (console.deepgram.com).")
+    const QString dgKeyValue = deepgramSettings()->apiKey();
+    const QString dgVoice = deepgramSettings()->speakVoice();
+    const bool dgKey = deepgram::keyLooksValid(dgKeyValue);
+    out[QStringLiteral("deepgram")] = entry(dgKey && !dgVoice.isEmpty(),
+                                            dgKeyValue.isEmpty() ? tr("Add your Deepgram API key (console.deepgram.com).")
                                             : !dgKey ? tr("That does not look like a Deepgram API key.")
-                                                     : tr("Voice %1 with Deepgram Aura.").arg(deepgram::voiceLabel(m_deepgramVoice)));
+                                                     : tr("Voice %1 with Deepgram Aura.").arg(deepgram::voiceLabel(dgVoice)));
     return out;
 }
 
@@ -165,9 +172,18 @@ void SpeechOut::setEngine(const QString &engine)
         emit configChanged();                             \
     }
 NOCH_SPEECH_SETTER(setGoogleKey, m_googleKey, value.trimmed())
-NOCH_SPEECH_SETTER(setDeepgramKey, m_deepgramKey, value.trimmed())
-NOCH_SPEECH_SETTER(setDeepgramVoice, m_deepgramVoice, value.trimmed())
 #undef NOCH_SPEECH_SETTER
+
+void SpeechOut::setDeepgramSettings(DeepgramSettings *settings)
+{
+    // Drop both possible live connections (the old effective object and the
+    // fallback the constructor wired) so the new one is connected exactly once.
+    disconnect(deepgramSettings(), &DeepgramSettings::configChanged, this, nullptr);
+    m_fallbackSettings.disconnect(this);
+    m_settings = settings;
+    connect(deepgramSettings(), &DeepgramSettings::configChanged, this, [this] { emit configChanged(); });
+    emit configChanged();
+}
 
 void SpeechOut::setGoogleVoice(const QString &voice)
 {
@@ -324,9 +340,9 @@ void SpeechOut::streamNextChunk()
     }
     m_streamCurrent = m_streamChunks.takeFirst();
     const quint64 gen = m_generation;
-    QNetworkRequest request{ deepgram::speakUrl(m_deepgramVoice, 24000, m_speed, m_deepgramBase, QStringLiteral("none")) };
+    QNetworkRequest request{ deepgram::speakUrl(deepgramSettings()->speakVoice(), 24000, m_speed, m_deepgramBase, QStringLiteral("none")) };
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setRawHeader("Authorization", deepgram::authorizationHeader(m_deepgramKey));
+    request.setRawHeader("Authorization", deepgram::authorizationHeader(deepgramSettings()->apiKey()));
     request.setTransferTimeout(30000);
     m_streamReply = m_nam.post(request, QJsonDocument(QJsonObject{ { QStringLiteral("text"), m_streamCurrent } }).toJson(QJsonDocument::Compact));
     QNetworkReply *reply = m_streamReply;

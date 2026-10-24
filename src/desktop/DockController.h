@@ -1,12 +1,14 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonObject>
 #include <QMutex>
 #include <QObject>
 #include <QStringList>
 #include <QUrl>
 #include <QVariantList>
 
+class QSettings;
 class WindowMonitor;
 
 // Owns the list of pinned apps shown in the notch: discovers common apps on
@@ -52,6 +54,12 @@ public:
     Q_INVOKABLE void openDataFolder() const;
     Q_INVOKABLE void syncStateSnapshot() const;
     Q_INVOKABLE void quit();
+
+    // The settings half of the state snapshot, as a JSON object. Credential
+    // keys (src/common/SecretKeys.h) are never included: the snapshot is a
+    // plain-text backup, and must not become a second copy of the user's
+    // API keys. Static so the exclusion is testable without a dock.
+    static QJsonObject settingsSnapshot(QSettings &settings);
 
 signals:
     void appsChanged();
