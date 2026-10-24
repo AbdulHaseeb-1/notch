@@ -64,7 +64,9 @@ Large classes are split by responsibility while keeping one public header:
   - `BuddyProviderSkills.cpp` — Agent Skills: the `skill` tool, `/skills` and `/<name>`, the per-run snapshot (loader in `Skills.{h,cpp}`, see [skills.md](skills.md))
   - `BuddyProviderStorage.cpp` — summaries, traces, approvals and questions
   - `BuddyProviderTools.cpp` — local tool implementations
-  - `BuddyProviderWeb.cpp` — web search/fetch helpers
+  - `BuddyProviderWeb.cpp` — web search/fetch helpers (see [web-search.md](web-search.md):
+    Anthropic uses its server-side web_search tool; other providers use the
+    DuckDuckGo-backed client implementation here)
   - `BuddyProviderInternal.h` — private shared types and constants
 - `ComputerUse`
   - `ComputerUse.cpp` — the controller and screenshot/state handling

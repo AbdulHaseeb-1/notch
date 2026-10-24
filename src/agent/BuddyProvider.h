@@ -17,10 +17,13 @@
 #include <QVariantMap>
 
 #include "AgentPolicy.h"
+#include "ProviderProfile.h"
 #include "ConnectorRegistry.h"
 #include "ComputerUse.h"
 #include "HookBus.h"
+#include "LocalMemoryBackend.h"
 #include "Mem0Client.h"
+#include "Mem0MemoryBackend.h"
 #include "PlanValidator.h"
 #include "ProjectContext.h"
 #include "RunJournal.h"
@@ -29,6 +32,7 @@
 #include "Skills.h"
 #include "MusicBackend.h"
 #include "StreamAccumulator.h"
+#include "ToolRegistry.h"
 #include "UserQuestions.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
@@ -47,7 +51,10 @@
 //   - "str_replace_editor" — Anthropic Text Editor (view, create, str_replace, insert, undo_edit)
 //   - "glob_grep"          — Anthropic Glob & Grep file/code search (pattern matching & regex content search)
 //   - "memory"             — Anthropic Memory tool (/memories persistent cross-session workspace: view, create, str_replace, insert, delete, rename)
-//   - "web_search"         — Anthropic Web Search (live web search queries with source citations)
+//   - "web_search"         — live web search with source citations: Anthropic's
+  //                          server-side web_search tool on the Anthropic provider,
+  //                          a DuckDuckGo-backed client tool on all other providers
+  //                          (see webSearchBackendFor in BuddyProviderInternal.h)
 //   - "web_fetch"          — Anthropic Web Fetch (fetch URL content, links, and metadata)
 //   - "todo_write"         — Anthropic Task & Desktop Context Tool (structured TodoWrite checklist, clipboard & system inspection)
 //
@@ -345,6 +352,13 @@ public:
     Q_INVOKABLE QString chatUrl() const;
     Q_INVOKABLE QString modelsUrl() const;
     Q_INVOKABLE QString defaultBase() const;
+    // The ProviderProfile table projected to Settings: one map per
+    // selectable provider ({id, label, base, needsKey, showKey, keyHint,
+    // models, chatPath}), in display order. "none" is not selectable, so
+    // it is not in the list; providerInfo() falls back to "custom" for
+    // unknown ids, exactly like the old JS table did.
+    Q_INVOKABLE QVariantList providerProfiles() const;
+    Q_INVOKABLE QVariantMap providerInfo(const QString &id) const;
 
     bool memEnabled() const { return m_mem->enabled(); }
     void setMemEnabled(bool on);
@@ -584,28 +598,45 @@ private:
     QString m_streamText;
     QTimer m_streamEmitTimer;
     QString m_memoryIndexSnapshot;   // memoryIndex() taken at run start
+    QList<MemoryHit> m_snapshotLocalHits;   // the local half of the snapshot, structured (re-merged when recall lands)
+    bool m_snapshotLocalFallback = false;   // snapshot hits are "newest", not relevance-ranked
+    bool m_snapshotCorpusEmpty = false;
     bool m_spokenRun = false;        // this run's reply is read aloud: short, plain prose
-    QString memoryIndex(const QString &query = QString()) const;
-    // Long-term memory (Mem0). Recall runs between "the user sent a request" and the
+    QString memoryIndex(const QString &query = QString());
+    QString renderLocalMemorySection(const QList<MemoryHit> &hits) const;
+    // Long-term memory. Recall runs between "the user sent a request" and the
     // first model turn, fails open, and adds what it finds to the system
     // prompt. The exchange is saved after the reply, in the background.
+    // Both stores sit behind MemoryBackend: Mem0 via its client, the local
+    // BM25 store directly (its fact writes are its own surface, because
+    // only a local store can dedupe against its corpus).
     Mem0Client *m_mem = nullptr;
+    Mem0MemoryBackend *m_mem0Backend = nullptr;
+    LocalMemoryBackend m_localBackend;
     QString m_memKeyTyped;           // the key as typed; empty = Local's generated one
     QString m_memLlmModel, m_memEmbedModel, m_memEmbedBase, m_memEmbedKey;
-    bool m_memPending = false;       // the first model turn waits for recall
+    bool m_memPending = false;       // the first model turn waits for recall (bounded by the race timer)
+    bool m_memLatePending = false;   // recall lost the race: the turn dispatched already, late hits still land
+    QTimer m_memRaceTimer;           // fires kMemRecallRaceMs after the recall search starts
     QString m_runUserText;           // this run's request, for recall and saving
-    // memory_search waiting on Mem0: the call, the query and the local lines already found.
+    // memory_search waiting on Mem0: the call, the query and the local hits already found.
     bool m_memToolPending = false;
     PendingToolCall m_memToolCall;
     QString m_memToolQuery;
-    QStringList m_memToolLocal;
+    QList<MemoryHit> m_memToolLocalHits;
     quint64 m_memAddSeq = 0;
     QHash<quint64, QStringList> m_memFallback;   // facts to keep locally if saving to Mem0 fails
     void recallThenDispatch(const QString &text);
-    void onMemSearched(quint64 token, const QList<mem0::Hit> &hits, int ms, const QString &error);
-    void onMemAdded(quint64 token, bool ok, const QString &error);
+    // A backend recall/search completed. The race flags decide whether the
+    // turn is still waiting (dispatch), already dispatched (fold in for
+    // the next step), or over (drop silently) — exactly the old
+    // onMemSearched recall branch, split off from the tool branch.
+    void onRecallCompleted(quint64 token, const QList<MemoryHit> &hits, const QString &error, int ms);
+    void onToolSearchCompleted(quint64 token, const QList<MemoryHit> &hits, const QString &error);
+    void onMemRecallRaceTimeout();
+    void onExchangeSaved(quint64 token, bool ok, const QString &error);
     void finishMemorySearch(const PendingToolCall &call, const QString &query,
-                            const QStringList &localLines, const QList<mem0::Hit> &remote,
+                            const QList<MemoryHit> &localHits, const QList<MemoryHit> &remoteHits,
                             const QString &remoteError);
     void storeLocalFacts(const QStringList &candidates, bool trace);
     void saveExchangeToMem0(const QString &finalText, const QStringList &fallbackFacts);
@@ -635,10 +666,28 @@ private:
     QString systemPrompt() const;
     QJsonArray buildToolsArray() const;
     QString buildUrl() const;
+    // This run's ProviderProfile (see ProviderProfile.h): every dialect
+    // branch in the implementation consults this instead of comparing
+    // m_provider against string literals. Unknown ids resolve to "custom".
+    const provider::ProviderProfile &profile() const { return provider::profileFor(m_provider); }
     QJsonObject buildAgentPayload() const;
     QNetworkRequest buildRequest(const QString &url) const;
 
     void dispatchAgentTurn();
+    // P2: dispatch bindings for the core-tool registry — one row per
+    // registry entry: the member function that runs the tool, the
+    // availability gate that guards it (nullptr: no gate), and the
+    // "disabled" message the model gets when the gate is off.
+    // executeToolCall() is a lookup into this table; tst_buddyagent
+    // asserts every registry entry has exactly one binding.
+    struct CoreToolBinding {
+        const CoreToolDef *def = nullptr;
+        void (BuddyProvider::*handler)(const PendingToolCall &) = nullptr;
+        bool (BuddyProvider::*available)() const = nullptr;
+        QString disabledError;
+    };
+    static const QList<CoreToolBinding> &coreToolBindings();
+    static const CoreToolBinding *bindingFor(const QString &name);
     void executeToolCall(const PendingToolCall &call);
     void gateAndExecute(const PendingToolCall &call);
     // P5: detect a ```plan block in model text, validate, and activate it.

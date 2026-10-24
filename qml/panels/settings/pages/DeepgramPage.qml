@@ -73,15 +73,15 @@ SettingsPage {
         const out = []
         const list = Live.thinkModels
         for (let i = 0; i < list.length; ++i)
-            if (list[i].provider === prefs.buddyLiveProvider)
+            if (list[i].provider === Deepgram.thinkProvider)
                 out.push(list[i].id)
-        return out.length > 0 ? out : (page.fallbackModels[prefs.buddyLiveProvider] || [])
+        return out.length > 0 ? out : (page.fallbackModels[Deepgram.thinkProvider] || [])
     }
-    readonly property string languageBase: String(prefs.buddyLiveLanguage || "en").split("-")[0]
+    readonly property string languageBase: String(Deepgram.listenLanguage || "en").split("-")[0]
     readonly property var shownVoices: {
         const out = []
         const list = Live.voices
-        const lang = page.flux && prefs.buddyLiveListenModel === "flux-general-en" ? "en" : page.languageBase
+        const lang = page.flux && Deepgram.listenModel === "flux-general-en" ? "en" : page.languageBase
         for (let i = 0; i < list.length; ++i)
             if (list[i].language === lang)
                 out.push(list[i])
@@ -92,7 +92,7 @@ SettingsPage {
         if (deepgramKeyOk() && Live.thinkModels.length === 0 && !Live.modelsLoading)
             Live.refreshModels()
     }
-    function deepgramKeyOk() { return String(prefs.buddyDgKey).trim().length >= 20 }
+    function deepgramKeyOk() { return String(Secrets.deepgramKey).trim().length >= 20 }
 
     function stateText() {
         switch (Live.state) {
@@ -119,8 +119,8 @@ SettingsPage {
             hint: qsTr("Create one at console.deepgram.com. New accounts include free credit.")
             secret: true
             mono: true
-            text: page.prefs.buddyDgKey
-            onEdited: (v) => page.prefs.buddyDgKey = v.trim()
+            text: Secrets.deepgramKey
+            onEdited: (v) => Secrets.deepgramKey = v.trim()
         }
         Flow {
             width: parent.width
@@ -415,8 +415,8 @@ SettingsPage {
                 delegate: SettingsChip {
                     required property var modelData
                     text: modelData.name
-                    selected: page.prefs.buddyLiveListenModel === modelData.id
-                    onPicked: page.prefs.buddyLiveListenModel = modelData.id
+                    selected: Deepgram.listenModel === modelData.id
+                    onPicked: Deepgram.listenModel = modelData.id
                 }
             }
         }
@@ -437,16 +437,16 @@ SettingsPage {
             placeholder: "en"
             hint: qsTr("A language code such as en, es, fr, de, hi, or multi for several at once.")
             mono: true
-            text: page.prefs.buddyLiveLanguage
-            onEdited: (v) => page.prefs.buddyLiveLanguage = v.trim()
+            text: Deepgram.listenLanguage
+            onEdited: (v) => Deepgram.listenLanguage = v.trim()
         }
         SettingsFieldBox {
             width: parent.width
             label: qsTr("Words to listen for")
             placeholder: qsTr("Noch, Buddy, your name")
             hint: qsTr("Names and jargon Deepgram should get right, separated by commas.")
-            text: page.prefs.buddyLiveKeyterms
-            onEdited: (v) => page.prefs.buddyLiveKeyterms = v
+            text: Deepgram.keyterms
+            onEdited: (v) => Deepgram.keyterms = v
         }
         SettingsLabeledSlider {
             visible: page.flux
@@ -490,11 +490,27 @@ SettingsPage {
     // ---- thinking ----------------------------------------------------------------------------------
     SettingsSectionHeader {
         title: qsTr("Thinking")
-        rightText: page.prefs.buddyLiveModel
+        rightText: Deepgram.effectiveThinkModel
         description: qsTr("The language model that answers in a live conversation. Deepgram runs it for you; you can also point it at your own.")
     }
     SettingsGroupCard {
+        SettingsToggleRow {
+            label: qsTr("Use Buddy's model")
+            sub: Deepgram.thinkSource === "override"
+                 ? qsTr("The conversation uses the model below, not Buddy's chat model. Turn this on to follow Buddy instead.")
+                 : Deepgram.thinkSource === "buddy"
+                 ? qsTr("The conversation uses the same model as Buddy's chat (%1). Change it on the Agent page, or turn this off to pick a different one just for voice calls.").arg(Deepgram.effectiveThinkModel)
+                 : qsTr("Buddy's chat has no model Deepgram can use, so the conversation uses Deepgram's built-in default (%1). Turn this off to pick one just for voice calls.").arg(Deepgram.effectiveThinkModel)
+            checked: !Deepgram.thinkOverride
+            onToggled: (c) => Deepgram.thinkOverride = !c
+        }
+
+        SettingsCardDivider {
+            visible: Deepgram.thinkOverride
+        }
+
         Text {
+            visible: Deepgram.thinkOverride
             text: qsTr("Provider")
             color: Theme.textDim
             font.family: Theme.font
@@ -502,6 +518,7 @@ SettingsPage {
             font.weight: Font.DemiBold
         }
         Flow {
+            visible: Deepgram.thinkOverride
             width: parent.width
             spacing: 8
             Repeater {
@@ -509,29 +526,31 @@ SettingsPage {
                 delegate: SettingsChip {
                     required property var modelData
                     text: modelData.name
-                    selected: page.prefs.buddyLiveProvider === modelData.id
+                    selected: Deepgram.thinkProvider === modelData.id
                     onPicked: {
-                        page.prefs.buddyLiveProvider = modelData.id
+                        Deepgram.thinkProvider = modelData.id
                         // Keep a model that belongs to the provider.
                         const models = (Live.thinkModels.length > 0
                                         ? Live.thinkModels.filter((m) => m.provider === modelData.id).map((m) => m.id)
                                         : page.fallbackModels[modelData.id]) || []
-                        if (models.length > 0 && models.indexOf(page.prefs.buddyLiveModel) < 0)
-                            page.prefs.buddyLiveModel = models[0]
+                        if (models.length > 0 && models.indexOf(Deepgram.thinkModel) < 0)
+                            Deepgram.thinkModel = models[0]
                     }
                 }
             }
         }
         SettingsFieldBox {
+            visible: Deepgram.thinkOverride
             width: parent.width
             label: qsTr("Model")
             placeholder: "claude-haiku-5-5"
             hint: qsTr("Any model name Deepgram lists for this provider, or your own endpoint's model name.")
             mono: true
-            text: page.prefs.buddyLiveModel
-            onEdited: (v) => page.prefs.buddyLiveModel = v.trim()
+            text: Deepgram.thinkModel
+            onEdited: (v) => Deepgram.thinkModel = v.trim()
         }
         Flow {
+            visible: Deepgram.thinkOverride
             width: parent.width
             spacing: 8
             Repeater {
@@ -539,28 +558,28 @@ SettingsPage {
                 delegate: SettingsChip {
                     required property string modelData
                     text: modelData
-                    selected: page.prefs.buddyLiveModel === modelData
-                    onPicked: page.prefs.buddyLiveModel = modelData
+                    selected: Deepgram.thinkModel === modelData
+                    onPicked: Deepgram.thinkModel = modelData
                 }
             }
         }
 
         SettingsToggleRow {
-            visible: Live.temperatureApplies
+            visible: Deepgram.thinkOverride && Deepgram.effectiveTemperatureApplies
             label: qsTr("Model's default temperature")
             sub: qsTr("Temperature makes answers more or less varied. Leave this on unless you want to tune it.")
-            checked: page.prefs.buddyLiveTemperature < 0
-            onToggled: (c) => page.prefs.buddyLiveTemperature = c ? -1 : 0.7
+            checked: Deepgram.thinkTemperature < 0
+            onToggled: (c) => Deepgram.thinkTemperature = c ? -1 : 0.7
         }
         SettingsLabeledSlider {
-            visible: Live.temperatureApplies && page.prefs.buddyLiveTemperature >= 0
+            visible: Deepgram.thinkOverride && Deepgram.effectiveTemperatureApplies && Deepgram.thinkTemperature >= 0
             label: qsTr("Temperature")
             decimals: 2
-            value: Math.max(0, page.prefs.buddyLiveTemperature) / (page.prefs.buddyLiveProvider === "anthropic" ? 1.0 : 2.0)
-            onMoved: (v) => page.prefs.buddyLiveTemperature = Math.round(v * (page.prefs.buddyLiveProvider === "anthropic" ? 1.0 : 2.0) * 100) / 100
+            value: Math.max(0, Deepgram.thinkTemperature) / (Deepgram.thinkProvider === "anthropic" ? 1.0 : 2.0)
+            onMoved: (v) => Deepgram.thinkTemperature = Math.round(v * (Deepgram.thinkProvider === "anthropic" ? 1.0 : 2.0) * 100) / 100
         }
         Text {
-            visible: !Live.temperatureApplies
+            visible: Deepgram.thinkOverride && !Deepgram.effectiveTemperatureApplies
             width: parent.width
             text: qsTr("This model manages its own temperature, so there is nothing to set here.")
             color: Theme.textFaint
@@ -626,7 +645,8 @@ SettingsPage {
 
         Column {
             id: ownModel
-            property bool open: page.prefs.buddyLiveEndpoint.length > 0
+            property bool open: Deepgram.thinkEndpointUrl.length > 0
+            visible: Deepgram.thinkOverride
             width: parent.width
             spacing: 10
             SettingsToggleRow {
@@ -636,8 +656,8 @@ SettingsPage {
                 onToggled: (c) => {
                     ownModel.open = c
                     if (!c) {
-                        page.prefs.buddyLiveEndpoint = ""
-                        page.prefs.buddyLiveEndpointKey = ""
+                        Deepgram.thinkEndpointUrl = ""
+                        Secrets.liveEndpointKey = ""
                     }
                 }
             }
@@ -645,12 +665,12 @@ SettingsPage {
                 visible: ownModel.open
                 width: parent.width
                 label: qsTr("Endpoint address")
-                placeholder: page.prefs.buddyLiveProvider === "anthropic" ? "https://api.anthropic.com/v1/messages"
-                                                                         : "https://api.openai.com/v1/chat/completions"
+                placeholder: Deepgram.thinkProvider === "anthropic" ? "https://api.anthropic.com/v1/messages"
+                                                                   : "https://api.openai.com/v1/chat/completions"
                 hint: qsTr("Must be https and reachable from the internet: Deepgram's servers call it, not this computer.")
                 mono: true
-                text: page.prefs.buddyLiveEndpoint
-                onEdited: (v) => page.prefs.buddyLiveEndpoint = v.trim()
+                text: Deepgram.thinkEndpointUrl
+                onEdited: (v) => Deepgram.thinkEndpointUrl = v.trim()
             }
             SettingsFieldBox {
                 visible: ownModel.open
@@ -660,8 +680,8 @@ SettingsPage {
                 hint: qsTr("Sent to Deepgram, which forwards it to your endpoint.")
                 secret: true
                 mono: true
-                text: page.prefs.buddyLiveEndpointKey
-                onEdited: (v) => page.prefs.buddyLiveEndpointKey = v.trim()
+                text: Secrets.liveEndpointKey
+                onEdited: (v) => Secrets.liveEndpointKey = v.trim()
             }
         }
     }
@@ -680,8 +700,8 @@ SettingsPage {
                 delegate: SettingsChip {
                     required property var modelData
                     text: modelData.label
-                    selected: page.prefs.buddyLiveVoice === modelData.id
-                    onPicked: page.prefs.buddyLiveVoice = modelData.id
+                    selected: Deepgram.speakVoice === modelData.id
+                    onPicked: Deepgram.speakVoice = modelData.id
                 }
             }
         }
@@ -691,8 +711,8 @@ SettingsPage {
             placeholder: "aura-2-thalia-en"
             hint: qsTr("Pick one above, or type a Deepgram voice name.")
             mono: true
-            text: page.prefs.buddyLiveVoice
-            onEdited: (v) => page.prefs.buddyLiveVoice = v.trim()
+            text: Deepgram.speakVoice
+            onEdited: (v) => Deepgram.speakVoice = v.trim()
         }
         SettingsLabeledSlider {
             label: qsTr("Speed")

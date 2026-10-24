@@ -9,6 +9,11 @@
 
 using namespace noch::buddyprovider;
 
+// The DuckDuckGo backend for web_search (client-side): used for every
+// non-Anthropic provider. The Anthropic provider uses Anthropic's server-side
+// web_search tool instead and never calls this (see webSearchBackendFor in
+// BuddyProviderInternal.h). Scrapes html.duckduckgo.com and falls back to the
+// Wikipedia Search API when the scrape yields nothing.
 void BuddyProvider::executeWebSearchTool(const PendingToolCall &call)
 {
     const QString query = call.input.value(QStringLiteral("query")).toString().trimmed();

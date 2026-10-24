@@ -1,6 +1,6 @@
 #include "BuddyProviderInternal.h"
+#include "ToolRegistry.h"
 #include "AgentPolicyInternal.h"
-#include "MemoryStore.h"
 
 #include <memory>
 
@@ -24,42 +24,14 @@ QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input
 {
     if (isConnectorToolName(name))
         return connectors::iconForConnectorTool(name);
-    if (name == QLatin1String("bash"))
-        return QStringLiteral("terminal");
-    if (name == QLatin1String("computer")) {
-        const QString act = input.value(QStringLiteral("action")).toString();
-        if (act.contains(QLatin1String("click")) || act.contains(QLatin1String("mouse")) || act == QLatin1String("cursor_position"))
-            return QStringLiteral("cursor");
-        if (act == QLatin1String("hold_key"))
-            return QStringLiteral("keyboard");
-        return QStringLiteral("computer");
+    // P2: core tools carry their icon (or argument-dependent icon
+    // function) in the registry.
+    if (const CoreToolDef *def = coreToolDef(name)) {
+        if (def->iconFor)
+            return def->iconFor(input);
+        if (!def->icon.isEmpty())
+            return def->icon;
     }
-    if (name == QLatin1String("ask_user_question"))
-        return QStringLiteral("chat");
-    if (name == QLatin1String("share_screenshot"))
-        return QStringLiteral("eye");
-    if (name == QLatin1String("music"))
-        return QStringLiteral("music");
-    if (name == QLatin1String("str_replace_editor"))
-        return QStringLiteral("doc");
-    if (name == QLatin1String("glob_grep"))
-        return QStringLiteral("code-search");
-    if (name == QLatin1String("memory"))
-        return QStringLiteral("memory");
-    if (name == QLatin1String("web_search"))
-        return QStringLiteral("globe");
-    if (name == QLatin1String("web_fetch"))
-        return QStringLiteral("web-fetch");
-    if (name == QLatin1String("todo_write")) {
-        const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
-        if (act.startsWith(QLatin1String("clipboard")))
-            return QStringLiteral("clipboard");
-        if (act == QLatin1String("system_info"))
-            return QStringLiteral("activity");
-        return QStringLiteral("tasks");
-    }
-    if (name == QLatin1String("skill"))
-        return QStringLiteral("spark");
     return QStringLiteral("bolt");
 }
 
@@ -74,37 +46,11 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
         const int cut = rest.indexOf(QLatin1Char('_'));
         return rest.left(cut > 0 ? cut : rest.size()).toUpper();
     }
-    if (name == QLatin1String("bash"))
-        return QStringLiteral("SHELL");
-    if (name == QLatin1String("computer"))
-        return QStringLiteral("COMPUTER");
-    if (name == QLatin1String("ask_user_question"))
-        return QStringLiteral("QUESTION");
-    if (name == QLatin1String("share_screenshot"))
-        return QStringLiteral("SCREENSHOT");
-    if (name == QLatin1String("music"))
-        return QStringLiteral("MUSIC");
-    if (name == QLatin1String("str_replace_editor"))
-        return QStringLiteral("EDITOR");
-    if (name == QLatin1String("glob_grep")) {
-        const QString mode = input.value(QStringLiteral("mode")).toString(QStringLiteral("glob")).toUpper();
-        return mode == QLatin1String("GREP") ? QStringLiteral("GREP") : QStringLiteral("GLOB");
-    }
-    if (name == QLatin1String("memory"))
-        return QStringLiteral("MEMORY");
-    if (name == QLatin1String("memory_search"))
-        return QStringLiteral("MEMORY SEARCH");
-    if (name == QLatin1String("web_search"))
-        return QStringLiteral("WEB SEARCH");
-    if (name == QLatin1String("web_fetch"))
-        return QStringLiteral("WEB FETCH");
-    if (name == QLatin1String("todo_write")) {
-        const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
-        if (act.startsWith(QLatin1String("clipboard")))
-            return QStringLiteral("CLIPBOARD");
-        if (act == QLatin1String("system_info"))
-            return QStringLiteral("SYSTEM");
-        return QStringLiteral("TASKS");
+    if (const CoreToolDef *def = coreToolDef(name)) {
+        if (def->badgeFor)
+            return def->badgeFor(input);
+        if (!def->badge.isEmpty())
+            return def->badge;
     }
     return name.toUpper();
 }
@@ -150,147 +96,9 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
     }
     if (name.startsWith(QLatin1String("mcp_")))
         return connectors::prettyToolName(name);
-    if (name == QLatin1String("bash")) {
-        QString cmd = input.value(QStringLiteral("command")).toString().simplified();
-        if (cmd.size() > 44)
-            cmd = cmd.left(41) + QStringLiteral("…");
-        return cmd.isEmpty() ? QStringLiteral("Run PowerShell command") : cmd;
-    }
-    if (name == QLatin1String("computer")) {
-        const QString act = input.value(QStringLiteral("action")).toString();
-        const QJsonArray c = input.value(QStringLiteral("coordinate")).toArray();
-        const QString coordStr = c.size() >= 2
-            ? QStringLiteral(" (%1, %2)").arg(c.at(0).toInt()).arg(c.at(1).toInt())
-            : QString();
-        if (act == QLatin1String("screenshot"))
-            return QStringLiteral("Look at the screen");
-        if (act == QLatin1String("zoom"))
-            return QStringLiteral("Zoom into part of the screen");
-        if (act == QLatin1String("cursor_position"))
-            return QStringLiteral("Read cursor coordinates");
-        if (act == QLatin1String("mouse_move"))
-            return QStringLiteral("Move cursor%1").arg(coordStr);
-        const QString mods = input.value(QStringLiteral("text")).toString().trimmed();
-        const QString withMods = (!mods.isEmpty() && act.contains(QLatin1String("click")) && act != QLatin1String("type"))
-            ? QStringLiteral(" with %1").arg(mods) : QString();
-        if (act == QLatin1String("left_mouse_down"))
-            return QStringLiteral("Hold the mouse button%1").arg(coordStr);
-        if (act == QLatin1String("left_mouse_up"))
-            return QStringLiteral("Release the mouse button%1").arg(coordStr);
-        if (act == QLatin1String("hold_key"))
-            return QStringLiteral("Hold %1 for %2s").arg(mods).arg(input.value(QStringLiteral("duration")).toDouble(1.0), 0, 'f', 1);
-        if (act == QLatin1String("left_click"))
-            return QStringLiteral("Left click%1%2").arg(coordStr, withMods);
-        if (act == QLatin1String("right_click"))
-            return QStringLiteral("Right click%1").arg(coordStr);
-        if (act == QLatin1String("double_click"))
-            return QStringLiteral("Double click%1").arg(coordStr);
-        if (act == QLatin1String("triple_click"))
-            return QStringLiteral("Triple click%1").arg(coordStr);
-        if (act == QLatin1String("left_click_drag"))
-            return QStringLiteral("Drag cursor to%1").arg(coordStr);
-        if (act == QLatin1String("scroll"))
-            return QStringLiteral("Scroll %1").arg(input.value(QStringLiteral("scroll_direction")).toString(QStringLiteral("down")));
-        if (act == QLatin1String("type")) {
-            QString t = input.value(QStringLiteral("text")).toString().simplified();
-            if (t.size() > 28)
-                t = t.left(25) + QStringLiteral("…");
-            return QStringLiteral("Type \"%1\"").arg(t);
-        }
-        if (act == QLatin1String("key")) {
-            const int rep = input.value(QStringLiteral("repeat")).toInt(1);
-            return rep > 1 ? QStringLiteral("Press shortcut %1 ×%2").arg(input.value(QStringLiteral("text")).toString()).arg(rep)
-                           : QStringLiteral("Press shortcut %1").arg(input.value(QStringLiteral("text")).toString());
-        }
-        if (act == QLatin1String("wait"))
-            return QStringLiteral("Wait %1s").arg(input.value(QStringLiteral("duration")).toDouble(1.0), 0, 'f', 1);
-        return act;
-    }
-    if (name == QLatin1String("ask_user_question"))
-        return uq::summary(uq::parse(input).questions);
-    if (name == QLatin1String("music")) {
-        const QString action = input.value(QStringLiteral("action")).toString().trimmed().toLower();
-        if (action == QLatin1String("play_track") || action == QLatin1String("play_online"))
-            return QStringLiteral("Play \"%1\"").arg(input.value(QStringLiteral("query")).toString().simplified().left(40));
-        if (action == QLatin1String("add"))
-            return QStringLiteral("Add %1 to the music queue")
-                .arg(QFileInfo(input.value(QStringLiteral("path")).toString()).fileName());
-        if (action == QLatin1String("volume"))
-            return QStringLiteral("Music volume %1%").arg(input.value(QStringLiteral("volume")).toInt());
-        if (action == QLatin1String("next"))
-            return QStringLiteral("Next track");
-        if (action == QLatin1String("previous"))
-            return QStringLiteral("Previous track");
-        if (action == QLatin1String("pause"))
-            return QStringLiteral("Pause the music");
-        if (action == QLatin1String("play"))
-            return QStringLiteral("Play music");
-        return QStringLiteral("Music: %1").arg(action);
-    }
-    if (name == QLatin1String("share_screenshot")) {
-        const QString caption = input.value(QStringLiteral("caption")).toString().simplified().left(60);
-        return caption.isEmpty() ? QStringLiteral("Show you the screen") : QStringLiteral("Show you the screen: %1").arg(caption);
-    }
-    if (name == QLatin1String("str_replace_editor")) {
-        const QString cmd = input.value(QStringLiteral("command")).toString();
-        const QString path = QFileInfo(input.value(QStringLiteral("path")).toString()).fileName();
-        return QStringLiteral("%1 %2").arg(cmd, path.isEmpty() ? input.value(QStringLiteral("path")).toString() : path);
-    }
-    if (name == QLatin1String("glob_grep")) {
-        const QString mode = input.value(QStringLiteral("mode")).toString(QStringLiteral("glob"));
-        const QString pat = input.value(QStringLiteral("pattern")).toString();
-        return mode == QLatin1String("grep")
-            ? QStringLiteral("Search code for \"%1\"").arg(pat.left(32))
-            : QStringLiteral("Find files matching \"%1\"").arg(pat.left(32));
-    }
-    if (name == QLatin1String("memory")) {
-        const QString cmd = input.value(QStringLiteral("command")).toString(QStringLiteral("view"));
-        const QString rawPath = input.value(QStringLiteral("path")).toString(
-            input.value(QStringLiteral("old_path")).toString(QStringLiteral("/memories")));
-        const QString baseName = QFileInfo(rawPath).fileName();
-        const QString target = (baseName.isEmpty() || baseName == QLatin1String("memories"))
-            ? QStringLiteral("/memories")
-            : baseName;
-        return QStringLiteral("%1 %2").arg(cmd, target);
-    }
-    // L8: memory_search gets its own summary.
-    if (name == QLatin1String("memory_search")) {
-        const QString q = input.value(QStringLiteral("query")).toString().simplified();
-        const QString shown = q.size() > 40 ? q.left(37) + QStringLiteral("…") : q;
-        return shown.isEmpty() ? QStringLiteral("Search memories")
-                               : QStringLiteral("Search memories: %1").arg(shown);
-    }
-    if (name == QLatin1String("web_search")) {
-        QString q = input.value(QStringLiteral("query")).toString().simplified();
-        if (q.isEmpty())
-            q = input.value(QStringLiteral("url")).toString().simplified();
-        if (q.size() > 38)
-            q = q.left(35) + QStringLiteral("…");
-        return q.isEmpty() ? QStringLiteral("Search live web")
-                           : QStringLiteral("Search \"%1\"").arg(q);
-    }
-    if (name == QLatin1String("web_fetch")) {
-        const QUrl u(input.value(QStringLiteral("url")).toString());
-        const QString host = u.host().isEmpty() ? input.value(QStringLiteral("url")).toString().left(34) : u.host();
-        const QString mode = input.value(QStringLiteral("extract_mode")).toString(QStringLiteral("text"));
-        return QStringLiteral("Fetch %1 (%2)").arg(host, mode);
-    }
-    if (name == QLatin1String("todo_write")) {
-        const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
-        if (act == QLatin1String("clipboard_read"))
-            return QStringLiteral("Read Windows clipboard");
-        if (act == QLatin1String("clipboard_write"))
-            return QStringLiteral("Copy text to clipboard");
-        if (act == QLatin1String("system_info"))
-            return QStringLiteral("Inspect desktop & system telemetry");
-        const int count = input.value(QStringLiteral("todos")).toArray().size();
-        return QStringLiteral("Update task checklist (%1 items)").arg(count);
-    }
-    if (name == QLatin1String("skill")) {
-        const QString file = input.value(QStringLiteral("file")).toString().simplified().left(40);
-        const QString skill = input.value(QStringLiteral("name")).toString().simplified().left(40);
-        return file.isEmpty() ? QStringLiteral("Load skill %1").arg(skill) : QStringLiteral("Read %1 of skill %2").arg(file, skill);
-    }
+    // P2: core tools summarize through their registry entry.
+    if (const CoreToolDef *def = coreToolDef(name))
+        return def->summarize(input);
     return name;
 }
 
@@ -300,73 +108,9 @@ QString BuddyProvider::detailForToolCall(const QString &name, const QJsonObject 
     // exact recipient, subject and text before it goes anywhere.
     if (isConnectorToolName(name))
         return connectors::describeArguments(input, 1500);
-    if (name == QLatin1String("bash"))
-        return QStringLiteral("$ ") + input.value(QStringLiteral("command")).toString().trimmed();
-    if (name == QLatin1String("computer")) {
-        const QString act = input.value(QStringLiteral("action")).toString();
-        const QJsonArray c = input.value(QStringLiteral("coordinate")).toArray();
-        if (!input.value(QStringLiteral("text")).toString().isEmpty())
-            return QStringLiteral("action: %1  text: \"%2\"").arg(act, input.value(QStringLiteral("text")).toString());
-        if (c.size() >= 2)
-            return QStringLiteral("action: %1  coord: [%2, %3]").arg(act).arg(c.at(0).toInt()).arg(c.at(1).toInt());
-        return QStringLiteral("action: %1").arg(act);
-    }
-    if (name == QLatin1String("music")) {
-        QStringList parts{ QStringLiteral("action: %1").arg(input.value(QStringLiteral("action")).toString()) };
-        for (const char *key : { "query", "path", "volume" })
-            if (input.contains(QLatin1String(key)))
-                parts << QStringLiteral("%1: %2").arg(QLatin1String(key), input.value(QLatin1String(key)).toVariant().toString());
-        return parts.join(QStringLiteral("  "));
-    }
-    if (name == QLatin1String("share_screenshot")) {
-        const int display = input.value(QStringLiteral("display")).toInt(-1);
-        return display >= 0 ? QStringLiteral("display %1").arg(display) : QStringLiteral("the screen Buddy is looking at");
-    }
-    if (name == QLatin1String("ask_user_question")) {
-        QStringList lines;
-        for (const uq::Question &q : uq::parse(input).questions) {
-            QStringList labels;
-            for (const uq::Option &o : q.options)
-                labels << o.label;
-            lines << QStringLiteral("%1 [%2]").arg(q.question, labels.join(QStringLiteral(" | ")));
-        }
-        return lines.join(QLatin1Char('\n'));
-    }
-    if (name == QLatin1String("str_replace_editor"))
-        return QStringLiteral("%1  path: %2").arg(input.value(QStringLiteral("command")).toString(),
-                                                  input.value(QStringLiteral("path")).toString());
-    if (name == QLatin1String("glob_grep")) {
-        const QString mode = input.value(QStringLiteral("mode")).toString(QStringLiteral("glob"));
-        const QString pat = input.value(QStringLiteral("pattern")).toString();
-        const QString path = input.value(QStringLiteral("path")).toString(QStringLiteral("."));
-        return QStringLiteral("mode: %1  pattern: \"%2\"  in: %3").arg(mode, pat, path);
-    }
-    if (name == QLatin1String("memory")) {
-        const QString cmd = input.value(QStringLiteral("command")).toString(QStringLiteral("view"));
-        if (cmd == QLatin1String("rename")) {
-            return QStringLiteral("rename %1 → %2")
-                .arg(input.value(QStringLiteral("old_path")).toString(input.value(QStringLiteral("path")).toString()),
-                     input.value(QStringLiteral("new_path")).toString());
-        }
-        return QStringLiteral("%1  %2").arg(cmd, input.value(QStringLiteral("path")).toString(QStringLiteral("/memories")));
-    }
-    if (name == QLatin1String("web_search")) {
-        const QString q = input.value(QStringLiteral("query")).toString().trimmed();
-        const QString u = input.value(QStringLiteral("url")).toString().trimmed();
-        if (!q.isEmpty() && !u.isEmpty())
-            return QStringLiteral("query: \"%1\"  url: %2").arg(q, u);
-        if (!u.isEmpty())
-            return QStringLiteral("url: %1").arg(u);
-        return QStringLiteral("query: \"%1\"").arg(q);
-    }
-    if (name == QLatin1String("web_fetch")) {
-        return QStringLiteral("url: %1  extract: %2")
-            .arg(input.value(QStringLiteral("url")).toString(),
-                 input.value(QStringLiteral("extract_mode")).toString(QStringLiteral("text")));
-    }
-    if (name == QLatin1String("todo_write")) {
-        const QString act = input.value(QStringLiteral("action")).toString(QStringLiteral("todos"));
-        return QStringLiteral("action: %1").arg(act);
+    if (const CoreToolDef *def = coreToolDef(name)) {
+        if (def->detail)
+            return def->detail(input);
     }
     return QString::fromUtf8(QJsonDocument(input).toJson(QJsonDocument::Compact));
 }
@@ -1070,32 +814,43 @@ void BuddyProvider::executeMemorySearchTool(const PendingToolCall &call)
     int topK = call.input.value(QStringLiteral("top_k")).toInt(5);
     topK = qBound(1, topK, 10);
 
-    MemoryStore store(memoriesPath());
-    const QList<MemoryStore::SearchHit> hits = store.search(query, topK);
-    QStringList localLines;
-    for (const MemoryStore::SearchHit &h : hits) {
-        localLines << QStringLiteral("\n• /memories/%1%2\n  %3")
-                          .arg(h.fact.id,
-                               h.fact.procedure ? QStringLiteral(" [procedure]") : QString(),
-                               h.fact.gist);
-    }
-    if (m_mem->searchReady()) {
-        // Long-term memory answers too; the call finishes in onMemSearched().
+    // The local store answers synchronously through the same interface,
+    // so localHits is filled before the remote branch below runs.
+    QList<MemoryHit> localHits;
+    m_localBackend.search(query, topK, m_runGeneration,
+        [&localHits](quint64, const QList<MemoryHit> &hits, const QString &, int) { localHits = hits; });
+    if (m_mem0Backend->recallReady()) {
+        // Long-term memory answers too; the call finishes in onToolSearchCompleted().
         m_memToolPending = true;
         m_memToolCall = call;
         m_memToolQuery = query;
-        m_memToolLocal = localLines;
-        m_mem->search(query, m_runGeneration, topK);
+        m_memToolLocalHits = localHits;
+        const QPointer<BuddyProvider> self(this);
+        m_mem0Backend->search(query, topK, m_runGeneration,
+            [self](quint64 token, const QList<MemoryHit> &hits, const QString &error, int) {
+                if (self)
+                    self->onToolSearchCompleted(token, hits, error);
+            });
         return;
     }
-    finishMemorySearch(call, query, localLines, {}, QString());
+    finishMemorySearch(call, query, localHits, {}, QString());
 }
 
 void BuddyProvider::finishMemorySearch(const PendingToolCall &call, const QString &query,
-                                       const QStringList &localLines, const QList<mem0::Hit> &remote,
+                                       const QList<MemoryHit> &localHits, const QList<MemoryHit> &remoteHits,
                                        const QString &remoteError)
 {
-    if (localLines.isEmpty() && remote.isEmpty()) {
+    // The one merge point again: the tool result's local and remote hits
+    // are deduped and ranked together, then split back by source for the
+    // two-block rendering the tool has always produced. The cap is the
+    // sum of the two per-source caps — merging can only drop duplicates,
+    // never a result either source returned.
+    const QList<MemoryHit> merged = mergeMemoryHits(localHits, remoteHits,
+                                                    int(localHits.size() + remoteHits.size()));
+    QList<MemoryHit> local, remote;
+    for (const MemoryHit &h : merged)
+        (h.backend == QLatin1String("mem0") ? remote : local).append(h);
+    if (local.isEmpty() && remote.isEmpty()) {
         QString msg = QStringLiteral("No saved memories match \"%1\".").arg(query);
         if (!remoteError.isEmpty())
             msg += QStringLiteral(" (Long-term memory could not be searched: %1)").arg(remoteError);
@@ -1105,14 +860,18 @@ void BuddyProvider::finishMemorySearch(const PendingToolCall &call, const QStrin
     QStringList lines;
     if (!remote.isEmpty()) {
         lines << QStringLiteral("Long-term memory (%1 from earlier conversations):").arg(remote.size());
-        lines << redact(mem0::recallLines(remote));
+        lines << redact(memoryRecallLines(remote));
     }
-    if (!localLines.isEmpty()) {
+    if (!local.isEmpty()) {
         if (!lines.isEmpty())
             lines << QString();
         lines << QStringLiteral("%1 saved note%2 matched \"%3\":")
-                     .arg(localLines.size()).arg(localLines.size() == 1 ? QString() : QStringLiteral("s"), query);
-        lines << localLines;
+                     .arg(local.size()).arg(local.size() == 1 ? QString() : QStringLiteral("s"), query);
+        for (const MemoryHit &h : local)
+            lines << QStringLiteral("\n• /memories/%1%2\n  %3")
+                         .arg(h.id,
+                              h.procedure ? QStringLiteral(" [procedure]") : QString(),
+                              h.text);
         lines << QStringLiteral("\nUse the memory tool with command 'view' and the path to read a full memory.");
     }
     finishCurrentToolCall(call, lines.join(QLatin1Char('\n')), QString(), false);

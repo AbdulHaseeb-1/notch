@@ -75,7 +75,7 @@ class tst_DeepgramLive : public QObject
     {
         auto *a = new DeepgramAgent;
         a->setEnabled(true);
-        a->setApiKey(apiKey());
+        a->deepgramSettings()->setApiKey(apiKey());
         a->setAudioMode(headphones ? QStringLiteral("headphones") : QStringLiteral("speakers"));
         a->player()->setDeviceDisabled(true);
         auto cap = std::make_unique<FakeCapture>();
@@ -94,7 +94,7 @@ private slots:
     void thinkingModelsListIncludesHaiku55()
     {
         DeepgramAgent a;
-        a.setApiKey(apiKey());
+        a.deepgramSettings()->setApiKey(apiKey());
         a.refreshModels();
         QTRY_VERIFY_WITH_TIMEOUT(!a.modelsLoading(), 90000);
         QVERIFY2(a.modelsProblem().isEmpty(), qPrintable(a.modelsProblem()));
@@ -108,8 +108,8 @@ private slots:
     void connectionTestPassesWithHaiku55()
     {
         DeepgramAgent a;
-        a.setApiKey(apiKey());
-        QCOMPARE(a.thinkModel(), QStringLiteral("claude-haiku-5-5"));
+        a.deepgramSettings()->setApiKey(apiKey());
+        QCOMPARE(a.config().thinkModel, QStringLiteral("claude-haiku-5-5"));
         a.test();
         QTRY_VERIFY_WITH_TIMEOUT(a.testState() != QLatin1String("testing"), 30000);
         QVERIFY2(a.testState() == QLatin1String("ok"), qPrintable(a.testMessage()));
@@ -119,8 +119,8 @@ private slots:
     void connectionTestCatchesAnUnknownModel()
     {
         DeepgramAgent a;
-        a.setApiKey(apiKey());
-        a.setThinkModel(QStringLiteral("claude-model-that-does-not-exist"));
+        a.deepgramSettings()->setApiKey(apiKey());
+        a.deepgramSettings()->setThinkOverride(true); a.deepgramSettings()->setThinkModel(QStringLiteral("claude-model-that-does-not-exist"));
         a.test();
         QTRY_VERIFY_WITH_TIMEOUT(a.testState() != QLatin1String("testing"), 30000);
         QCOMPARE(a.testState(), QStringLiteral("failed"));
@@ -131,7 +131,7 @@ private slots:
     void connectionTestRejectsABadKey()
     {
         DeepgramAgent a;
-        a.setApiKey(QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
+        a.deepgramSettings()->setApiKey(QStringLiteral("0123456789abcdef0123456789abcdef01234567"));
         a.test();
         QTRY_VERIFY_WITH_TIMEOUT(a.testState() != QLatin1String("testing"), 30000);
         QCOMPARE(a.testState(), QStringLiteral("failed"));
@@ -169,7 +169,7 @@ private slots:
         FakeCapture *mic = nullptr;
         std::unique_ptr<DeepgramAgent> a(newAgent(&mic));
         // Without a hint the recognizer heard "Notecad": keyterms are how names it cannot know get through.
-        a->setKeyterms(QStringLiteral("Notepad, Buddy"));
+        a->deepgramSettings()->setKeyterms(QStringLiteral("Notepad, Buddy"));
         QSignalSpy asked(a.get(), &DeepgramAgent::buddyRequested), agentSaid(a.get(), &DeepgramAgent::agentSaid);
         QVERIFY(a->start());
         QTRY_COMPARE_WITH_TIMEOUT(a->state(), QStringLiteral("listening"), 15000);
@@ -271,7 +271,7 @@ private slots:
         const QByteArray clip = speechPcm(QStringLiteral("Open the calculator and add twelve and thirty."));
         QVERIFY(!clip.isEmpty());
         VoiceInput v;
-        v.setDeepgramKey(apiKey());
+        v.deepgramSettings()->setApiKey(apiKey());
         QObject ctx;
         VoiceInput::Transcription got;
         bool done = false;
@@ -286,7 +286,7 @@ private slots:
         SpeechOut s;
         s.streamPlayer()->setDeviceDisabled(true);
         s.setEngine(QStringLiteral("deepgram"));
-        s.setDeepgramKey(apiKey());
+        s.deepgramSettings()->setApiKey(apiKey());
         s.setEnabled(true);
         t.restart();
         s.say(QStringLiteral("I opened the calculator. Twelve plus thirty is forty two."));

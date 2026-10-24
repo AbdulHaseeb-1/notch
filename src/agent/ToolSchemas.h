@@ -1,17 +1,20 @@
 #pragma once
 
-// P1: Single source of truth for tool schemas.
+// P1: the tool-schema view of the core-tool registry.
 //
-// The registry defines every tool once: its description, arguments (with
-// types, descriptions, required flags), common misnamings (aliases), and
-// scalar coercions. Two consumers share it:
+// Every tool is defined once in the registry (ToolRegistry.h): its
+// description, arguments (with types, descriptions, required flags),
+// common misnamings (aliases), and scalar coercions live there next to
+// its policy kind, access class, diet and step text. This header keeps
+// the schema-only API two consumers share:
 //
-//  * BuddyProviderPrompts.cpp builds the provider-facing JSON schemas from
-//    it (instead of hand-writing parallel definitions).
+//  * BuddyProviderPrompts.cpp pulls the provider-facing required lists
+//    from it, so the validator and the advertised schema cannot drift.
 //  * The repair pipeline (normalizeToolCall) validates against it and
 //    produces field-level errors.
 //
-// Adding a tool means adding one entry here; both sides stay in sync.
+// Adding a tool means adding one registry entry (plus its handler
+// binding in BuddyProvider); both sides stay in sync.
 
 #include <QList>
 #include <QMap>

@@ -1,6 +1,5 @@
 #include "BuddyProviderInternal.h"
 #include "MemoryExtractor.h"
-#include "MemoryStore.h"
 
 using namespace noch::buddyprovider;
 
@@ -15,7 +14,7 @@ void BuddyProvider::summarizeSession(const QString &sessionId, const QString &pr
 {
     if (sessionId.isEmpty() || turns.isEmpty() || upTo <= 0)
         return;
-    if (m_provider == QLatin1String("none") || !m_enabled || (needsApiKey() && m_apiKey.trimmed().isEmpty())
+    if (profile().dialect == provider::Dialect::None || !m_enabled || (needsApiKey() && m_apiKey.trimmed().isEmpty())
             || m_model.trimmed().isEmpty()) {
         emit sessionSummaryFailed(sessionId, tr("No model is set up to write the summary."));
         return;
@@ -62,7 +61,7 @@ void BuddyProvider::startNextSummary()
 
     QJsonObject payload;
     payload[QStringLiteral("model")] = m_model;
-    if (m_provider == QLatin1String("anthropic")) {
+    if (profile().dialect == provider::Dialect::Anthropic) {
         payload[QStringLiteral("max_tokens")] = 700;
         payload[QStringLiteral("temperature")] = 0.2;
         payload[QStringLiteral("system")] = system;
@@ -72,7 +71,7 @@ void BuddyProvider::startNextSummary()
         payload[QStringLiteral("messages")] = QJsonArray{
             QJsonObject{ { QStringLiteral("role"), QStringLiteral("system") }, { QStringLiteral("content"), system } },
             QJsonObject{ { QStringLiteral("role"), QStringLiteral("user") }, { QStringLiteral("content"), user } } };
-        if (m_provider == QLatin1String("ollama"))
+        if (profile().dialect == provider::Dialect::Ollama)
             payload[QStringLiteral("stream")] = false;
         else
             payload[QStringLiteral("temperature")] = 0.2;
@@ -595,6 +594,9 @@ void BuddyProvider::addSpan(const QJsonObject &span)
 
 void BuddyProvider::finishTrace(const QString &outcome, const QString &detail)
 {
+    // The run is over: a recall search that lost its race and is still in
+    // flight has nowhere to land — onRecallCompleted drops its hits silently.
+    m_memLatePending = false;
     if (m_traceId.isEmpty())
         return;
     const QString id = m_traceId;
@@ -646,7 +648,6 @@ void BuddyProvider::extractRunMemories(const QString &finalText)
 {
     if (!m_allowMemory)
         return;
-    MemoryStore store(memoriesPath());
 
     QStringList userTexts;
     for (const QJsonValue &v : m_agentMessages) {
@@ -656,15 +657,20 @@ void BuddyProvider::extractRunMemories(const QString &finalText)
             userTexts << msg.value(QStringLiteral("content")).toString();
     }
     const QStringList candidates = extractFactCandidates(userTexts);
-    if (m_mem->ready()) {
-        // Mem0 extracts, merges and updates the facts itself; the local store only
-        // gets the explicit "remember that ..." facts if saving there fails.
+    // THE write plan, in one place: the exchange goes to the remote
+    // backend (Mem0 extracts, merges and updates the facts itself) when
+    // it can save; the extracted candidates are its fallback if that save
+    // fails (see onExchangeSaved). When the remote backend cannot save —
+    // off, unconfigured, down — the same candidates go to the local store
+    // instead, through the same storeLocalFacts call. Mem0 off therefore
+    // means local-only, visibly, not by emergent if-branches.
+    if (m_mem0Backend->saveReady()) {
         saveExchangeToMem0(finalText, candidates);
     } else {
         storeLocalFacts(candidates, true);
     }
     if (!m_pendingProcedure.isEmpty()) {
-        if (!store.addFact(redact(m_pendingProcedure), true).isEmpty())
+        if (!m_localBackend.addProcedure(m_pendingProcedure).isEmpty())
             addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
                                  { QStringLiteral("event"), QStringLiteral("procedure-saved") } });
         m_pendingProcedure.clear();
@@ -673,67 +679,29 @@ void BuddyProvider::extractRunMemories(const QString &finalText)
 
 void BuddyProvider::storeLocalFacts(const QStringList &candidates, bool trace)
 {
-    MemoryStore store(memoriesPath());
-    // M4: read the corpus once; every candidate searches this snapshot.
-    const QList<MemoryFact> corpus = store.list();
-    int added = 0, updated = 0, flagged = 0;
-    for (QString fact : candidates) {
-        // H2: the memory store bypasses every output guardrail in the
-        // harness and re-injects facts into future system prompts, so a
-        // pasted secret would leak to every future provider. Redact first.
-        fact = redact(fact);
-        if (fact.trimmed().size() < 8)
-            continue;
-        // M3: dedupe on token *coverage*, not raw BM25 — BM25 scores scale
-        // with corpus size, so fixed thresholds misbehave on small stores.
-        // coverage = share of the candidate's terms found in the top hit.
-        const QList<MemoryStore::SearchHit> hits = store.search(corpus, fact, 1);
-        const QStringList factTerms = MemoryStore::tokenize(fact);
-        const QSet<QString> qUniq(factTerms.begin(), factTerms.end());
-        double coverage = 0.0;
-        if (!hits.isEmpty() && !qUniq.isEmpty()) {
-            const QSet<QString> docUniq(MemoryStore::tokenize(hits.first().fact.text).begin(),
-                                       MemoryStore::tokenize(hits.first().fact.text).end());
-            int shared = 0;
-            for (const QString &t : qUniq)
-                if (docUniq.contains(t))
-                    ++shared;
-            coverage = double(shared) / qUniq.size();
-        }
-        if (!hits.isEmpty() && coverage >= 0.6) {
-            // The same fact restated: update with the newest wording.
-            // Note: updateFact may rename the file to its new content
-            // hash — the returned id keeps the content-addressing
-            // invariant coherent instead of silently breaking it.
-            if (!store.updateFact(hits.first().fact.id, fact + QLatin1Char('\n')).isEmpty())
-                ++updated;
-        } else if (!hits.isEmpty() && coverage > 0.0) {
-            // Topical overlap but a different statement: keep both, flag it.
-            const QString noted = fact + QStringLiteral("\n(auto-extracted; possible overlap with /memories/%1 — verify)")
-                                             .arg(hits.first().fact.id);
-            if (!store.addFact(noted).isEmpty()) {
-                ++added;
-                ++flagged;
-            }
-        } else if (!store.addFact(fact).isEmpty()) {
-            ++added;
-        }
-    }
-    if (trace && (added || updated)) {
+    const LocalMemoryBackend::WriteCounts counts = m_localBackend.addFacts(candidates);
+    if (trace && (counts.added || counts.updated)) {
         addSpan(QJsonObject{ { QStringLiteral("type"), QStringLiteral("memory") },
                              { QStringLiteral("event"), QStringLiteral("extracted") },
-                             { QStringLiteral("added"), added },
-                             { QStringLiteral("updated"), updated },
-                             { QStringLiteral("flagged"), flagged } });
+                             { QStringLiteral("added"), counts.added },
+                             { QStringLiteral("updated"), counts.updated },
+                             { QStringLiteral("flagged"), counts.flagged } });
     }
 }
 
 void BuddyProvider::emitFinal(const QString &text)
 {
     const QString safe = redact(text);
+    // The answer exists: hand it over first. The end-of-run bookkeeping
+    // below — memory extraction with its local-store writes, then the trace
+    // file — is synchronous disk work the user should not sit through after
+    // the reply is already complete. It still runs before this function
+    // returns, so nothing is lost if the app closes right after, and
+    // extraction still precedes finishTrace, so its spans land in the trace
+    // exactly as they did when the order was the other way round.
+    emit responseReady(safe);
     extractRunMemories(safe);
     finishTrace(QStringLiteral("ok"));
-    emit responseReady(safe);
 }
 
 

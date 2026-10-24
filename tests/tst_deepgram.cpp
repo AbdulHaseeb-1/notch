@@ -57,7 +57,7 @@ struct Rig
     explicit Rig(bool enabled = true)
     {
         agent.setEnabled(enabled);
-        agent.setApiKey(kKey);
+        agent.deepgramSettings()->setApiKey(kKey);
         agent.setEndpoint(server.url());
         agent.player()->setDeviceDisabled(true);
         auto cap = std::make_unique<FakeCapture>();
@@ -594,7 +594,7 @@ private slots:
         QCOMPARE(off.agent.state(), QStringLiteral("off"));
 
         Rig r;
-        r.agent.setApiKey(QString());
+        r.agent.deepgramSettings()->setApiKey(QString());
         QVERIFY(!r.agent.start());
         QVERIFY(r.agent.error().contains(QStringLiteral("API key")));
         QCOMPARE(r.server.connections, 0);               // nothing was sent anywhere
@@ -1208,18 +1208,18 @@ private slots:
         r.agent.setPrompt(QStringLiteral("You are a calm librarian."));
         QTRY_COMPARE(r.sent("UpdatePrompt").size(), 1);
         QVERIFY(r.sent("UpdatePrompt").first()["prompt"].toString().startsWith(QStringLiteral("You are a calm librarian.")));
-        r.agent.setSpeakModel(QStringLiteral("aura-2-zeus-en"));
+        r.agent.deepgramSettings()->setSpeakVoice(QStringLiteral("aura-2-zeus-en"));
         QTRY_COMPARE(r.sent("UpdateSpeak").size(), 1);
         QCOMPARE(r.sent("UpdateSpeak").first()["speak"].toObject()["provider"].toObject()["model"].toString(), QStringLiteral("aura-2-zeus-en"));
         r.agent.setSpeakSpeed(1.2);
         QTRY_COMPARE(r.sent("UpdateSpeak").size(), 2);
         QVERIFY(!r.agent.restartNeeded());
         // Changing the model or the listener needs a new conversation, and says so.
-        r.agent.setThinkModel(QStringLiteral("claude-sonnet-5-5"));
+        r.agent.deepgramSettings()->setThinkOverride(true); r.agent.deepgramSettings()->setThinkModel(QStringLiteral("claude-sonnet-5-5"));
         QVERIFY(r.agent.restartNeeded());
         QTest::qWait(50);
         QCOMPARE(r.sent("UpdatePrompt").size(), 1);
-        r.agent.setThinkModel(QStringLiteral("claude-haiku-5-5"));
+        r.agent.deepgramSettings()->setThinkOverride(true); r.agent.deepgramSettings()->setThinkModel(QStringLiteral("claude-haiku-5-5"));
         QVERIFY(!r.agent.restartNeeded());
     }
 
@@ -1235,8 +1235,11 @@ private slots:
     void settingsAreNormalised()
     {
         DeepgramAgent a;
-        a.setKeyterms(QStringLiteral("Noch, buddy ;NOCH\n  Notepad  "));
-        QCOMPARE(a.keyterms(), QStringLiteral("Noch, buddy, Notepad"));
+        a.deepgramSettings()->setKeyterms(QStringLiteral("Noch, buddy ;NOCH\n  Notepad  "));
+        QCOMPARE(a.deepgramSettings()->keytermList(),
+                 QStringList({ QStringLiteral("Noch"), QStringLiteral("buddy"), QStringLiteral("Notepad") }));
+        QCOMPARE(a.config().keyterms,
+                 QStringList({ QStringLiteral("Noch"), QStringLiteral("buddy"), QStringLiteral("Notepad") }));
         a.setEotThreshold(0.1);
         QCOMPARE(a.eotThreshold(), 0.5);
         a.setSpeakSpeed(9);
@@ -1249,13 +1252,13 @@ private slots:
         QCOMPARE(a.followUpSeconds(), 45);
         a.setAudioMode(QStringLiteral("nonsense"));
         QCOMPARE(a.audioMode(), QStringLiteral("speakers"));
-        a.setApiKey(QStringLiteral("  abc  "));
-        QCOMPARE(a.apiKey(), QStringLiteral("abc"));
-        a.setListenModel(QStringLiteral("flux-general-en"));
+        a.deepgramSettings()->setApiKey(QStringLiteral("  abc  "));
+        QCOMPARE(a.config().apiKey, QStringLiteral("abc"));
+        a.deepgramSettings()->setListenModel(QStringLiteral("flux-general-en"));
         QVERIFY(a.flux());
-        a.setThinkModel(QStringLiteral("claude-haiku-5-5"));
+        a.deepgramSettings()->setThinkOverride(true); a.deepgramSettings()->setThinkModel(QStringLiteral("claude-haiku-5-5"));
         QVERIFY(!a.temperatureApplies());
-        a.setThinkModel(QStringLiteral("claude-haiku-4-5"));
+        a.deepgramSettings()->setThinkOverride(true); a.deepgramSettings()->setThinkModel(QStringLiteral("claude-haiku-4-5"));
         QVERIFY(a.temperatureApplies());
     }
 
@@ -1358,7 +1361,7 @@ private slots:
         QVERIFY(r.agent.testMessage().contains(QStringLiteral("rejected")));
 
         Rig none;
-        none.agent.setApiKey(QString());
+        none.agent.deepgramSettings()->setApiKey(QString());
         none.agent.test();
         QCOMPARE(none.agent.testState(), QStringLiteral("failed"));
         QVERIFY(none.agent.testMessage().contains(QStringLiteral("API key")));
@@ -1381,7 +1384,7 @@ private slots:
         think.reply = "{\"models\":[{\"id\":\"claude-haiku-5-5\",\"name\":\"Claude Haiku 5.5\",\"provider\":\"anthropic\"},{\"id\":\"gpt-4o-mini\",\"name\":\"GPT-4o mini\",\"provider\":\"open_ai\"}]}";
         models.reply = "{\"tts\":[{\"canonical_name\":\"aura-2-zeus-en\",\"languages\":[\"en\"],\"metadata\":{}}],\"stt\":[]}";
         DeepgramAgent a;
-        a.setApiKey(kKey);
+        a.deepgramSettings()->setApiKey(kKey);
         a.setThinkModelsUrl(think.base() + QStringLiteral("/v1/agent/settings/think/models"));
         a.setApiBase(models.base());
         QSignalSpy changed(&a, &DeepgramAgent::modelsChanged);
@@ -1405,7 +1408,7 @@ private slots:
         models.status = 500;
         models.reply = "oops";
         DeepgramAgent a;
-        a.setApiKey(kKey);
+        a.deepgramSettings()->setApiKey(kKey);
         a.setThinkModelsUrl(think.base() + QStringLiteral("/x"));
         a.setApiBase(models.base());
         const int builtin = a.voices().size();

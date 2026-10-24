@@ -1,5 +1,6 @@
 #include "AgentPolicyInternal.h"
 #include "ComputerUseKeys.h"
+#include "ToolRegistry.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -135,11 +136,18 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
     // Taint (prompt injection seen in this run) suspends Trusted and grants.
     const bool bypass = m_mode == Mode::Bypass && !m_tainted;
     const bool granted = m_sessionAllow.contains(tool) && !m_tainted;
+    // P2: core tools dispatch on their registry policy kind; connector
+    // tools (and unknown names) fall through to the connector table and
+    // the deny at the end.
+    const CoreToolDef *coreDef = coreToolDef(tool);
+    const auto kindIs = [coreDef](ToolPolicyKind k) {
+        return coreDef && coreDef->policy == k;
+    };
 
-    if (tool == QLatin1String("bash"))
+    if (kindIs(ToolPolicyKind::Shell))
         return evaluateShell(input);
 
-    if (tool == QLatin1String("computer")) {
+    if (kindIs(ToolPolicyKind::Computer)) {
         // Normalize once, up front: the executor lowercases/trims too, so the
         // gate must judge the same action string the executor will run.
         const QString action = input.value(QStringLiteral("action")).toString().trimmed().toLower();
@@ -178,7 +186,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
         return ask(QStringLiteral("ask:computer"), QStringLiteral("Buddy wants to control the mouse or keyboard."));
     }
 
-    if (tool == QLatin1String("str_replace_editor")) {
+    if (kindIs(ToolPolicyKind::Editor)) {
         const QString cmd = input.value(QStringLiteral("command")).toString();
         const QString path = input.value(QStringLiteral("path")).toString();
         const QString prot = protectedPathReason(path, m_base);
@@ -224,7 +232,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
                                          : QStringLiteral("Buddy wants to change a file outside the workspace folder."));
     }
 
-    if (tool == QLatin1String("web_fetch") || tool == QLatin1String("web_search")) {
+    if (kindIs(ToolPolicyKind::WebFetch) || kindIs(ToolPolicyKind::WebSearch)) {
         const QString url = input.value(QStringLiteral("url")).toString().trimmed();
         if (!url.isEmpty()) {
             if (!isFetchableUrl(url))
@@ -241,12 +249,12 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
                 return ask(QStringLiteral("ask:tainted"),
                            QStringLiteral("A previous tool result looked like a prompt injection; network access needs approval."));
         }
-        if (tool == QLatin1String("web_fetch"))
+        if (kindIs(ToolPolicyKind::WebFetch))
             return allow(QStringLiteral("network-read"));
         return allow(QStringLiteral("safe-tool"));
     }
 
-    if (tool == QLatin1String("glob_grep")) {
+    if (kindIs(ToolPolicyKind::CodeSearch)) {
         const QString path = input.value(QStringLiteral("path")).toString();
         if (!path.isEmpty()) {
             if (isPrivatePath(path))
@@ -261,7 +269,7 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
 
     // The music pill. Transport and volume change nothing on disk. Queueing a file
     // or folder reads it, so anything outside the user's own Music folder asks.
-    if (tool == QLatin1String("music")) {
+    if (kindIs(ToolPolicyKind::Music)) {
         const QString action = input.value(QStringLiteral("action")).toString().trimmed().toLower();
         if (action == QLatin1String("status") || action == QLatin1String("queue"))
             return allow(QStringLiteral("read-only"));
@@ -287,13 +295,12 @@ AgentPolicy::Decision AgentPolicy::evaluate(const QString &tool, const QJsonObje
     }
 
     // Shows the user their own screen in the chat; the image never goes to the model.
-    if (tool == QLatin1String("share_screenshot"))
+    if (kindIs(ToolPolicyKind::AllowReadOnly))
         return allow(QStringLiteral("read-only"));
 
-    // Sandboxed or read-only tools.
-    if (tool == QLatin1String("memory") || tool == QLatin1String("memory_search")
-            || tool == QLatin1String("todo_write") || tool == QLatin1String("ask_user_question")
-            || tool == QLatin1String("skill"))   // reads only inside the skill's own folder; grants nothing
+    // Sandboxed or read-only tools (the skill tool reads only inside
+    // the skill's own folder; it grants nothing).
+    if (kindIs(ToolPolicyKind::AllowSafeTool))
         return allow(QStringLiteral("safe-tool"));
 
     // Connected apps. Reads are free; writes ask, whatever the mode (see setConnectorTools).

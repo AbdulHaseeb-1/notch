@@ -307,7 +307,7 @@ bool BuddyProvider::hasAnyToolEnabled() const
 
 bool BuddyProvider::needsApiKey() const
 {
-    return m_provider == QLatin1String("openai") || m_provider == QLatin1String("anthropic");
+    return profile().requiresApiKey;
 }
 
 QString BuddyProvider::trimBase(const QString &base)
@@ -317,21 +317,41 @@ QString BuddyProvider::trimBase(const QString &base)
 
 QString BuddyProvider::defaultBase() const
 {
-    return defaultBaseFor(m_provider);
+    return profile().defaultBase;
 }
 
 QString BuddyProvider::chatUrl() const
 {
-    const QString base = m_apiBase.trimmed().isEmpty() ? defaultBaseFor(m_provider)
+    const QString base = m_apiBase.trimmed().isEmpty() ? profile().defaultBase
                                                        : m_apiBase;
-    return joinPath(base, chatPathFor(m_provider));
+    return joinPath(base, profile().chatPath);
 }
 
 QString BuddyProvider::modelsUrl() const
 {
-    const QString base = m_apiBase.trimmed().isEmpty() ? defaultBaseFor(m_provider)
+    const QString base = m_apiBase.trimmed().isEmpty() ? profile().defaultBase
                                                        : m_apiBase;
-    return joinPath(base, modelsPathFor(m_provider));
+    return joinPath(base, profile().modelsPath);
+}
+
+QVariantList BuddyProvider::providerProfiles() const
+{
+    QVariantList out;
+    for (const provider::ProviderProfile &p : provider::allProfiles()) {
+        if (p.dialect == provider::Dialect::None)
+            continue;   // "none" is a state, not a selectable provider
+        out.append(provider::profileVariant(p));
+    }
+    return out;
+}
+
+QVariantMap BuddyProvider::providerInfo(const QString &id) const
+{
+    const provider::ProviderProfile &p = provider::profileFor(id);
+    // "none" is not a selectable provider: like the old JS table's fallback,
+    // it resolves to "custom".
+    return provider::profileVariant(p.dialect == provider::Dialect::None
+                                       ? provider::profileFor(QStringLiteral("custom")) : p);
 }
 
 QString BuddyProvider::buildUrl() const

@@ -463,11 +463,11 @@ SettingsPage {
                     width: parent.width
                     label: qsTr("Google AI Studio API key")
                     placeholder: qsTr("Paste your API key")
-                    hint: qsTr("Create a key at aistudio.google.com/apikey. Uses Gemini TTS; the spoken text is sent to Google. Stored locally in Noch settings.")
+                    hint: qsTr("Create a key at aistudio.google.com/apikey. Uses Gemini TTS; the spoken text is sent to Google. The key is kept in the encrypted Secrets vault, not in settings.")
                     secret: true
                     mono: true
-                    text: panel.prefs.buddyTtsGoogleKey
-                    onEdited: (v) => panel.prefs.buddyTtsGoogleKey = v
+                    text: Secrets.googleTtsKey
+                    onEdited: (v) => Secrets.googleTtsKey = v
                 }
                 SettingsFieldBox {
                     width: parent.width
@@ -487,7 +487,7 @@ SettingsPage {
                 Text {
                     width: parent.width
                     text: Speech.available
-                          ? qsTr("Deepgram Aura voice %1. The key and the voice are set in the Deepgram page; the text is sent to Deepgram.").arg(panel.prefs.buddyLiveVoice)
+                          ? qsTr("Deepgram Aura voice %1. The key and the voice are set in the Deepgram page; the text is sent to Deepgram.").arg(Deepgram.speakVoice)
                           : Speech.problem
                     color: Speech.available ? Theme.textDim : Theme.warning
                     font.family: Theme.font

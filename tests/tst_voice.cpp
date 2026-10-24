@@ -299,7 +299,7 @@ private slots:
         QVERIFY(!v.configured());
         QVERIFY(v.problem().contains(QStringLiteral("Deepgram API key")));
         v.setDeepgramApiBase(QStringLiteral("http://127.0.0.1:9"));   // never really call out from a test
-        v.setDeepgramKey(QStringLiteral("test_key_0123456789abcdef0123456789abcd"));
+        v.deepgramSettings()->setApiKey(QStringLiteral("test_key_0123456789abcdef0123456789abcd"));
         QVERIFY(v.configured());
         QVERIFY(v.ready());   // a network engine has nothing to load
     }

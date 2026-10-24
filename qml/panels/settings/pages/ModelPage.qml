@@ -83,12 +83,12 @@ SettingsPage {
                              : qsTr("Optional for local servers")
                 hint: panel.infoFor(panel.prefs.buddyProvider).keyHint
                       || (panel.infoFor(panel.prefs.buddyProvider).needsKey
-                      ? qsTr("Stored locally in Noch settings.")
+                      ? qsTr("Kept in the encrypted Secrets vault, not in settings.")
                       : qsTr("Leave blank if not required."))
                 secret: true
                 mono: true
-                text: panel.prefs.buddyApiKey
-                onEdited: (v) => { panel.prefs.buddyApiKey = v; panel.markDirty() }
+                text: (Secrets.revision, Secrets.providerKey(panel.prefs.buddyProvider))
+                onEdited: (v) => { Secrets.setProviderKey(panel.prefs.buddyProvider, v); panel.markDirty() }
             }
         }
 
