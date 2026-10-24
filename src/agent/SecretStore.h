@@ -1,4 +1,5 @@
-// Secrets for connectors (OAuth tokens, client secrets, MCP tokens).
+// Secrets for connectors (OAuth tokens, client secrets, MCP tokens) and for
+// Noch's own API keys (see AppSecrets).
 //
 // Never plain text on disk and never in QSettings. On Windows each value is
 // encrypted with DPAPI (CryptProtectData, current-user scope): the file is useless
@@ -6,6 +7,11 @@
 // entropy argument, so a blob copied over another key does not decrypt. Without
 // a storage folder, or where DPAPI does not exist, values live in memory only and
 // persistent() says so (the user then signs in again next time).
+//
+// A value is replaced by writing a new file and swapping it into place. The
+// previous blob is kept beside it (*.sec.bak). If the new file cannot be
+// unlocked, the previous one is restored and the unreadable file is left on
+// disk — a failed write must not look like the user disconnected.
 #pragma once
 
 #include <QByteArray>

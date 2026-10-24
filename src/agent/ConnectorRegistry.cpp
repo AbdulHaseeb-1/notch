@@ -4,7 +4,10 @@
 #include "GmailConnector.h"
 #include "McpConnector.h"
 
+#include <QDebug>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
@@ -59,9 +62,31 @@ Connector *ConnectorRegistry::find(const QString &id) const
 
 // ---- persistence ----------------------------------------------------------------------
 
+namespace {
+
+// `ok` is true only when the file exists, parses, and is a JSON object.
+// A missing file is not ok, and it is not an error: first launch has none.
+QJsonObject readConfigObject(const QString &path, bool *ok)
+{
+    if (ok)
+        *ok = false;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly) || f.size() <= 0 || f.size() > (1 << 20))
+        return QJsonObject();
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject())
+        return QJsonObject();
+    if (ok)
+        *ok = true;
+    return doc.object();
+}
+
+} // namespace
+
 void ConnectorRegistry::saveConfig()
 {
-    if (m_dir.isEmpty() || m_loading)
+    if (m_dir.isEmpty() || m_loading || m_configUnreadable)
         return;
     QJsonArray servers;
     for (Connector *c : m_list)
@@ -76,11 +101,22 @@ void ConnectorRegistry::saveConfig()
                             { QStringLiteral("mcp"), servers },
                             { QStringLiteral("alwaysAllow"), always } };
     QDir().mkpath(m_dir);
-    QSaveFile f(QDir(m_dir).filePath(QStringLiteral("connectors.json")));
+    const QString path = QDir(m_dir).filePath(QStringLiteral("connectors.json"));
+    // Keep the previous file only when it still parses. Copying a torn file
+    // over the backup would throw away the last good list.
+    bool currentOk = false;
+    readConfigObject(path, &currentOk);
+    if (currentOk) {
+        const QString bak = path + QStringLiteral(".bak");
+        QFile::remove(bak);
+        QFile::copy(path, bak);
+    }
+    QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly))
         return;
-    f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    f.commit();
+    const QByteArray body = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (f.write(body) != body.size() || !f.commit())
+        qWarning("noch: could not save connectors.json. The previous file was kept.");
 }
 
 void ConnectorRegistry::load()
@@ -88,10 +124,31 @@ void ConnectorRegistry::load()
     if (m_dir.isEmpty())
         return;
     m_loading = true;
-    QFile f(QDir(m_dir).filePath(QStringLiteral("connectors.json")));
-    QJsonObject root;
-    if (f.open(QIODevice::ReadOnly) && f.size() < (1 << 20))
-        root = QJsonDocument::fromJson(f.readAll()).object();
+    const QString path = QDir(m_dir).filePath(QStringLiteral("connectors.json"));
+    bool parsed = false;
+    QJsonObject root = readConfigObject(path, &parsed);
+    if (!parsed) {
+        bool bakParsed = false;
+        const QJsonObject bak = readConfigObject(path + QStringLiteral(".bak"), &bakParsed);
+        if (bakParsed) {
+            root = bak;
+            parsed = true;
+            qWarning("noch: connectors.json could not be read; restored the previous copy.");
+        }
+    }
+    // A torn file must not become an empty config on the next save, which
+    // would drop every saved MCP server. Sign-ins live in the secret vault
+    // and are restored either way.
+    if (!parsed && QFileInfo::exists(path) && QFileInfo(path).size() > 0) {
+        qWarning("noch: connectors.json could not be read. It was left in place.");
+        m_configUnreadable = true;
+        m_gmail->restore();
+        m_github->restore();
+        m_loading = false;
+        emit changed();
+        return;
+    }
+    m_configUnreadable = false;
 
     m_always.clear();
     for (const QJsonValue &v : root.value(QStringLiteral("alwaysAllow")).toArray())

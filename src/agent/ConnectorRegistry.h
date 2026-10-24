@@ -8,10 +8,11 @@
 // own OAuth client IDs (BuiltinOAuth): there is nothing for the user to paste.
 //
 // Persistence (only once setStorageDir() was called; tests never touch real files):
-//   <dir>/connectors.json   non-secret settings: the MCP servers (name, transport,
-//                           command or URL), the "always allow" tools
-//   <dir>/secrets/*.sec     everything secret, encrypted (SecretStore): OAuth tokens,
-//                           MCP tokens and environment
+//   <dir>/connectors.json       non-secret settings: the MCP servers (name, transport,
+//                               command or URL), the "always allow" tools
+//   <dir>/connectors.json.bak   previous connectors.json that still parsed
+//   <dir>/secrets/*.sec         everything secret, encrypted (SecretStore): OAuth tokens,
+//                               MCP tokens, API keys. *.sec.bak is the previous blob.
 #pragma once
 
 #include <QHash>
@@ -104,6 +105,10 @@ private:
     GithubConnector *m_github = nullptr;
     QSet<QString> m_always;
     bool m_loading = false;
+    // connectors.json is on disk but neither it nor its backup parsed.
+    // Saves are refused so a later edit cannot replace that file with an
+    // empty list.
+    bool m_configUnreadable = false;
     // tool name -> { definition fingerprint, schema }
     mutable QHash<QString, QPair<QString, ToolSchema>> m_schemaCache;
 };

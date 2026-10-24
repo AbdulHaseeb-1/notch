@@ -4,6 +4,7 @@
 #include "SecretStore.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -272,7 +273,16 @@ void GithubConnector::saveTokens()
     if (!m_secrets)
         return;
     const QJsonObject o{ { QStringLiteral("tokens"), m_tokens.toJson() }, { QStringLiteral("account"), account() } };
-    m_secrets->set(QStringLiteral("github.tokens"), QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    const QString payload = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    // GitHub refresh tokens are single-use: the old one is dead as soon as
+    // the new one is issued. The new one has to reach disk or the next
+    // launch looks revoked and forget() throws the sign-in away.
+    if (m_secrets->set(QStringLiteral("github.tokens"), payload))
+        return;
+    if (!m_secrets->persistent())
+        return;
+    if (!m_secrets->set(QStringLiteral("github.tokens"), payload))
+        qWarning("noch: the GitHub sign-in was refreshed but could not be saved. It keeps working until Noch quits.");
 }
 
 void GithubConnector::restore()

@@ -4,6 +4,7 @@
 #include "SecretStore.h"
 
 #include <QDateTime>
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -434,7 +435,16 @@ void GmailConnector::saveTokens()
     if (!m_secrets)
         return;
     const QJsonObject o{ { QStringLiteral("tokens"), m_tokens.toJson() }, { QStringLiteral("account"), account() } };
-    m_secrets->set(QStringLiteral("gmail.tokens"), QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    const QString payload = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+    // GitHub-style refresh rotation is not what Google does, but a failed
+    // write still has to be retried: the next launch would otherwise present
+    // a token the service has already replaced and then forget the sign-in.
+    if (m_secrets->set(QStringLiteral("gmail.tokens"), payload))
+        return;
+    if (!m_secrets->persistent())
+        return;   // held in memory for this run; set() already cached it
+    if (!m_secrets->set(QStringLiteral("gmail.tokens"), payload))
+        qWarning("noch: the Gmail sign-in was refreshed but could not be saved. It keeps working until Noch quits.");
 }
 
 void GmailConnector::restore()

@@ -1,5 +1,6 @@
 #include "DockController.h"
 
+#include "AppStorage.h"
 #include "SecretKeys.h"
 #include "WindowMonitor.h"
 
@@ -100,16 +101,14 @@ QString DockController::version() const
 
 QString DockController::dataDir() const
 {
-    const QSettings settings;
-    const QString dir = QFileInfo(settings.fileName()).absolutePath();
+    const QString dir = noch::storage::dataDir();
     QDir().mkpath(dir);
     return QDir::toNativeSeparators(dir);
 }
 
 QUrl DockController::settingsFileUrl() const
 {
-    const QSettings settings;
-    const QString file = settings.fileName();
+    const QString file = noch::storage::settingsFile();
     QDir().mkpath(QFileInfo(file).absolutePath());
     return QUrl::fromLocalFile(file);
 }
@@ -538,14 +537,14 @@ void DockController::syncStateSnapshot() const
     QSettings settings;
     settings.sync();
 
-    const QString dir = QFileInfo(settings.fileName()).absolutePath();
+    const QString dir = noch::storage::dataDir();
     QDir().mkpath(dir);
 
     QJsonObject root;
     root.insert(QStringLiteral("app"), QStringLiteral("Noch"));
     root.insert(QStringLiteral("version"), version());
     root.insert(QStringLiteral("updatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
-    root.insert(QStringLiteral("settingsFile"), QDir::toNativeSeparators(settings.fileName()));
+    root.insert(QStringLiteral("settingsFile"), QDir::toNativeSeparators(noch::storage::settingsFile()));
 
     QJsonArray pinned;
     for (const App &app : m_apps) {
@@ -564,11 +563,14 @@ void DockController::syncStateSnapshot() const
 
     root.insert(QStringLiteral("settings"), settingsSnapshot(settings));
 
-    QSaveFile out(QDir(dir).filePath(QStringLiteral("noch-state.json")));
+    QSaveFile out(noch::storage::stateFile());
     if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         out.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
         out.commit();
     }
+    // The ini backup is taken after the snapshot, from the file QSettings
+    // just flushed. A torn ini on the next launch is replaced from this copy.
+    noch::storage::backupSettingsFile(noch::storage::settingsFile());
 }
 
 void DockController::quit()

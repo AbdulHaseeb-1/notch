@@ -3,16 +3,17 @@
 // themselves live in ConnectorRegistry / Connector (see docs/connectors.md).
 #include "BuddyProviderInternal.h"
 
+#include "AppStorage.h"
+
 using namespace noch::buddyprovider;
 
 void BuddyProvider::startConnectors()
 {
-    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (base.isEmpty())
-        base = QDir::homePath() + QStringLiteral("/.noch");
-    // Under Noch's data folder, which the policy treats as private: Buddy cannot read the
-    // list of servers or the saved sign-ins with its own tools, nor change them.
-    m_connectors->setStorageDir(QDir(base).filePath(QStringLiteral("connectors")));
+    // Same directory as noch.ini (see AppStorage). An older build kept this
+    // tree under AppDataLocation; import that once, without replacing
+    // anything already in the new folder.
+    noch::storage::importLegacyConnectors();
+    m_connectors->setStorageDir(noch::storage::connectorsDir());
     m_connectors->load();
     syncConnectorPolicy();
 }

@@ -1,6 +1,7 @@
 // SecretStore: values are encrypted at rest (DPAPI on Windows), bound to their key,
 // removable, and held in memory only when there is nowhere safe to put them.
 #include <QtTest>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include "SecretStore.h"
@@ -75,7 +76,36 @@ private slots:
             file.write("not a dpapi blob");
         }
         SecretStore fresh(dir.path());
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("could not be unlocked")));
         QVERIFY(fresh.get("k").isEmpty());
+    }
+
+    void tornFileFallsBackToThePreviousCopy() {
+        if (!secrets::encryptionAvailable())
+            QSKIP("Encryption at rest needs DPAPI (Windows).");
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        {
+            SecretStore s(dir.path());
+            QVERIFY(s.set("gmail.tokens", "refresh-one"));
+            QVERIFY(s.set("gmail.tokens", "refresh-two"));
+        }
+        const QStringList files = QDir(dir.path()).entryList({ QStringLiteral("*.sec") }, QDir::Files);
+        QCOMPARE(files.size(), 1);
+        {
+            QFile torn(QDir(dir.path()).filePath(files.first()));
+            QVERIFY(torn.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            QCOMPARE(torn.write("torn"), qint64(4));
+        }
+        SecretStore fresh(dir.path());
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("restored the previous copy")));
+        QCOMPARE(fresh.get("gmail.tokens"), QStringLiteral("refresh-one"));
+        // The torn file was replaced, so the next launch does not warn again.
+        SecretStore again(dir.path());
+        QCOMPARE(again.get("gmail.tokens"), QStringLiteral("refresh-one"));
+        again.remove("gmail.tokens");
+        QVERIFY(QDir(dir.path()).entryList({ QStringLiteral("*.sec") }, QDir::Files).isEmpty());
+        QVERIFY(QDir(dir.path()).entryList({ QStringLiteral("*.sec.bak") }, QDir::Files).isEmpty());
     }
 
     void removeAndPrefix() {

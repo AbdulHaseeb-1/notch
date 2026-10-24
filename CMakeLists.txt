@@ -47,6 +47,7 @@ endfunction()
 
 # common: header-only helpers, no dependencies.
 add_library(noch_common INTERFACE
+    src/common/AppStorage.h
     src/common/ImageAlpha.h
     src/common/SecretKeys.h
     src/common/ShapeRegion.h
@@ -76,6 +77,12 @@ add_library(noch_desktop STATIC
 target_include_directories(noch_desktop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/desktop)
 target_link_libraries(noch_desktop PUBLIC Qt6::Core Qt6::Gui Qt6::Quick
                       PRIVATE noch_common)
+# WindowMonitor.cpp calls DwmGetWindowAttribute. Static libraries do not
+# absorb that import, so every consumer (the app and the tests) needs dwmapi
+# on the link line. Attaching it here propagates it.
+if(WIN32)
+    target_link_libraries(noch_desktop PUBLIC dwmapi)
+endif()
 noch_apply_warnings(noch_desktop)
 
 # platform: windowing, hotkeys, appearance, power. Uses desktop's
@@ -97,6 +104,11 @@ add_library(noch_platform STATIC
 target_include_directories(noch_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform)
 target_link_libraries(noch_platform PUBLIC Qt6::Core Qt6::Gui
                       PRIVATE noch_common noch_desktop)
+# FullscreenWatcher.cpp calls DwmGetWindowAttribute; PowerActions.cpp calls
+# SetSuspendState. Same static-library propagation as noch_desktop.
+if(WIN32)
+    target_link_libraries(noch_platform PUBLIC dwmapi powrprof)
+endif()
 noch_apply_warnings(noch_platform)
 
 # media: player, hub, Windows media sessions, yt-dlp. Cross-area uses are
@@ -303,7 +315,8 @@ add_library(noch_agent STATIC
 )
 target_include_directories(noch_agent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/agent)
 target_link_libraries(noch_agent PUBLIC noch_agent_core noch_connectors noch_chat noch_media
-                             Qt6::Core Qt6::Gui Qt6::Network)
+                             Qt6::Core Qt6::Gui Qt6::Network
+                      PRIVATE noch_common)
 noch_apply_warnings(noch_agent)
 
 qt_add_executable(noch src/main.cpp src/app/QmlSingletons.h)

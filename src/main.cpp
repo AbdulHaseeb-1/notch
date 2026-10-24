@@ -1,21 +1,16 @@
 #include <QCoreApplication>
 #include <QDir>
-#include <QFile>
-#include <QFileInfo>
 #include <QGuiApplication>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QLockFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QSettings>
-#include <QStandardPaths>
 #include <QTimer>
 #include <QWindow>
 
 #include "AppIconProvider.h"
+#include "AppStorage.h"
 #include "AppSearch.h"
 #include "AppSecrets.h"
 #include "Appearance.h"
@@ -47,78 +42,6 @@
 #include "WindowMonitor.h"
 #include "YtDlp.h"
 
-namespace {
-
-void initializeSafeStorage()
-{
-    // Persist all settings and app data to %APPDATA%/noch/noch.ini (and a
-    // human-readable JSON backup noch-state.json) instead of only the Registry.
-    QSettings::setDefaultFormat(QSettings::IniFormat);
-    QString configRoot = QDir::fromNativeSeparators(qEnvironmentVariable("APPDATA"));
-    if (configRoot.isEmpty())
-        configRoot = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-    if (!configRoot.isEmpty())
-        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, configRoot);
-
-    QSettings ini;
-    const QString dataDir = QFileInfo(ini.fileName()).absolutePath();
-    QDir().mkpath(dataDir);
-
-    // Retired voice settings from earlier designs: the pre-Deepgram cloud
-    // transcription keys, the speech-to-text engine choice (Deepgram is the
-    // only engine now) and the Kokoro spoken-answers settings (that voice is
-    // gone; the remaining voices are Google and Deepgram).
-    for (const char *key : { "ui/buddyVoiceBase", "ui/buddyVoiceKey", "ui/buddyVoiceModel", "ui/buddyVoiceLanguage",
-                             "ui/buddyWakeCloudOk", "ui/buddySttEngine", "ui/buddyTtsKokoroBase",
-                             "ui/buddyTtsKokoroVoice" })
-        ini.remove(QString::fromLatin1(key));
-
-    // The spoken-answers voice used to default to this computer's own voice
-    // (or a Kokoro server); both are gone, so an old choice becomes Google.
-    const QString ttsEngine = ini.value(QStringLiteral("ui/buddyTtsEngine")).toString();
-    if (ttsEngine == QLatin1String("system") || ttsEngine == QLatin1String("kokoro"))
-        ini.setValue(QStringLiteral("ui/buddyTtsEngine"), QStringLiteral("google"));
-
-    // Blur behind was removed (the desktop is never blurred now); drop its switch.
-    ini.remove(QStringLiteral("ui/blurBehind"));
-
-    // 1. One-time migration of any existing settings from the Windows Registry.
-    if (!ini.value(QStringLiteral("meta/migratedFromRegistry"), false).toBool()) {
-        QSettings reg(QSettings::NativeFormat, QSettings::UserScope,
-                      QStringLiteral("noch"), QStringLiteral("noch"));
-        const QStringList regKeys = reg.allKeys();
-        for (const QString &key : regKeys) {
-            if (!ini.contains(key))
-                ini.setValue(key, reg.value(key));
-        }
-        ini.setValue(QStringLiteral("meta/migratedFromRegistry"), true);
-        ini.sync();
-    }
-
-    // 2. If the INI file was ever deleted/reset, restore from noch-state.json if present.
-    const QString snapshotPath = QDir(dataDir).filePath(QStringLiteral("noch-state.json"));
-    if (!ini.value(QStringLiteral("dock/initialized"), false).toBool() && QFileInfo::exists(snapshotPath)) {
-        QFile f(snapshotPath);
-        if (f.open(QIODevice::ReadOnly)) {
-            const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
-            const QJsonObject savedSettings = root.value(QStringLiteral("settings")).toObject();
-            for (auto it = savedSettings.begin(); it != savedSettings.end(); ++it) {
-                if (it.value().isArray()) {
-                    QStringList list;
-                    for (const QJsonValue &v : it.value().toArray())
-                        list.append(v.toString());
-                    ini.setValue(it.key(), list);
-                } else {
-                    ini.setValue(it.key(), it.value().toVariant());
-                }
-            }
-            ini.sync();
-        }
-    }
-}
-
-} // namespace
-
 int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
@@ -134,7 +57,9 @@ int main(int argc, char *argv[])
     if (!instanceLock.tryLock(150))
         return 0;
 
-    initializeSafeStorage();
+    // Settings, the JSON snapshot and the secret vault share one directory.
+    // This also repairs a torn settings file before anything reads it.
+    noch::storage::install();
 
     // Enable per-pixel alpha so the Quick window can show only the notch.
     QQuickWindow::setDefaultAlphaBuffer(true);

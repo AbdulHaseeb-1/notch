@@ -151,6 +151,12 @@ noch_add_unit_test(tst_appsecrets
     SOURCES tests/tst_appsecrets.cpp
     LIBS noch_connectors noch_desktop noch_common Qt6::Core Qt6::Gui)
 
+# The shared settings directory: a torn ini is replaced from the backup,
+# and noch-state.json can fill an empty settings file.
+noch_add_unit_test(tst_appstorage
+    SOURCES tests/tst_appstorage.cpp
+    LIBS noch_common Qt6::Core)
+
 # The settings schema registry: table, bridge, and the QML default
 # projection (Main.qml's cfg reads its defaults from it).
 noch_add_unit_test(tst_settingsregistry

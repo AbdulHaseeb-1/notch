@@ -1,6 +1,7 @@
 #include "BuddyProviderInternal.h"
 #include "ToolRegistry.h"
 #include "MemoryStore.h"
+#include "AppStorage.h"
 
 using namespace noch::buddyprovider;
 
@@ -753,6 +754,9 @@ void BuddyProvider::syncPrivatePaths()
     const QString appdata = QDir::fromNativeSeparators(qEnvironmentVariable("APPDATA"));
     if (!appdata.isEmpty())
         priv << QDir(appdata).filePath(QStringLiteral("noch"));
+    // The vault and the settings file, wherever install() resolved them.
+    priv << noch::storage::dataDir();
+    priv << noch::storage::connectorsDir();
     m_policy.setPrivatePaths(priv);
 }
 

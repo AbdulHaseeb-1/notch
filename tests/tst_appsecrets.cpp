@@ -229,6 +229,26 @@ private slots:
                  QStringLiteral("gpt-4o-mini"));
     }
 
+    void migrationKeepsAKeyTheVaultAlreadyHolds()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        SecretStore store;
+        store.set(appsecrets::deepgramStoreKey(), QStringLiteral("from-vault"));
+        {
+            QSettings ini = tempIni(dir);
+            ini.setValue(QStringLiteral("ui/buddyDgKey"), QStringLiteral("from-ini"));
+            ini.sync();
+        }
+        {
+            QSettings ini = tempIni(dir);
+            appsecrets::migrateLegacySecrets(ini, store);
+        }
+        QCOMPARE(store.get(appsecrets::deepgramStoreKey()), QStringLiteral("from-vault"));
+        QSettings ini = tempIni(dir);
+        QVERIFY(!ini.contains(QStringLiteral("ui/buddyDgKey")));
+    }
+
     // ---- the snapshot exclusion ----------------------------------------
 
     void snapshotNeverContainsSecrets()

@@ -1,5 +1,6 @@
 #include "AppSecrets.h"
 
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -29,6 +30,13 @@ bool sweep(QSettings &settings, const QString &iniKey, SecretStore &store, const
     const QString value = settings.value(iniKey).toString();
     if (value.isEmpty())
         return false;
+    // The vault is the source of truth once it holds a value. A settings
+    // file restored from an older snapshot must not replace it.
+    const QString existing = store.get(storeKey);
+    if (!existing.isEmpty()) {
+        settings.remove(iniKey);
+        return true;
+    }
     store.set(storeKey, value);
     if (store.get(storeKey) != value)
         return false;   // the store could not take it: keep the plain copy
@@ -70,12 +78,18 @@ void migrateLegacySecrets(QSettings &settings, SecretStore &store)
                 continue;
             const QString key = entry.value(QStringLiteral("key")).toString();
             // Per entry: the field is stripped only once this entry's key
-            // is safely in the store (or there was no key to keep).
+            // is safely in the store (or there was no key to keep). A key
+            // the vault already holds is kept as-is.
             bool landed = key.isEmpty();
             if (!key.isEmpty()) {
                 const QString storeKey = providerStoreKey(it.key());
-                store.set(storeKey, key);
-                landed = store.get(storeKey) == key;
+                const QString existing = store.get(storeKey);
+                if (!existing.isEmpty()) {
+                    landed = true;
+                } else {
+                    store.set(storeKey, key);
+                    landed = store.get(storeKey) == key;
+                }
             }
             if (landed) {
                 entry.remove(QStringLiteral("key"));
@@ -108,10 +122,16 @@ void migrateLegacySecrets(QSettings &settings, SecretStore &store)
             target = providerStoreKey(provider);   // already there (JSON sweep): just clear
         else
             target = legacyChatStoreKey();
-        store.set(target, chatKey);
-        if (store.get(target) == chatKey) {
+        const QString existing = store.get(target);
+        if (!existing.isEmpty()) {
             settings.remove(chatIni);
             touched = true;
+        } else {
+            store.set(target, chatKey);
+            if (store.get(target) == chatKey) {
+                settings.remove(chatIni);
+                touched = true;
+            }
         }
     }
 
@@ -136,7 +156,16 @@ void AppSecrets::write(const QString &storeKey, const QString &value)
 {
     if (m_store->get(storeKey) == value)
         return;   // no change: no disk write, no binding churn
-    m_store->set(storeKey, value);
+    const bool stored = m_store->set(storeKey, value);
+    // A persistent store that refused the write still holds the previous
+    // value. Leave the bindings where they are so the UI does not pretend
+    // the new key was saved.
+    if (!stored && m_store->persistent() && m_store->get(storeKey) != value) {
+        qWarning("noch: could not save a secret to the vault. The previous value was kept.");
+        return;
+    }
+    if (m_store->get(storeKey) != value)
+        return;
     ++m_revision;
     emit changed();
 }
