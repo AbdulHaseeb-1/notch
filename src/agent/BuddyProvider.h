@@ -29,7 +29,6 @@
 #include "Skills.h"
 #include "MusicBackend.h"
 #include "StreamAccumulator.h"
-#include "TurnClassifier.h"
 #include "UserQuestions.h"
 
 // Backend that connects Noch's desktop buddy to an LLM and runs the
@@ -128,16 +127,6 @@ class BuddyProvider : public QObject
     Q_PROPERTY(ComputerUse *computer READ computer CONSTANT)
     Q_PROPERTY(QString streamText READ streamText NOTIFY streamTextChanged)
     Q_PROPERTY(bool streaming READ streaming NOTIFY streamTextChanged)
-    // JEV request classifier (see TurnClassifier.h): a small typed model that labels
-    // each request before the agent loop starts. It has its own endpoint, key and
-    // model, independent of the chat provider above. Off by default.
-    Q_PROPERTY(bool classifierEnabled READ classifierEnabled WRITE setClassifierEnabled NOTIFY classifierConfigChanged)
-    Q_PROPERTY(QString classifierBase READ classifierBase WRITE setClassifierBase NOTIFY classifierConfigChanged)
-    Q_PROPERTY(QString classifierKey READ classifierKey WRITE setClassifierKey NOTIFY classifierConfigChanged)
-    Q_PROPERTY(QString classifierModel READ classifierModel WRITE setClassifierModel NOTIFY classifierConfigChanged)
-    // The last valid result for the current run: { valid, intent, risk, effort,
-    // agent, tools, confidence, summary }; empty when the run was not classified.
-    Q_PROPERTY(QVariantMap lastClassification READ lastClassification NOTIFY lastClassificationChanged)
     // Long-term memory through Mem0 (see Mem0Client.h): "local" (the Docker stack in
     // docker/mem0, the default), "platform" (api.mem0.ai) or "custom" (memUrl).
     Q_PROPERTY(bool memEnabled READ memEnabled WRITE setMemEnabled NOTIFY memConfigChanged)
@@ -357,25 +346,6 @@ public:
     Q_INVOKABLE QString modelsUrl() const;
     Q_INVOKABLE QString defaultBase() const;
 
-    bool classifierEnabled() const { return m_classifier->enabled(); }
-    void setClassifierEnabled(bool on);
-    QString classifierBase() const { return m_classifier->base(); }
-    void setClassifierBase(const QString &base);
-    QString classifierKey() const { return m_classifier->key(); }
-    void setClassifierKey(const QString &key);
-    QString classifierModel() const { return m_classifier->model(); }
-    void setClassifierModel(const QString &model);
-    QVariantMap lastClassification() const;
-    // The URL the classifier posts to (for the settings hint).
-    Q_INVOKABLE QString classifierUrl() const { return m_classifier->endpoint(); }
-    // Seconds the classifier is resting after repeated failures (0 = active).
-    Q_INVOKABLE int classifierRestSeconds() const { return m_classifier->restSecondsLeft(); }
-    // Send a sample request to the classifier endpoint; answers classifierTestFinished().
-    // Works whether or not the classifier is switched on.
-    Q_INVOKABLE void testClassifier() { m_classifier->test(); }
-    // Tests tune the classifier's timeouts and resting period.
-    TurnClassifier *classifierClient() const { return m_classifier; }
-
     bool memEnabled() const { return m_mem->enabled(); }
     void setMemEnabled(bool on);
     QString memBackend() const { return m_mem->backend(); }
@@ -436,9 +406,6 @@ signals:
 
     void testFinished(bool ok, const QString &message);
     void modelsFetched(const QStringList &models);
-    void classifierConfigChanged();
-    void lastClassificationChanged();
-    void classifierTestFinished(bool ok, const QString &message);
     void memConfigChanged();
     void memTestFinished(bool ok, const QString &message);
 
@@ -495,8 +462,8 @@ private:
 
     // ---- safety, recovery and tracing ------------------------------------
     AgentPolicy m_policy;
-    // P3 hook bus: lifecycle events (PreToolUse/PostToolUse/Stop/
-    // SessionStart/PreCompact) with allow/deny/ask/defer + rewrites.
+    // P3 hook bus: lifecycle events (PreToolUse/PostToolUse) with
+    // allow/deny/ask/defer + rewrites.
     HookBus m_hookBus;
     void registerBuiltinHooks();
     // Last PreToolUse verdict, stashed by the policy hook for the gate's
@@ -618,16 +585,9 @@ private:
     QTimer m_streamEmitTimer;
     QString m_memoryIndexSnapshot;   // memoryIndex() taken at run start
     bool m_spokenRun = false;        // this run's reply is read aloud: short, plain prose
-    // JEV classifier: runs between "the user sent a request" and the first model
-    // turn. Fails open; a valid, confident result only narrows the run.
-    TurnClassifier *m_classifier = nullptr;
-    turnclass::Classification m_classification;   // this run's valid result (invalid = none)
-    bool m_classifyPending = false;               // the first model turn waits for the classifier
-    void dispatchAfterClassify(const QString &text);
-    void onClassified(quint64 token, const turnclass::Classification &result, int ms, const QString &error);
     QString memoryIndex(const QString &query = QString()) const;
     // Long-term memory (Mem0). Recall runs between "the user sent a request" and the
-    // classifier / first model turn, fails open, and adds what it finds to the system
+    // first model turn, fails open, and adds what it finds to the system
     // prompt. The exchange is saved after the reply, in the background.
     Mem0Client *m_mem = nullptr;
     QString m_memKeyTyped;           // the key as typed; empty = Local's generated one

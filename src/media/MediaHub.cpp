@@ -2,7 +2,6 @@
 
 #include "AudioDevices.h"
 #include "MusicPlayer.h"
-#include "RunningApps.h"
 #include "SmtcMedia.h"
 
 #include <QDateTime>
@@ -101,12 +100,11 @@ PalettePair extractCoverPalette(const QImage &cover, const QString &fallbackKind
 } // namespace
 
 MediaHub::MediaHub(MusicPlayer *player, SmtcMedia *smtc, AudioDevices *audio,
-                   RunningApps *runningApps, QObject *parent)
+                   QObject *parent)
     : QObject(parent)
     , m_player(player)
     , m_smtc(smtc)
     , m_audio(audio)
-    , m_runningApps(runningApps)
 {
     if (m_player) {
         connect(m_player, &MusicPlayer::trackChanged, this, &MediaHub::refresh);
@@ -209,11 +207,6 @@ QString MediaHub::sourceKind() const
     return {};
 }
 
-QString MediaHub::sourceExe() const
-{
-    return source() == QLatin1String("system") ? m_smtc->sourceExe() : QString();
-}
-
 QVariantList MediaHub::sources() const
 {
     QVariantList list;
@@ -266,16 +259,6 @@ QString MediaHub::artist() const
         return m_smtc ? m_smtc->artist() : QString();
     if (which == QLatin1String("local"))
         return m_player ? m_player->artist() : QString();
-    return {};
-}
-
-QString MediaHub::album() const
-{
-    const QString which = source();
-    if (which == QLatin1String("system"))
-        return m_smtc ? m_smtc->album() : QString();
-    if (which == QLatin1String("local"))
-        return m_player ? m_player->album() : QString();
     return {};
 }
 
@@ -369,20 +352,9 @@ bool MediaHub::canPrev() const
     return source() == QLatin1String("system") ? m_smtc->canPrev() : (m_player && m_player->count() > 0);
 }
 
-bool MediaHub::canShuffle() const
-{
-    return source() == QLatin1String("system") ? m_smtc->canShuffle() : true;
-}
-
 bool MediaHub::canRepeat() const
 {
     return source() == QLatin1String("system") ? m_smtc->canRepeat() : true;
-}
-
-bool MediaHub::shuffle() const
-{
-    return source() == QLatin1String("system") ? m_smtc->shuffle()
-                                               : (m_player ? m_player->shuffle() : false);
 }
 
 int MediaHub::repeatMode() const
@@ -420,19 +392,8 @@ void MediaHub::updateVisuals()
     else if (which == QLatin1String("local") && m_player && m_player->hasCover())
         img = m_player->coverImage();
 
-    qreal aspect = 1.0;
-    if (!img.isNull() && img.width() > 0 && img.height() > 0) {
-        const qreal raw = qreal(img.width()) / qreal(img.height());
-        if (raw > 1.18)
-            aspect = qBound(1.0, raw, 1.78);
-    } else if (kind == QLatin1String("youtube")) {
-        aspect = 1.65;
-    }
-
     const PalettePair pal = extractCoverPalette(img, kind);
-    m_coverAspect = aspect;
     m_accentColor = pal.accent;
-    m_ambientColor = pal.ambient;
     emit visualsChanged();
 }
 
@@ -554,14 +515,4 @@ void MediaHub::selectSource(const QString &id)
             m_smtc->selectSession(id);
     }
     refresh();
-}
-
-bool MediaHub::activateSourceApp()
-{
-    if (source() != QLatin1String("system") || !m_runningApps)
-        return false;
-    const QString exe = sourceExe();
-    if (exe.isEmpty())
-        return false;
-    return m_runningApps->activateApp(exe);
 }

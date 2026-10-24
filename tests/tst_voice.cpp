@@ -8,7 +8,6 @@
 #include <QTimer>
 #include <QtMath>
 
-#include "OrtRuntime.h"
 #include "PushToTalkKey.h"
 #include "VoiceAudio.h"
 #include "VoiceInput.h"
@@ -294,6 +293,17 @@ private slots:
 
     // ---- recording and transcribing ---------------------------------------------------------------
 
+    void theOnlyEngineIsDeepgram() {
+        VoiceInput v;   // no scripted engine: the real one
+        QCOMPARE(v.engine(), QStringLiteral("Deepgram nova-3"));
+        QVERIFY(!v.configured());
+        QVERIFY(v.problem().contains(QStringLiteral("Deepgram API key")));
+        v.setDeepgramApiBase(QStringLiteral("http://127.0.0.1:9"));   // never really call out from a test
+        v.setDeepgramKey(QStringLiteral("test_key_0123456789abcdef0123456789abcd"));
+        QVERIFY(v.configured());
+        QVERIFY(v.ready());   // a network engine has nothing to load
+    }
+
     void isOffUntilTheUserTurnsItOn() {
         Rig r;
         r.voice.setEnabled(false);
@@ -305,13 +315,13 @@ private slots:
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
     }
 
-    void refusesToRecordWhenTheModelIsMissing() {
+    void refusesToRecordWhenTheEngineCannotBeUsed() {
         Rig r;
-        r.stt.set([](FakeTranscriber &t) { t.problemText = QStringLiteral("The speech model is missing."); });
+        r.stt.set([](FakeTranscriber &t) { t.problemText = QStringLiteral("Add your Deepgram API key to use it for speech to text."); });
         QVERIFY(!r.voice.configured());
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         QVERIFY(!r.voice.beginListening());
-        QCOMPARE(failed.first().first().toString(), QStringLiteral("The speech model is missing."));
+        QCOMPARE(failed.first().first().toString(), QStringLiteral("Add your Deepgram API key to use it for speech to text."));
         QCOMPARE(r.mic->starts, 0);                        // nothing is recorded that cannot be used
         r.stt.set([](FakeTranscriber &t) { t.problemText.clear(); });
         QVERIFY(r.voice.configured());
@@ -319,23 +329,23 @@ private slots:
         r.voice.cancel();
     }
 
-    void theModelLoadsInTheBackgroundWhenVoiceIsTurnedOn() {
+    void theEngineIsReadyInTheBackgroundWhenVoiceIsTurnedOn() {
         Rig r;
         QTRY_VERIFY_WITH_TIMEOUT(r.voice.ready(), 3000);
         QVERIFY(r.voice.configured());
         QCOMPARE(r.voice.engine(), QStringLiteral("Fake"));
     }
 
-    void aModelThatWillNotLoadIsReportedAndStopsRecording() {
+    void anEngineThatWillNotStartIsReportedAndStopsRecording() {
         VoiceInput v;
         auto *t = new FakeTranscriber;
-        t->prepareError = QStringLiteral("The speech model did not load.");
+        t->prepareError = QStringLiteral("The speech engine did not start.");
         v.setTranscriber(std::unique_ptr<Transcriber>(t));
         auto *mic = new FakeCapture;
         v.setCapture(std::unique_ptr<AudioCapture>(mic));
         v.setEnabled(true);
         QTRY_VERIFY_WITH_TIMEOUT(!v.configured(), 3000);
-        QCOMPARE(v.problem(), QStringLiteral("The speech model did not load."));
+        QCOMPARE(v.problem(), QStringLiteral("The speech engine did not start."));
         QVERIFY(!v.ready());
         QSignalSpy failed(&v, &VoiceInput::failed);
         QVERIFY(!v.beginListening());
@@ -417,14 +427,14 @@ private slots:
 
     void aFailingEngineIsExplainedAndTheNextTryWorks() {
         Rig r;
-        r.stt.set([](FakeTranscriber &t) { t.errorText = QStringLiteral("Moonshine stopped while writing."); });
+        r.stt.set([](FakeTranscriber &t) { t.errorText = QStringLiteral("Deepgram stopped while writing."); });
         QSignalSpy failed(&r.voice, &VoiceInput::failed);
         QSignalSpy words(&r.voice, &VoiceInput::transcript);
         r.voice.beginListening();
         r.mic->feed(tone(1.0));
         r.voice.endListening();
         QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 5000);
-        QCOMPARE(failed.first().first().toString(), QStringLiteral("Moonshine stopped while writing."));
+        QCOMPARE(failed.first().first().toString(), QStringLiteral("Deepgram stopped while writing."));
         QCOMPARE(words.size(), 0);
         QCOMPARE(r.voice.state(), QStringLiteral("idle"));
         QVERIFY(!r.voice.error().isEmpty());
@@ -579,33 +589,6 @@ private slots:
         QCOMPARE(r.mic->stops, 3);
     }
 
-    // The real engine, end to end: speech in, words out, nothing leaves the process.
-    // Needs ONNX Runtime (NOCH_ORT_LIBRARY) and the model (NOCH_MOONSHINE_DIR).
-    void realMoonshineTurnsRealSpeechIntoWords() {
-        QString why;
-        if (!ortrt::load({}, &why))
-            QSKIP(qPrintable("ONNX Runtime is not available: " + why));
-        if (qEnvironmentVariable("NOCH_MOONSHINE_DIR").isEmpty())
-            QSKIP("Set NOCH_MOONSHINE_DIR to a folder with encoder.onnx and decoder.onnx to run this.");
-        VoiceInput v;                                   // the default engine
-        auto *mic = new FakeCapture;
-        v.setCapture(std::unique_ptr<AudioCapture>(mic));
-        v.setEnabled(true);
-        QVERIFY2(v.configured(), qPrintable(v.problem()));
-        QTRY_VERIFY_WITH_TIMEOUT(v.ready(), 20000);
-        QSignalSpy words(&v, &VoiceInput::transcript);
-        QSignalSpy failed(&v, &VoiceInput::failed);
-        QFile f(QStringLiteral(NOCH_TEST_DATA_DIR "/screenshot_tts.wav"));
-        QVERIFY(f.open(QIODevice::ReadOnly));
-        const QByteArray wav = f.readAll();
-        QVERIFY(v.beginListening());
-        mic->feed(wav.mid(wav.indexOf("data") + 8));
-        v.endListening();
-        QTRY_COMPARE_WITH_TIMEOUT(words.size() + failed.size(), 1, 20000);
-        QCOMPARE(failed.size(), 0);
-        QCOMPARE(words.first().first().toString(), QStringLiteral("Take a screenshot and show me my screen."));
-    }
-
     // ---- conditioning (DC removal + quiet gain) ---------------------------------------
 
     QByteArray biasedTone(double amp, qint16 dc)
@@ -684,34 +667,6 @@ private slots:
         // Homophones are not guessable on-device: "write" stays "write".
         QCOMPARE(voice::fixTranscript(QStringLiteral("write it down")),
                  QStringLiteral("Write it down."));
-    }
-
-    // ---- model status for settings -----------------------------------------------------
-
-    void sttModelStatusListsItsFiles() {
-        QTemporaryDir empty;
-        qputenv("NOCH_MOONSHINE_DIR", empty.path().toUtf8());
-        VoiceInput v;   // default engine: Moonshine Tiny
-        const QVariantMap s = v.sttModelStatus();
-        qputenv("NOCH_MOONSHINE_DIR", QByteArray());
-        QCOMPARE(s.value(QStringLiteral("engine")).toString(), QStringLiteral("Moonshine Tiny"));
-        const QVariantList files = s.value(QStringLiteral("files")).toList();
-        QCOMPARE(files.size(), 3);
-        QStringList names;
-        for (const QVariant &f : files) {
-            const QVariantMap m = f.toMap();
-            names << m.value(QStringLiteral("name")).toString();
-            if (m.value(QStringLiteral("name")).toString() != QStringLiteral("vocab.json")) {
-                // The model binaries must come from disk (nothing is bundled);
-                // vocab.json may legitimately fall back to the bundled copy.
-                QVERIFY2(m.value(QStringLiteral("path")).toString().contains(empty.path()),
-                         qPrintable(m.value(QStringLiteral("path")).toString()));
-                QVERIFY(!m.value(QStringLiteral("found")).toBool());
-            }
-        }
-        QVERIFY(names.contains(QStringLiteral("encoder.onnx")));
-        QVERIFY(names.contains(QStringLiteral("decoder.onnx")));
-        QVERIFY(names.contains(QStringLiteral("vocab.json")));
     }
 
     void theMeterRisesFastAndFallsSlowly() {

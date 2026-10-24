@@ -98,7 +98,9 @@ QString prettyToolName(const QString &name)
         return n;
     QString head = n.left(cut);
     const QString rest = n.mid(cut + 1).replace(QLatin1Char('_'), QLatin1Char(' '));
-    if (name.startsWith(QLatin1String("gmail_")) && !head.isEmpty())
+    if (name.startsWith(QLatin1String("github_")))
+        head = QStringLiteral("GitHub");
+    else if (name.startsWith(QLatin1String("gmail_")) && !head.isEmpty())
         head[0] = head[0].toUpper();
     return head + QStringLiteral(": ") + rest;
 }
@@ -107,6 +109,8 @@ QString iconForConnectorTool(const QString &name)
 {
     if (name.startsWith(QLatin1String("gmail_")))
         return QStringLiteral("mail");
+    if (name.startsWith(QLatin1String("github_")))
+        return QStringLiteral("code");
     return QStringLiteral("layers");
 }
 

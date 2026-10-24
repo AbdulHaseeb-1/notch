@@ -161,11 +161,6 @@ void BuddyProvider::sendMessage(const QString &text, const QVariantList &context
     m_continuedText.clear();
     m_continuations = 0;
     m_truncated = false;
-    if (m_classification.valid) {
-        m_classification = turnclass::Classification();
-        emit lastClassificationChanged();
-    }
-    m_classifyPending = false;
     m_computerBatchFailed = false;
     m_lastCacheMark = -1;
     // One memory listing per run: a stable system prompt keeps the prompt
@@ -392,15 +387,9 @@ void BuddyProvider::runDirectWebSearch(const QString &query)
 void BuddyProvider::cancel()
 {
     ++m_runGeneration;
-    m_classifyPending = false;
-    m_classifier->cancel();
     m_memPending = false;
     m_memToolPending = false;
     m_mem->cancelSearch();   // a save already on its way is left alone
-    if (m_classification.valid) {
-        m_classification = turnclass::Classification();
-        emit lastClassificationChanged();
-    }
     m_pendingTools.clear();
     m_completedTools.clear();
     m_retryTimer.stop();

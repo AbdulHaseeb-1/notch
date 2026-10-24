@@ -3,12 +3,8 @@
 #include <QAudioDevice>
 #include <QAudioFormat>
 #include <QAudioSource>
-#include <QDesktopServices>
-#include <QDir>
 #include <QMediaDevices>
 #include <QRegularExpression>
-#include <QUrl>
-#include <QVariantMap>
 
 #include "VoiceAudio.h"
 
@@ -95,8 +91,10 @@ std::unique_ptr<AudioCapture> makeMicrophoneCapture()
 
 // ---- the speech-to-text thread ---------------------------------------------------------------
 
-// Loading the model and transcribing both take a while, so they happen here and not on
-// the thread that draws the UI. It only ever runs one request at a time, in order.
+// A synchronous engine's prepare() and transcribe() can take a while, so they happen
+// here and not on the thread that draws the UI. (Deepgram is asynchronous and never
+// uses this thread; synchronous engines are the scripted ones tests stand in.)
+// It only ever runs one request at a time, in order.
 class TranscribeWorker : public QObject
 {
     Q_OBJECT
@@ -124,9 +122,8 @@ private:
 
 VoiceInput::VoiceInput(QObject *parent)
     : QObject(parent)
-    , m_transcriber(makeMoonshineTranscriber(defaultMoonshineFolder()))
-    , m_modelFolder(defaultMoonshineFolder())
 {
+    applyEngine();   // the one engine: Deepgram, from the settings as they are now
     m_maxTimer.setSingleShot(true);
     connect(&m_maxTimer, &QTimer::timeout, this, [this] {
         if (m_state == State::Listening)
@@ -149,26 +146,14 @@ QString VoiceInput::engine() const
     return m_transcriber ? m_transcriber->name() : QString();
 }
 
-// Rebuilds the engine from the chosen kind and the Deepgram settings. A request in
-// flight is abandoned (its answer is dropped), which is what changing the engine means.
+// Rebuilds the engine from the Deepgram settings. A request in flight is
+// abandoned (its answer is dropped), which is what changing the settings means.
 void VoiceInput::applyEngine()
 {
-    if (m_sttEngine == QLatin1String("deepgram"))
-        setTranscriber(makeDeepgramTranscriber(m_dg));
-    else
-        setTranscriber(makeMoonshineTranscriber(defaultMoonshineFolder()));
+    setTranscriber(makeDeepgramTranscriber(m_dg));
 }
 
-void VoiceInput::setSttEngine(const QString &engine)
-{
-    const QString e = engine == QLatin1String("deepgram") ? engine : QStringLiteral("local");
-    if (e == m_sttEngine)
-        return;
-    m_sttEngine = e;
-    applyEngine();
-}
-
-#define NOCH_VOICE_DG_SETTER(Name, member)                                          void VoiceInput::Name(const QString &value)                                     {                                                                                   const QString v = value.trimmed();                                              if (v == m_dg.member)                                                               return;                                                                     m_dg.member = v;                                                                if (m_sttEngine == QLatin1String("deepgram"))                                       applyEngine();                                                          }
+#define NOCH_VOICE_DG_SETTER(Name, member)                                          void VoiceInput::Name(const QString &value)                                     {                                                                                   const QString v = value.trimmed();                                              if (v == m_dg.member)                                                               return;                                                                     m_dg.member = v;                                                                applyEngine();                                                          }
 NOCH_VOICE_DG_SETTER(setDeepgramKey, apiKey)
 NOCH_VOICE_DG_SETTER(setDeepgramModel, model)
 NOCH_VOICE_DG_SETTER(setDeepgramLanguage, language)
@@ -186,18 +171,7 @@ void VoiceInput::setDeepgramKeyterms(const QString &terms)
     if (list == m_dg.keyterms)
         return;
     m_dg.keyterms = list;
-    if (m_sttEngine == QLatin1String("deepgram"))
-        applyEngine();
-}
-
-QVariantMap VoiceInput::sttModelStatus() const
-{
-    QVariantMap s;
-    s[QStringLiteral("engine")] = engine();
-    s[QStringLiteral("ready")] = configured() && m_ready;
-    s[QStringLiteral("problem")] = problem();
-    s[QStringLiteral("files")] = m_transcriber ? m_transcriber->modelFiles() : QVariantList();
-    return s;
+    applyEngine();
 }
 
 QString VoiceInput::problem() const
@@ -212,12 +186,6 @@ QString VoiceInput::problem() const
 bool VoiceInput::configured() const
 {
     return problem().isEmpty();
-}
-
-void VoiceInput::openModelFolder() const
-{
-    QDir().mkpath(m_modelFolder);
-    QDesktopServices::openUrl(QUrl::fromLocalFile(m_modelFolder));
 }
 
 void VoiceInput::setTranscriber(std::unique_ptr<Transcriber> transcriber)

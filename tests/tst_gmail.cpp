@@ -112,7 +112,7 @@ class TstGmail : public QObject
                         QUrl(google.base() + "/revoke"), google.base() + "/gmail/v1");
         if (store)
             g->setSecretStore(store);
-        g->setClientCredentials("client-id.apps.example.com", "");
+        g->setClientId("client-id.apps.example.com");
         g->setOpener(approve());
         QSignalSpy changed(g, &Connector::changed);
         g->connectAccount();
@@ -268,7 +268,7 @@ private slots:
         SecretStore again(dir.path());
         GmailConnector g2;
         g2.setSecretStore(&again);
-        g2.setClientCredentials("client-id.apps.example.com", "");
+        g2.setClientId("client-id.apps.example.com");
         g2.restore();
         if (store.persistent()) {
             QCOMPARE(g2.state(), connectors::State::Connected);
@@ -284,7 +284,7 @@ private slots:
         };
         GmailConnector g;
         g.setEndpoints(QUrl("https://accounts.example.com/auth"), QUrl(google.base() + "/token"), QUrl(google.base() + "/revoke"), google.base());
-        g.setClientCredentials("nope", "");
+        g.setClientId("nope");
         g.setOpener(approve());
         g.connectAccount();
         QTRY_COMPARE_WITH_TIMEOUT(g.state(), connectors::State::Error, 8000);
@@ -416,7 +416,7 @@ private slots:
         GmailConnector g2;
         g2.setEndpoints(QUrl("https://accounts.example.com/auth"), QUrl(google.base() + "/token"), QUrl(google.base() + "/revoke"), google.base() + "/gmail/v1");
         g2.setSecretStore(&store);
-        g2.setClientCredentials("client-id.apps.example.com", "");
+        g2.setClientId("client-id.apps.example.com");
         g2.restore();
         QCOMPARE(g2.state(), connectors::State::Connected);
         const int before = tokenCalls;
@@ -475,7 +475,7 @@ private slots:
     void changingTheClientIdSignsOut() {
         std::unique_ptr<GmailConnector> g(connected());
         QCOMPARE(g->state(), connectors::State::Connected);
-        g->setClientCredentials("another-client.apps.example.com", "");
+        g->setClientId("another-client.apps.example.com");
         QCOMPARE(g->state(), connectors::State::Disconnected);
         QVERIFY(g->tools().isEmpty());
     }

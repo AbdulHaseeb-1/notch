@@ -37,7 +37,6 @@ class MusicPlayer final : public QObject
     Q_PROPERTY(int state READ state NOTIFY stateChanged)
     Q_PROPERTY(qreal volume READ volume WRITE setVolume NOTIFY volumeChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
-    Q_PROPERTY(bool repeatAll READ repeatAll WRITE setRepeatAll NOTIFY repeatAllChanged)
     Q_PROPERTY(int repeatMode READ repeatMode WRITE setRepeatMode NOTIFY repeatModeChanged)
     Q_PROPERTY(bool shuffle READ shuffle WRITE setShuffle NOTIFY shuffleChanged)
     Q_PROPERTY(bool hasCover READ hasCover NOTIFY coverChanged)
@@ -61,8 +60,6 @@ public:
     void setVolume(qreal volume);
     bool muted() const { return m_muted; }
     void setMuted(bool muted);
-    bool repeatAll() const { return m_repeatMode > 0; }
-    void setRepeatAll(bool repeat);
     int repeatMode() const { return m_repeatMode; }
     void setRepeatMode(int mode);
     bool shuffle() const { return m_shuffle; }
@@ -81,8 +78,6 @@ public:
     Q_INVOKABLE void seek(qint64 ms);
     Q_INVOKABLE void setIndex(int index);
     Q_INVOKABLE int addUrls(const QVariantList &urls);
-    Q_INVOKABLE void remove(int index);
-    Q_INVOKABLE void clear();
     // A song from the internet (see YtDlp): put next in the queue and played now, shown in
     // the pill with the title, artist and thumbnail it came with. It lives for this session
     // only: it is not saved with the queue, since its stream address expires.
@@ -91,7 +86,6 @@ public:
     // page, hand back a fresh OnlineTrack or an error.
     using OnlineResolver = std::function<void(const QString &webUrl, std::function<void(const OnlineTrack &, const QString &)> done)>;
     void setOnlineResolver(OnlineResolver resolver) { m_resolver = std::move(resolver); }
-    bool currentIsOnline() const;
     // The queue as it is saved (songs from the internet left out) and where the saved position falls in it.
     QStringList persistentPaths(int *savedIndex = nullptr) const;
     // Splits a notch drop into songs (queued) and everything else (returned
@@ -106,7 +100,6 @@ public:
     void stateChanged();
     void volumeChanged();
     void mutedChanged();
-    void repeatAllChanged();
     void repeatModeChanged();
     void shuffleChanged();
     void coverChanged();

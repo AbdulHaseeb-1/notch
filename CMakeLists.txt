@@ -19,88 +19,41 @@ qt_standard_project_setup()
 qt_policy(SET QTP0001 NEW)
 qt_policy(SET QTP0004 NEW)
 
+# One warning set for the app and every area library (see the note at the
+# bottom of this block: warnings are reported, not fatal).
+function(noch_apply_warnings target)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
+    elseif(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    endif()
+endfunction()
+
 # Source folders are grouped by responsibility. Keep this list explicit so a
 # new file is a deliberate addition and stale files do not silently compile.
-set(NOCH_SOURCES
-    src/main.cpp
+# The application sources are organised as per-area libraries below; the
+# executable itself only contributes main.cpp and the QML registration
+# header. Keep the library source lists explicit so a new file is a
+# deliberate addition and stale files do not silently compile.
 
-    src/agent/AgentPolicy.cpp
-    src/agent/AgentPolicyEvaluate.cpp
-    src/agent/AgentPolicy.h
-    src/agent/AgentPolicyInternal.h
-    src/agent/AgentPolicyRules.cpp
-    src/agent/AgentPolicySafety.cpp
-    src/agent/AgentPolicyShell.cpp
-    src/agent/BuddyProvider.cpp
-    src/agent/BuddyProviderConfig.cpp
-    src/agent/BuddyProviderConnectors.cpp
-    src/agent/BuddyProvider.h
-    src/agent/BuddyProviderInternal.h
-    src/agent/BuddyProviderContext.cpp
-    src/agent/BuddyProviderPlan.cpp
-    src/agent/BuddyProviderPrompts.cpp
-    src/agent/BuddyProviderProtocol.cpp
-    src/agent/BuddyProviderRun.cpp
-    src/agent/BuddyProviderStorage.cpp
-    src/agent/BuddyProviderTools.cpp
-    src/agent/BuddyProviderWeb.cpp
-    src/agent/BuddyProviderSkills.cpp
-    src/agent/ComputerUse.cpp
-    src/agent/ComputerUse.h
-    src/agent/ComputerUseActions.cpp
-    src/agent/ComputerUseCoordinates.cpp
-    src/agent/ComputerUseKeys.cpp
-    src/agent/ComputerUseKeys.h
-    src/agent/ComputerUseWin.cpp
-    src/agent/ProjectContext.cpp
-    src/agent/ProjectContext.h
-    src/agent/Skills.cpp
-    src/agent/Skills.h
-    src/agent/RunJournal.cpp
-    src/agent/RunJournal.h
-    src/agent/SavedRules.cpp
-    src/agent/SavedRules.h
-    src/agent/SessionLink.cpp
-    src/agent/SessionLink.h
-    src/agent/StreamAccumulator.cpp
-    src/agent/ToolSchemas.cpp
-    src/agent/ToolSchemas.h
-    src/agent/PlanValidator.cpp
-    src/agent/PlanValidator.h
-    src/agent/HookBus.cpp
-    src/agent/HookBus.h
-    src/agent/MemoryStore.cpp
-    src/agent/MemoryStore.h
-    src/agent/MemoryExtractor.h
-    src/agent/StreamAccumulator.h
-    src/agent/UserQuestions.cpp
-    src/agent/UserQuestions.h
-    src/agent/TurnClassifier.cpp
-    src/agent/TurnClassifier.h
-    src/agent/Mem0Client.cpp
-    src/agent/Mem0Client.h
-    src/agent/Connector.cpp
-    src/agent/Connector.h
-    src/agent/ConnectorRegistry.cpp
-    src/agent/ConnectorRegistry.h
-    src/agent/GmailConnector.cpp
-    src/agent/GmailConnector.h
-    src/agent/McpConnector.cpp
-    src/agent/McpConnector.h
-    src/agent/OAuthClient.cpp
-    src/agent/OAuthClient.h
-    src/agent/SecretStore.cpp
-    src/agent/SecretStore.h
+# --- Per-area static libraries -------------------------------------------------
+# The folders under src/ are built as one static library per area instead of
+# one monolithic executable target. Each library carries its own area's
+# include directory PUBLIC, so a translation unit can only include another
+# area's headers when it links that area's library — the layering in
+# docs/architecture.md is enforced by the build, not by convention. The
+# tests link these libraries too (see tests/CMakeLists.txt), so every
+# production translation unit is compiled exactly once.
 
-    src/app/QmlSingletons.h
-
-    src/chat/ChatSessions.cpp
-    src/chat/ChatSessions.h
-    src/chat/SessionFormat.h
-
+# common: header-only helpers, no dependencies.
+add_library(noch_common INTERFACE
     src/common/ImageAlpha.h
     src/common/ShapeRegion.h
+)
+target_include_directories(noch_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src/common)
 
+# desktop: app search, clipboard, dock, running apps. No cross-area includes.
+add_library(noch_desktop STATIC
     src/desktop/AppIconProvider.cpp
     src/desktop/AppIconProvider.h
     src/desktop/AppSearch.cpp
@@ -116,20 +69,15 @@ set(NOCH_SOURCES
     src/desktop/RunningApps.h
     src/desktop/WindowMonitor.cpp
     src/desktop/WindowMonitor.h
+)
+target_include_directories(noch_desktop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/desktop)
+target_link_libraries(noch_desktop PUBLIC Qt6::Core Qt6::Gui Qt6::Quick)
+noch_apply_warnings(noch_desktop)
 
-    src/media/AudioDevices.cpp
-    src/media/AudioDevices.h
-    src/media/MediaHub.cpp
-    src/media/MusicAgentBackend.cpp
-    src/media/MediaHub.h
-    src/media/MusicPlayer.cpp
-    src/media/MusicPlayer.h
-    src/media/SmtcMedia.cpp
-    src/media/SmtcMedia.h
-    src/media/OnlineTrack.h
-    src/media/YtDlp.cpp
-    src/media/YtDlp.h
-
+# platform: windowing, hotkeys, appearance, power. Uses desktop's
+# WindowMonitor (FullscreenWatcher.cpp) and common's ShapeRegion
+# (OverlayController.cpp) from .cpp files only, so both links are PRIVATE.
+add_library(noch_platform STATIC
     src/platform/Appearance.cpp
     src/platform/Appearance.h
     src/platform/FullscreenWatcher.cpp
@@ -141,7 +89,42 @@ set(NOCH_SOURCES
     src/platform/PowerActions.cpp
     src/platform/PowerActions.h
     src/platform/WinRtAbi.h
+)
+target_include_directories(noch_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform)
+target_link_libraries(noch_platform PUBLIC Qt6::Core Qt6::Gui
+                      PRIVATE noch_common noch_desktop)
+noch_apply_warnings(noch_platform)
 
+# media: player, hub, Windows media sessions, yt-dlp. Cross-area uses are
+# .cpp-only (ImageAlpha in MusicPlayer/SmtcMedia, RunningApps in MediaHub,
+# WinRtAbi in SmtcMedia), so those links are PRIVATE. MusicBackend.h — the
+# interface the agent consumes and MusicAgentBackend implements — lives
+# here with its implementer (it was in src/agent and in no CMake list).
+add_library(noch_media STATIC
+    src/media/AudioDevices.cpp
+    src/media/AudioDevices.h
+    src/media/MediaHub.cpp
+    src/media/MediaHub.h
+    src/media/MusicAgentBackend.cpp
+    src/media/MusicAgentBackend.h
+    src/media/MusicBackend.h
+    src/media/MusicPlayer.cpp
+    src/media/MusicPlayer.h
+    src/media/OnlineTrack.h
+    src/media/SmtcMedia.cpp
+    src/media/SmtcMedia.h
+    src/media/YtDlp.cpp
+    src/media/YtDlp.h
+)
+target_include_directories(noch_media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
+target_link_libraries(noch_media PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia Qt6::Quick
+                      PRIVATE noch_common noch_desktop noch_platform)
+noch_apply_warnings(noch_media)
+
+# voice: speech in/out, wake word, live agent. No cross-area includes at
+# all. The vendored ONNX Runtime headers are needed by OrtRuntime.cpp
+# only, so that include dir stays PRIVATE to this library.
+add_library(noch_voice STATIC
     src/voice/BuddySfx.cpp
     src/voice/BuddySfx.h
     src/voice/DeepgramAgent.cpp
@@ -149,9 +132,6 @@ set(NOCH_SOURCES
     src/voice/DeepgramProtocol.cpp
     src/voice/DeepgramProtocol.h
     src/voice/DeepgramTranscriber.cpp
-    src/voice/Moonshine.cpp
-    src/voice/Moonshine.h
-    src/voice/MoonshineTranscriber.cpp
     src/voice/OrtRuntime.cpp
     src/voice/OrtRuntime.h
     src/voice/PushToTalkKey.cpp
@@ -176,32 +156,144 @@ set(NOCH_SOURCES
     src/voice/WsClient.cpp
     src/voice/WsClient.h
 )
-qt_add_executable(noch ${NOCH_SOURCES})
+target_include_directories(noch_voice PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/voice
+                      PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime)
+target_link_libraries(noch_voice PUBLIC Qt6::Core Qt6::Gui Qt6::Network Qt6::Multimedia)
+noch_apply_warnings(noch_voice)
 
-set(NOCH_SOURCE_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/agent
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/app
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/chat
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/common
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/desktop
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/media
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/voice
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime
+# agent core: the policy engine and the provider-independent agent
+# machinery (tools, plans, hooks, memory, skills, turn classification).
+# Nothing in here includes a connector or provider header — the include
+# scan shows a clean DAG core <- connectors <- agent. Note all three
+# agent libraries share the flat src/agent directory, so within-agent
+# layering is enforced by the link graph, not by include dirs.
+add_library(noch_agent_core STATIC
+    src/agent/AgentPolicy.cpp
+    src/agent/AgentPolicyEvaluate.cpp
+    src/agent/AgentPolicy.h
+    src/agent/AgentPolicyInternal.h
+    src/agent/AgentPolicyRules.cpp
+    src/agent/AgentPolicySafety.cpp
+    src/agent/AgentPolicyShell.cpp
+    src/agent/ComputerUseKeys.cpp
+    src/agent/ComputerUseKeys.h
+    src/agent/HookBus.cpp
+    src/agent/HookBus.h
+    src/agent/Mem0Client.cpp
+    src/agent/Mem0Client.h
+    src/agent/MemoryExtractor.h
+    src/agent/MemoryStore.cpp
+    src/agent/MemoryStore.h
+    src/agent/OutputGuard.cpp
+    src/agent/OutputGuard.h
+    src/agent/PlanValidator.cpp
+    src/agent/PlanValidator.h
+    src/agent/ProjectContext.cpp
+    src/agent/ProjectContext.h
+    src/agent/RunJournal.cpp
+    src/agent/RunJournal.h
+    src/agent/SavedRules.cpp
+    src/agent/SavedRules.h
+    src/agent/Skills.cpp
+    src/agent/Skills.h
+    src/agent/StreamAccumulator.cpp
+    src/agent/StreamAccumulator.h
+    src/agent/ToolSchemas.cpp
+    src/agent/ToolSchemas.h
+    src/agent/UserQuestions.cpp
+    src/agent/UserQuestions.h
 )
-add_library(noch_includes INTERFACE)
-target_include_directories(noch_includes INTERFACE ${NOCH_SOURCE_INCLUDE_DIRS})
+target_include_directories(noch_agent_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/agent)
+target_link_libraries(noch_agent_core PUBLIC Qt6::Core Qt6::Network)
+noch_apply_warnings(noch_agent_core)
+
+# chat: session storage. Its only cross-area use is
+# AgentPolicy::stripInvisible from ChatSessions.cpp, so agent_core is a
+# PRIVATE link (the dependency points at core, never at the provider).
+add_library(noch_chat STATIC
+    src/chat/ChatSessions.cpp
+    src/chat/ChatSessions.h
+    src/chat/SessionFormat.h
+)
+target_include_directories(noch_chat PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/chat)
+target_link_libraries(noch_chat PUBLIC Qt6::Core
+                      PRIVATE noch_agent_core)
+noch_apply_warnings(noch_chat)
+
+# connectors: the built-in apps (Gmail, GitHub), MCP servers, OAuth and
+# the secret store. Depends only on agent_core (Connector.h includes
+# ToolSchemas.h) — this is the plugin seam: a new provider is a new
+# Connector implementation in this library, registered with
+# ConnectorRegistry, and nothing else in the app needs to know.
+add_library(noch_connectors STATIC
+    src/agent/BuiltinOAuth.cpp
+    src/agent/BuiltinOAuth.h
+    src/agent/Connector.cpp
+    src/agent/Connector.h
+    src/agent/ConnectorRegistry.cpp
+    src/agent/ConnectorRegistry.h
+    src/agent/DeviceFlowClient.cpp
+    src/agent/DeviceFlowClient.h
+    src/agent/GithubConnector.cpp
+    src/agent/GithubConnector.h
+    src/agent/GmailConnector.cpp
+    src/agent/GmailConnector.h
+    src/agent/McpConnector.cpp
+    src/agent/McpConnector.h
+    src/agent/OAuthClient.cpp
+    src/agent/OAuthClient.h
+    src/agent/SecretStore.cpp
+    src/agent/SecretStore.h
+)
+target_include_directories(noch_connectors PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/agent)
+target_link_libraries(noch_connectors PUBLIC noch_agent_core Qt6::Core Qt6::Gui Qt6::Network)
+# McpConnector reports this as the client version; the app target has
+# always compiled it with the definition, so the library carries it too.
+target_compile_definitions(noch_connectors PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
+if(WIN32)
+    target_link_libraries(noch_connectors PRIVATE crypt32)   # SecretStore DPAPI
+endif()
+noch_apply_warnings(noch_connectors)
+
+# agent: the QML-facing BuddyProvider, computer use and the session
+# link. Sits on top of agent_core, connectors, chat and media (the
+# MusicBackend interface in BuddyProvider.h) — everything it includes
+# from those areas arrives through these PUBLIC links.
+add_library(noch_agent STATIC
+    src/agent/BuddyProvider.cpp
+    src/agent/BuddyProvider.h
+    src/agent/BuddyProviderConfig.cpp
+    src/agent/BuddyProviderConnectors.cpp
+    src/agent/BuddyProviderContext.cpp
+    src/agent/BuddyProviderInternal.h
+    src/agent/BuddyProviderPlan.cpp
+    src/agent/BuddyProviderPrompts.cpp
+    src/agent/BuddyProviderProtocol.cpp
+    src/agent/BuddyProviderRun.cpp
+    src/agent/BuddyProviderSkills.cpp
+    src/agent/BuddyProviderStorage.cpp
+    src/agent/BuddyProviderTools.cpp
+    src/agent/BuddyProviderWeb.cpp
+    src/agent/ComputerUse.cpp
+    src/agent/ComputerUse.h
+    src/agent/ComputerUseActions.cpp
+    src/agent/ComputerUseCoordinates.cpp
+    src/agent/ComputerUseWin.cpp
+    src/agent/SessionLink.cpp
+    src/agent/SessionLink.h
+)
+target_include_directories(noch_agent PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/agent)
+target_link_libraries(noch_agent PUBLIC noch_agent_core noch_connectors noch_chat noch_media
+                             Qt6::Core Qt6::Gui Qt6::Network)
+noch_apply_warnings(noch_agent)
+
+qt_add_executable(noch src/main.cpp src/app/QmlSingletons.h)
 
 target_compile_definitions(noch PRIVATE NOCH_VERSION="${PROJECT_VERSION}")
 
 # Warnings are reported, not fatal: the tree is not yet warning-free, so -Werror
 # would stop the build on existing code. Read the output and fix new ones.
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(noch PRIVATE -Wall -Wextra -Wshadow -Wnon-virtual-dtor)
-elseif(MSVC)
-    target_compile_options(noch PRIVATE /W4)
-endif()
+noch_apply_warnings(noch)
 
 # The QML files are compiled into the executable's resources, so the built
 # noch.exe is self-contained - no qml/ folder needed beside it at run time.
@@ -320,7 +412,6 @@ file(GLOB NOCH_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/
 # "Hey Buddy" classifier, ~2.8 MB). They are read from the resources at start-up;
 # a model dropped into %APPDATA%\noch\wakeword takes their place.
 file(GLOB NOCH_WAKEWORD_MODELS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS resources/wakeword/*.onnx)
-set(NOCH_MOONSHINE_VOCAB resources/moonshine/vocab.json)
 # Buddy's built-in Agent Skills (resources/skills/<name>/SKILL.md), read from the resources
 # by src/agent/Skills.cpp (see skills::builtinSkillsDir).
 file(GLOB_RECURSE NOCH_BUILTIN_SKILLS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS resources/skills/*)
@@ -330,7 +421,7 @@ qt_add_qml_module(noch
     VERSION 1.0
     DEPENDENCIES QtQuick
     QML_FILES ${NOCH_QML_FILES}
-    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS} ${NOCH_MOONSHINE_VOCAB} ${NOCH_BUILTIN_SKILLS}
+    RESOURCES ${NOCH_ICONS} ${NOCH_WAKEWORD_MODELS} ${NOCH_BUILTIN_SKILLS}
 )
 
 # Buddy's ring shader (GPU ring in Settings > Look & glow), compiled to .qsb for
@@ -347,9 +438,21 @@ qt_add_shaders(noch "noch_shaders"
 )
 
 # Lets the generated QML type registration find src/app/QmlSingletons.h.
-target_include_directories(noch PRIVATE ${NOCH_SOURCE_INCLUDE_DIRS})
+# Every other header main.cpp and the registration code need arrives
+# through the area libraries linked above — the flat all-areas include
+# list (the old noch_includes target) is gone entirely.
+target_include_directories(noch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
 
 target_link_libraries(noch PRIVATE
+    noch_common
+    noch_desktop
+    noch_platform
+    noch_media
+    noch_voice
+    noch_agent_core
+    noch_chat
+    noch_connectors
+    noch_agent
     Qt6::Core
     Qt6::Gui
     Qt6::Quick
@@ -365,6 +468,15 @@ set_target_properties(noch PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
+# qt_add_qml_module() puts the module's files in a "noch/" directory inside the
+# build dir. On Windows the executable is noch.exe and never collides with it;
+# on Linux the extensionless output file IS "noch", so the link fails with
+# "cannot open output file noch: Is a directory". Keep the Windows layout
+# (run.bat deploys build\noch.exe) and move only the non-Windows output.
+if(NOT WIN32)
+    set_target_properties(noch PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
 
 # ONNX Runtime runs the wake word models. Noch loads onnxruntime.dll when it is
 # needed (see src/voice/OrtRuntime.cpp) instead of linking it, so the app builds
@@ -404,47 +516,6 @@ if(WIN32 AND NOCH_FETCH_ONNXRUNTIME)
     if(EXISTS ${NOCH_ORT_DLL})
         add_custom_command(TARGET noch POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NOCH_ORT_DLL} $<TARGET_FILE_DIR:noch>)
-    endif()
-endif()
-
-# Speech to text: Moonshine Tiny (MIT licence), the quantized ONNX export from
-# onnx-community/moonshine-tiny-ONNX, run on this computer by ONNX Runtime. The two
-# model files (about 28 MB) are downloaded once at configure time, hash-checked,
-# and copied next to the executable (models/moonshine-tiny). Without them voice
-# input says what is missing; they can also be put in %APPDATA%\noch\models\moonshine-tiny.
-option(NOCH_FETCH_MOONSHINE "Download the Moonshine Tiny speech model (about 28 MB)" ON)
-if(NOCH_FETCH_MOONSHINE)
-    set(NOCH_MOONSHINE_REV a6da1241cd305dcd64eab1edbd615f2bb9aabb95)
-    set(NOCH_MOONSHINE_URL https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/${NOCH_MOONSHINE_REV}/onnx)
-    set(NOCH_MOONSHINE_DEPS ${CMAKE_BINARY_DIR}/_deps/moonshine-tiny)
-    file(MAKE_DIRECTORY ${NOCH_MOONSHINE_DEPS})
-    set(_moonshine_files
-        "encoder.onnx|encoder_model_quantized.onnx|c6fc4b7bc5af75c0591fd157a1f3829b533d18e9769a888fd95a62e470dd4f4a"
-        "decoder.onnx|decoder_model_merged_quantized.onnx|eed87831c3a6103534aae7d47a5d485025c659a1323901513961c39fe8a1a367")
-    set(_moonshine_ok TRUE)
-    foreach(_item IN LISTS _moonshine_files)
-        string(REPLACE "|" ";" _parts "${_item}")
-        list(GET _parts 0 _local)
-        list(GET _parts 1 _remote)
-        list(GET _parts 2 _hash)
-        if(NOT EXISTS ${NOCH_MOONSHINE_DEPS}/${_local})
-            message(STATUS "Downloading Moonshine Tiny (${_local})...")
-            file(DOWNLOAD ${NOCH_MOONSHINE_URL}/${_remote} ${NOCH_MOONSHINE_DEPS}/${_local}
-                 EXPECTED_HASH SHA256=${_hash} STATUS _status)
-            list(GET _status 0 _code)
-            if(NOT _code EQUAL 0)
-                file(REMOVE ${NOCH_MOONSHINE_DEPS}/${_local})
-                message(WARNING "Could not download the Moonshine model (${_status}). Voice input will ask for it: "
-                                "put encoder.onnx and decoder.onnx in %APPDATA%\\noch\\models\\moonshine-tiny.")
-                set(_moonshine_ok FALSE)
-            endif()
-        endif()
-    endforeach()
-    if(_moonshine_ok)
-        add_custom_command(TARGET noch POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:noch>/models/moonshine-tiny
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NOCH_MOONSHINE_DEPS}/encoder.onnx
-                    ${NOCH_MOONSHINE_DEPS}/decoder.onnx $<TARGET_FILE_DIR:noch>/models/moonshine-tiny)
     endif()
 endif()
 

@@ -61,11 +61,20 @@ void initializeSafeStorage()
     const QString dataDir = QFileInfo(ini.fileName()).absolutePath();
     QDir().mkpath(dataDir);
 
-    // Speech to text is Moonshine, on this computer. Forget what the old cloud
-    // transcription settings left behind, including the API key kept for them.
+    // Retired voice settings from earlier designs: the pre-Deepgram cloud
+    // transcription keys, the speech-to-text engine choice (Deepgram is the
+    // only engine now) and the Kokoro spoken-answers settings (that voice is
+    // gone; the remaining voices are Google and Deepgram).
     for (const char *key : { "ui/buddyVoiceBase", "ui/buddyVoiceKey", "ui/buddyVoiceModel", "ui/buddyVoiceLanguage",
-                             "ui/buddyWakeCloudOk" })
+                             "ui/buddyWakeCloudOk", "ui/buddySttEngine", "ui/buddyTtsKokoroBase",
+                             "ui/buddyTtsKokoroVoice" })
         ini.remove(QString::fromLatin1(key));
+
+    // The spoken-answers voice used to default to this computer's own voice
+    // (or a Kokoro server); both are gone, so an old choice becomes Google.
+    const QString ttsEngine = ini.value(QStringLiteral("ui/buddyTtsEngine")).toString();
+    if (ttsEngine == QLatin1String("system") || ttsEngine == QLatin1String("kokoro"))
+        ini.setValue(QStringLiteral("ui/buddyTtsEngine"), QStringLiteral("google"));
 
     // Blur behind was removed (the desktop is never blurred now); drop its switch.
     ini.remove(QStringLiteral("ui/blurBehind"));
@@ -176,7 +185,7 @@ int main(int argc, char *argv[])
     auto *openApps = new RunningApps(windowMonitor, &app);
     auto *audio = new AudioDevices(&app);
     auto *smtc = new SmtcMedia(&app);
-    auto *media = new MediaHub(player, smtc, audio, openApps, &app);
+    auto *media = new MediaHub(player, smtc, audio, &app);
     // Buddy drives the music pill through this: play, pause, skip, volume, Noch's queue.
     // Songs from YouTube, found and streamed without a browser (yt-dlp): Buddy plays them in the pill.
     auto *youtube = new YtDlp(&app);
@@ -192,27 +201,7 @@ int main(int argc, char *argv[])
     engine.addImageProvider(QStringLiteral("cover"), new CoverImageProvider(player));
     engine.addImageProvider(QStringLiteral("smtccover"), new SmtcCoverProvider(smtc));
     engine.addImageProvider(QStringLiteral("preview"), new RunningPreviewProvider());
-    engine.rootContext()->setContextProperty(QStringLiteral("overlay"), overlay);
-    engine.rootContext()->setContextProperty(QStringLiteral("dock"), dock);
-    engine.rootContext()->setContextProperty(QStringLiteral("player"), player);
-    engine.rootContext()->setContextProperty(QStringLiteral("appearance"), appearance);
     auto *iconSet = new IconSet(&app);
-    engine.rootContext()->setContextProperty(QStringLiteral("iconSet"), iconSet);
-    engine.rootContext()->setContextProperty(QStringLiteral("buddyProvider"), buddyProvider);
-    engine.rootContext()->setContextProperty(QStringLiteral("buddySfx"), buddySfx);
-    engine.rootContext()->setContextProperty(QStringLiteral("chatSessions"), chatSessions);
-    engine.rootContext()->setContextProperty(QStringLiteral("voiceInput"), voiceInput);
-    engine.rootContext()->setContextProperty(QStringLiteral("talkKey"), talkKey);
-    engine.rootContext()->setContextProperty(QStringLiteral("liveAgent"), live);
-    engine.rootContext()->setContextProperty(QStringLiteral("youtube"), youtube);
-    engine.rootContext()->setContextProperty(QStringLiteral("openApps"), openApps);
-    engine.rootContext()->setContextProperty(QStringLiteral("clipboard"), clipboard);
-    engine.rootContext()->setContextProperty(QStringLiteral("media"), media);
-    engine.rootContext()->setContextProperty(QStringLiteral("audio"), audio);
-    engine.rootContext()->setContextProperty(QStringLiteral("power"), power);
-    engine.rootContext()->setContextProperty(QStringLiteral("fullscreen"), fullscreen);
-    engine.rootContext()->setContextProperty(QStringLiteral("hotkey"), hotkey);
-    engine.rootContext()->setContextProperty(QStringLiteral("search"), search);
 
     // Same instances as typed QML singletons (see QmlSingletons.h).
     OverlaySingleton::s_singletonInstance = overlay;

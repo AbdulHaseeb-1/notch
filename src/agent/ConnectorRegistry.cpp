@@ -1,5 +1,6 @@
 #include "ConnectorRegistry.h"
 
+#include "GithubConnector.h"
 #include "GmailConnector.h"
 #include "McpConnector.h"
 
@@ -18,6 +19,9 @@ ConnectorRegistry::ConnectorRegistry(QObject *parent)
     m_gmail = new GmailConnector(this);
     m_gmail->setSecretStore(&m_secrets);
     addConnector(m_gmail);
+    m_github = new GithubConnector(this);
+    m_github->setSecretStore(&m_secrets);
+    addConnector(m_github);
 }
 
 void ConnectorRegistry::setStorageDir(const QString &dir)
@@ -69,7 +73,6 @@ void ConnectorRegistry::saveConfig()
     for (const QString &t : sorted)
         always.append(t);
     const QJsonObject root{ { QStringLiteral("version"), 1 },
-                            { QStringLiteral("gmail"), QJsonObject{ { QStringLiteral("clientId"), m_gmail->clientId() } } },
                             { QStringLiteral("mcp"), servers },
                             { QStringLiteral("alwaysAllow"), always } };
     QDir().mkpath(m_dir);
@@ -95,9 +98,10 @@ void ConnectorRegistry::load()
         if (!v.toString().isEmpty())
             m_always.insert(v.toString());
 
-    m_gmail->setClientCredentials(root.value(QStringLiteral("gmail")).toObject().value(QStringLiteral("clientId")).toString(),
-                                  m_secrets.get(QStringLiteral("gmail.client_secret")));
+    // Built-in apps use Noch's own client IDs (BuiltinOAuth); older connectors.json
+    // files may still carry a "gmail" block from when users pasted their own — ignored.
     m_gmail->restore();
+    m_github->restore();
 
     QList<McpConnector *> toStart;
     for (const QJsonValue &v : root.value(QStringLiteral("mcp")).toArray()) {
@@ -237,10 +241,6 @@ QVariantList ConnectorRegistry::connectorList() const
                        { QStringLiteral("status"), c->statusText() }, { QStringLiteral("account"), c->account() },
                        { QStringLiteral("configured"), c->configured() }, { QStringLiteral("permissions"), perms },
                        { QStringLiteral("tools"), tools } };
-        if (auto *g = qobject_cast<GmailConnector *>(c)) {
-            m.insert(QStringLiteral("clientId"), g->clientId());
-            m.insert(QStringLiteral("hasClientSecret"), g->hasClientSecret());
-        }
         if (auto *mc = qobject_cast<McpConnector *>(c)) {
             m.insert(QStringLiteral("transport"), mc->spec().transport);
             m.insert(QStringLiteral("target"), mc->spec().target);
@@ -265,17 +265,6 @@ void ConnectorRegistry::disconnectApp(const QString &id)
         c->disconnectAccount();
         saveConfig();
     }
-}
-
-void ConnectorRegistry::setGoogleClientId(const QString &clientId)
-{
-    m_gmail->setClientCredentials(clientId, m_secrets.get(QStringLiteral("gmail.client_secret")));
-    saveConfig();
-}
-
-void ConnectorRegistry::setGoogleClientSecret(const QString &secret)
-{
-    m_gmail->setClientCredentials(m_gmail->clientId(), secret);
 }
 
 QString ConnectorRegistry::uniqueMcpId(const QString &name) const
@@ -359,15 +348,4 @@ void ConnectorRegistry::removeConnector(const QString &id)
     m_schemaCache.clear();
     emit changed();
     emit toolsChanged();
-}
-
-QVariantList ConnectorRegistry::presets() const
-{
-    return {
-        QVariantMap{ { QStringLiteral("name"), QStringLiteral("GitHub") },
-                     { QStringLiteral("transport"), QStringLiteral("http") },
-                     { QStringLiteral("target"), QStringLiteral("https://api.githubcopilot.com/mcp/") },
-                     { QStringLiteral("secretsHint"), QStringLiteral("Authorization: Bearer <your GitHub personal access token>") },
-                     { QStringLiteral("help"), tr("GitHub's own MCP server. Create a fine-grained personal access token at github.com/settings/tokens with only the repositories and permissions you want Buddy to have.") } },
-    };
 }

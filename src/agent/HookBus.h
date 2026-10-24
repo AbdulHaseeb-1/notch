@@ -4,8 +4,7 @@
 // Conflicts resolve deny > defer > ask > allow; rewrites chain in
 // registration order. Existing harness pieces are reframed as hooks:
 // AgentPolicy.evaluate is the PreToolUse policy hook, guardToolOutput the
-// PostToolUse output-guard hook; Stop/PreCompact are defined for the
-// completion-verification (P4) and compaction protocols.
+// PostToolUse output-guard hook.
 #pragma once
 
 #include <QJsonObject>
@@ -13,7 +12,7 @@
 #include <QList>
 #include <functional>
 
-enum class HookEvent { PreToolUse, PostToolUse, Stop, SessionStart, PreCompact };
+enum class HookEvent { PreToolUse, PostToolUse };
 
 // Strength order matters for resolution: Deny beats everything.
 enum class HookDecision { Allow = 0, Ask = 1, Defer = 2, Deny = 3 };

@@ -14,6 +14,7 @@
 #include <QVariantMap>
 
 #include <algorithm>
+#include <cmath>
 
 #include "VoiceAudio.h"
 #include "WakeDetector.h"
@@ -173,6 +174,58 @@ bool confirmSustained(int &streak, float score, float threshold, int needed)
     return true;
 }
 
+QString phraseDisplayName(const QString &fileName)
+{
+    QString base = QFileInfo(fileName).completeBaseName();   // "hey_buddy"
+    base.replace(QLatin1Char('_'), QLatin1Char(' ')).replace(QLatin1Char('-'), QLatin1Char(' '));
+    QStringList words;
+    for (const QString &w : base.simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts)) {
+        QString t = w.toLower();
+        if (!t.isEmpty())
+            t[0] = t.at(0).toUpper();
+        words << t;
+    }
+    return words.isEmpty() ? fileName : words.join(QLatin1Char(' '));
+}
+
+QList<PhraseModel> discoverPhraseModels(const QString &userFolder, const QString &bundledDir)
+{
+    // The pipeline's own models are shared by every phrase; they are not phrases.
+    static const QStringList kPipeline = { QStringLiteral("melspectrogram.onnx"),
+                                           QStringLiteral("embedding_model.onnx") };
+    auto isPhrase = [&kPipeline](const QString &fileName) {
+        for (const QString &p : kPipeline)
+            if (fileName.compare(p, Qt::CaseInsensitive) == 0)
+                return false;
+        return true;
+    };
+    QHash<QString, PhraseModel> byName;
+    auto scan = [&byName, &isPhrase](const QString &dir, bool user) {
+        if (dir.isEmpty())
+            return;
+        const QFileInfoList files = QDir(dir).entryInfoList({ QStringLiteral("*.onnx") }, QDir::Files, QDir::Name);
+        for (const QFileInfo &f : files) {
+            if (!isPhrase(f.fileName()))
+                continue;
+            PhraseModel &pm = byName[f.fileName()];   // the user's copy is scanned second and wins
+            if (pm.fileName.isEmpty()) {
+                pm.fileName = f.fileName();
+                pm.name = phraseDisplayName(f.fileName());
+            }
+            pm.path = f.absoluteFilePath();
+            if (user)
+                pm.userAdded = true;
+            else
+                pm.builtin = true;
+        }
+    };
+    scan(bundledDir, false);
+    scan(userFolder, true);
+    QList<PhraseModel> out = byName.values();
+    std::sort(out.begin(), out.end(), [](const PhraseModel &a, const PhraseModel &b) { return a.fileName < b.fileName; });
+    return out;
+}
+
 QString spokenSummary(const QString &text, int maxChars)
 {
     QString s = text;
@@ -320,36 +373,21 @@ namespace {
 const QString kBundledDir = QStringLiteral(":/qt/qml/noch/resources/wakeword");
 const QString kMelName = QStringLiteral("melspectrogram.onnx");
 const QString kEmbedName = QStringLiteral("embedding_model.onnx");
-const QString kDefaultModel = QStringLiteral("hey_buddy.onnx");
 
-// A model file dropped into the user's folder wins over the bundled one. For the
-// phrase itself any .onnx there that is not one of the two shared feature
-// models counts (the newest, if several).
-QString userWakeModel(const QString &folder)
-{
-    const QFileInfoList files = QDir(folder).entryInfoList({ QStringLiteral("*.onnx") }, QDir::Files, QDir::Time);
-    for (const QFileInfo &f : files)
-        if (f.fileName() != kMelName && f.fileName() != kEmbedName)
-            return f.absoluteFilePath();
-    return QString();
-}
-
-QString featureModel(const QString &folder, const QString &name)
+// A model file dropped into the user's folder wins over the bundled one.
+QString featureModel(const QString &folder, const QString &bundledDir, const QString &name)
 {
     const QString user = QDir(folder).filePath(name);
     if (QFileInfo::exists(user))
         return user;
-    const QString bundled = kBundledDir + QLatin1Char('/') + name;
+    const QString bundled = QDir(bundledDir).filePath(name);
     return QFile::exists(bundled) ? bundled : QString();
 }
 
-QString wakeModelPath(const QString &folder)
+// The file a phrase id resolves to: the user's copy when there is one.
+QString phraseFilePath(const QString &folder, const QString &bundledDir, const QString &fileName)
 {
-    const QString user = userWakeModel(folder);
-    if (!user.isEmpty())
-        return user;
-    const QString bundled = kBundledDir + QLatin1Char('/') + kDefaultModel;
-    return QFile::exists(bundled) ? bundled : QString();
+    return featureModel(folder, bundledDir, fileName);
 }
 
 QByteArray slurp(const QString &path)
@@ -364,9 +402,11 @@ class WakeWorker : public QObject
 {
     Q_OBJECT
 public slots:
-    // Loads ONNX Runtime and the three models. Slow (tens of milliseconds to a
-    // second), so it runs here and not on the GUI thread.
-    void init(const QString &folder)
+    // Loads ONNX Runtime, the two shared models and one classifier per
+    // enabled phrase. Slow (tens of milliseconds to a second), so it runs
+    // here and not on the GUI thread. Runs again when the enabled set
+    // changes: the detector is rebuilt with the new classifiers.
+    void init(const QString &folder, const QString &bundledDir, const QStringList &phraseIds)
     {
         QString why;
         const QString appDir = QCoreApplication::applicationDirPath();
@@ -375,37 +415,59 @@ public slots:
             return;
         }
         WakeDetector::Models models;
-        models.melspectrogram = slurp(featureModel(folder, kMelName));
-        models.embedding = slurp(featureModel(folder, kEmbedName));
-        models.wakeword = slurp(wakeModelPath(folder));
-        if (models.melspectrogram.isEmpty() || models.embedding.isEmpty() || models.wakeword.isEmpty()) {
+        models.melspectrogram = slurp(featureModel(folder, bundledDir, kMelName));
+        models.embedding = slurp(featureModel(folder, bundledDir, kEmbedName));
+        QStringList loadedIds;
+        for (const QString &id : phraseIds) {
+            WakeDetector::Models::Phrase p;
+            p.name = wake::phraseDisplayName(id);
+            p.model = slurp(phraseFilePath(folder, bundledDir, id));
+            if (p.model.isEmpty())
+                continue;
+            models.phrases.append(p);
+            loadedIds << id;
+        }
+        if (models.melspectrogram.isEmpty() || models.embedding.isEmpty() || models.phrases.isEmpty()) {
             emit ready(false, tr("The wake word models could not be read."));
             return;
         }
-        if (!m_detector.load(models, &why)) {
+        auto detector = std::make_unique<WakeDetector>();
+        if (!detector->load(models, &why)) {
             emit ready(false, why);
             return;
         }
+        m_detector = std::move(detector);
+        m_phraseIds = loadedIds;
         emit ready(true, QString());
     }
 
     void feed(const QByteArray &pcm, quint64 generation)
     {
-        emit scored(m_detector.loaded() ? m_detector.feed(pcm) : 0.0f, generation);
+        // One best score per loaded phrase, in init() order.
+        QVector<float> scores(int(m_phraseIds.size()), 0.0f);
+        if (m_detector && m_detector->loaded()) {
+            std::vector<std::vector<float>> perPhrase;
+            m_detector->feed(pcm, nullptr, &perPhrase);
+            for (int i = 0; i < scores.size() && i < int(perPhrase.size()); ++i)
+                for (const float s : perPhrase[size_t(i)])
+                    scores[i] = std::max(scores[i], s);
+        }
+        emit scored(scores, generation);
     }
 
     void reset()
     {
-        if (m_detector.loaded())
-            m_detector.reset();
+        if (m_detector && m_detector->loaded())
+            m_detector->reset();
     }
 
 signals:
     void ready(bool ok, const QString &error);
-    void scored(float best, quint64 generation);
+    void scored(const QVector<float> &scores, quint64 generation);
 
 private:
-    WakeDetector m_detector;
+    std::unique_ptr<WakeDetector> m_detector;
+    QStringList m_phraseIds;
 };
 
 // ---- WakeWord ---------------------------------------------------------------------------
@@ -422,6 +484,7 @@ WakeWord::WakeWord(VoiceInput *voice, QObject *parent)
         emit timedOut();
     });
     m_modelFolder = QDir(QFileInfo(QSettings().fileName()).absolutePath()).filePath(QStringLiteral("wakeword"));
+    m_bundledDir = kBundledDir;
     if (m_voice) {
         connect(m_voice, &VoiceInput::stateChanged, this, &WakeWord::refresh);
         connect(m_voice, &VoiceInput::configChanged, this, [this] {
@@ -478,10 +541,9 @@ QString WakeWord::blockedReason() const
     // The local detector needs nothing more: the phrase is the model's.
     if (usingLocal())
         return QString();
-    // Without it the wake word would send everything the microphone hears to the speech
-    // service to check for the phrase. A cloud service never gets that.
-    if (!m_voice->engineIsLocal())
-        return tr("The wake word listens all the time, so it needs the on-device detector when speech to text is a cloud service.");
+    // No local detector: utterances are transcribed by Deepgram and compared
+    // with the phrase. VoiceInput being configured (checked above) is what
+    // makes that possible; without a Deepgram key its problem is the reason.
     return wake::phraseProblem(m_phrase);
 }
 
@@ -725,12 +787,24 @@ QString WakeWord::detector() const
     return m_local == Local::Ready ? QStringLiteral("local") : QStringLiteral("loading");
 }
 
+QList<wake::PhraseModel> WakeWord::enabledPhrases() const
+{
+    QHash<QString, wake::PhraseModel> byId;
+    for (const wake::PhraseModel &p : wake::discoverPhraseModels(m_modelFolder, m_bundledDir))
+        byId.insert(p.fileName, p);
+    QList<wake::PhraseModel> out;
+    for (const QString &id : m_wakeWords)
+        if (byId.contains(id))
+            out << byId.value(id);
+    return out;
+}
+
 bool WakeWord::localWanted() const
 {
     if (m_localWantedCache < 0)
-        m_localWantedCache = !wakeModelPath(m_modelFolder).isEmpty()
-                             && !featureModel(m_modelFolder, kMelName).isEmpty()
-                             && !featureModel(m_modelFolder, kEmbedName).isEmpty();
+        m_localWantedCache = !enabledPhrases().isEmpty()
+                             && !featureModel(m_modelFolder, m_bundledDir, kMelName).isEmpty()
+                             && !featureModel(m_modelFolder, m_bundledDir, kEmbedName).isEmpty();
     return m_localWantedCache == 1;
 }
 
@@ -750,6 +824,21 @@ void WakeWord::setModelFolder(const QString &folder)
     resetLocalDetector();
     refresh();
     emit detectorChanged();
+    emit phrasesChanged();
+}
+
+void WakeWord::setBundledDir(const QString &dir)
+{
+    if (dir == m_bundledDir)
+        return;
+    m_bundledDir = dir;
+    m_localWantedCache = -1;
+    m_local = Local::Untried;
+    m_localError.clear();
+    resetLocalDetector();
+    refresh();
+    emit detectorChanged();
+    emit phrasesChanged();
 }
 
 void WakeWord::openModelFolder() const
@@ -774,11 +863,158 @@ QVariantMap WakeWord::detectorModelStatus() const
             { QStringLiteral("bytes"), qint64(path.startsWith(QLatin1Char(':')) || !fi.exists() ? 0 : fi.size()) },
         });
     };
-    describe(kMelName, featureModel(m_modelFolder, kMelName));
-    describe(kEmbedName, featureModel(m_modelFolder, kEmbedName));
-    describe(QStringLiteral("wake word model (.onnx)"), wakeModelPath(m_modelFolder));
+    describe(kMelName, featureModel(m_modelFolder, m_bundledDir, kMelName));
+    describe(kEmbedName, featureModel(m_modelFolder, m_bundledDir, kEmbedName));
+    const QList<wake::PhraseModel> on = enabledPhrases();
+    describe(QStringLiteral("wake word model (.onnx)"), on.isEmpty() ? QString() : on.first().path);
     s[QStringLiteral("files")] = files;
+    s[QStringLiteral("phrases")] = phrases();
     return s;
+}
+
+QVariantList WakeWord::phrases() const
+{
+    QVariantList out;
+    for (const wake::PhraseModel &p : wake::discoverPhraseModels(m_modelFolder, m_bundledDir)) {
+        out.append(QVariantMap{
+            { QStringLiteral("id"), p.fileName },
+            { QStringLiteral("fileName"), p.fileName },
+            { QStringLiteral("name"), p.name },
+            { QStringLiteral("source"), p.userAdded ? QStringLiteral("user") : QStringLiteral("builtin") },
+            { QStringLiteral("builtin"), p.builtin },
+            { QStringLiteral("userAdded"), p.userAdded },
+            { QStringLiteral("enabled"), m_wakeWords.contains(p.fileName) },
+            { QStringLiteral("path"), p.path },
+        });
+    }
+    return out;
+}
+
+void WakeWord::setWakeWords(const QStringList &ids)
+{
+    QStringList clean;
+    for (const QString &id : ids) {
+        const QString t = id.trimmed();
+        if (!t.isEmpty() && !clean.contains(t))
+            clean << t;
+    }
+    if (clean == m_wakeWords)
+        return;
+    m_wakeWords = clean;
+    m_localWantedCache = -1;
+    emit wakeWordsChanged();
+    emit phrasesChanged();
+    reloadLocal();
+    refresh();
+}
+
+void WakeWord::setPhraseEnabled(const QString &id, bool on)
+{
+    if (on == m_wakeWords.contains(id))
+        return;
+    QStringList next = m_wakeWords;
+    if (on)
+        next << id;
+    else
+        next.removeAll(id);
+    setWakeWords(next);
+}
+
+void WakeWord::reloadLocal()
+{
+    ++m_detGeneration;      // scores scored by the old classifier set are stale
+    m_streaks.clear();
+    m_localBuf.clear();
+    if (m_local != Local::Untried) {
+        m_local = Local::Untried;
+        m_localError.clear();
+        emit detectorChanged();
+    }
+}
+
+QString WakeWord::addWakeWordModel(const QString &path)
+{
+    QString local = path.trimmed();
+    if (local.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive))
+        local = QUrl(local).toLocalFile();
+    const QFileInfo src(local);
+    if (!src.isFile())
+        return tr("That file could not be found.");
+    if (src.suffix().compare(QStringLiteral("onnx"), Qt::CaseInsensitive) != 0)
+        return tr("Wake words are .onnx files (openWakeWord models). Choose a file ending in .onnx.");
+    const QString fileName = src.fileName();
+    if (fileName.compare(kMelName, Qt::CaseInsensitive) == 0 || fileName.compare(kEmbedName, Qt::CaseInsensitive) == 0)
+        return tr("That is one of the shared speech models, not a wake word. Choose the wake word's own .onnx file.");
+    const QByteArray bytes = slurp(src.absoluteFilePath());
+    if (bytes.isEmpty())
+        return tr("That file could not be read.");
+    // Check it the way the detector will use it: an openWakeWord phrase takes
+    // the shared 16 x 96 features and returns one score. A model that fails
+    // here would only fail later, silently, in the detector.
+    QString why;
+    const QString appDir = QCoreApplication::applicationDirPath();
+    if (!ortrt::load({ m_modelFolder, appDir, appDir + QStringLiteral("/wakeword") }, &why))
+        return tr("The model could not be checked: ONNX Runtime is not available (%1).").arg(why);
+    ortrt::Session session;
+    if (!session.open(bytes, &why))
+        return tr("That is not a working ONNX model: %1").arg(why);
+    std::vector<float> features(size_t(WakeDetector::kWakeEmbeddings) * size_t(WakeDetector::kEmbedSize), 0.0f);
+    std::vector<float> out;
+    std::vector<int64_t> outShape;
+    if (!session.run(features.data(), { 1, WakeDetector::kWakeEmbeddings, WakeDetector::kEmbedSize }, &out, &outShape, &why)
+        || out.empty() || !std::isfinite(out.front()))
+        return tr("That model is not an openWakeWord wake word: it has to take the shared features and return a score.");
+    QDir().mkpath(m_modelFolder);
+    const QString target = QDir(m_modelFolder).filePath(fileName);
+    if (QFileInfo(target) != src) {
+        if (QFile::exists(target) && !QFile::remove(target))
+            return tr("The copy already in the models folder could not be replaced.");
+        if (!QFile::copy(src.absoluteFilePath(), target))
+            return tr("The model could not be copied into the models folder.");
+    }
+    m_localWantedCache = -1;
+    emit phrasesChanged();
+    if (!m_wakeWords.contains(fileName))
+        setWakeWords(m_wakeWords + QStringList{ fileName });   // on at once; reloads the detector
+    else
+        reloadLocal();   // same name, new bytes: the new copy is what should listen
+    refresh();
+    return QString();
+}
+
+QString WakeWord::removeWakeWordModel(const QString &id)
+{
+    QString name, path;
+    bool builtin = false, userAdded = false, found = false;
+    for (const wake::PhraseModel &p : wake::discoverPhraseModels(m_modelFolder, m_bundledDir)) {
+        if (p.fileName != id)
+            continue;
+        found = true;
+        name = p.name;
+        path = p.path;
+        builtin = p.builtin;
+        userAdded = p.userAdded;
+        break;
+    }
+    if (!found)
+        return tr("That wake word is not in the list.");
+    if (!userAdded)
+        return tr("“%1” is built in and cannot be removed. You can switch it off instead.").arg(name);
+    if (!QFile::remove(path))
+        return tr("The model file could not be deleted.");
+    m_localWantedCache = -1;
+    emit phrasesChanged();
+    if (!builtin && m_wakeWords.contains(id)) {
+        // Nothing is left under that name: it leaves the enabled set too.
+        QStringList next = m_wakeWords;
+        next.removeAll(id);
+        setWakeWords(next);
+    } else {
+        // It was shadowing a built-in phrase: the bundled copy takes over.
+        reloadLocal();
+        refresh();
+    }
+    return QString();
 }
 
 void WakeWord::setThreshold(double t)
@@ -804,12 +1040,18 @@ void WakeWord::startLocal()
         m_worker->moveToThread(&m_workerThread);
         connect(&m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
         connect(m_worker, &WakeWorker::ready, this, &WakeWord::onWorkerReady);
-        connect(m_worker, &WakeWorker::scored, this, &WakeWord::onWorkerScore);
+        connect(m_worker, &WakeWorker::scored, this, &WakeWord::onWorkerScores);
         m_workerThread.start();
     }
     setLocalState(Local::Loading);
     const QString folder = m_modelFolder;
-    QMetaObject::invokeMethod(m_worker, [w = m_worker, folder] { w->init(folder); }, Qt::QueuedConnection);
+    const QString bundled = m_bundledDir;
+    QStringList ids;
+    for (const wake::PhraseModel &p : enabledPhrases())
+        ids << p.fileName;
+    m_activeIds = ids;
+    QMetaObject::invokeMethod(m_worker, [w = m_worker, folder, bundled, ids] { w->init(folder, bundled, ids); },
+                              Qt::QueuedConnection);
 }
 
 void WakeWord::onWorkerReady(bool ok, const QString &error)
@@ -817,7 +1059,7 @@ void WakeWord::onWorkerReady(bool ok, const QString &error)
     if (ok) {
         setLocalState(Local::Ready);
     } else {
-        // Falls back to transcribing each sentence on this computer and comparing it
+        // Falls back to transcribing each sentence (Deepgram) and comparing it
         // with the phrase.
         qWarning().noquote() << "WakeWord: local detector unavailable:" << error;
         setLocalState(Local::Failed, error);
@@ -848,29 +1090,41 @@ void WakeWord::feedLocal(const QByteArray &pcm)
 void WakeWord::resetLocalDetector()
 {
     ++m_detGeneration;
-    m_wakeStreak = 0;
+    m_streaks.clear();
     m_localBuf.clear();
     if (m_worker && m_local == Local::Ready)
         QMetaObject::invokeMethod(m_worker, [w = m_worker] { w->reset(); }, Qt::QueuedConnection);
 }
 
-void WakeWord::onWorkerScore(float best, quint64 generation)
+void WakeWord::onWorkerScores(const QVector<float> &scores, quint64 generation)
 {
     --m_inflight;
     if (generation != m_detGeneration || m_mode != Mode::Listening || !m_micOpen)
         return;
-    // One hot chunk is not a wake phrase: require the score to sustain
-    // across consecutive callbacks (160 ms of "hey buddy", not a click).
-    if (!wake::confirmSustained(m_wakeStreak, best, float(m_threshold), kWakeStreakNeeded))
+    if (scores.size() != m_activeIds.size())
+        return;
+    // One hot chunk is not a wake phrase: require a phrase's score to sustain
+    // across consecutive callbacks (160 ms of it, not a click). Each phrase
+    // keeps its own streak.
+    int fired = -1;
+    for (int i = 0; i < scores.size(); ++i) {
+        if (wake::confirmSustained(m_streaks[m_activeIds.at(i)], scores.at(i), float(m_threshold), kWakeStreakNeeded)) {
+            fired = i;
+            break;
+        }
+    }
+    if (fired < 0)
         return;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (now - m_lastCommandMs < m_cooldownMs || now - m_lastWakeMs < m_cooldownMs)
         return;
     m_lastWakeMs = now;
+    const QString id = m_activeIds.at(fired);
     resetLocalDetector();       // what it just heard must not wake it a second time
+    emit wokePhrase(id, wake::phraseDisplayName(id));
     emit woke();
     if (!m_handsOff)
-        enterAwaiting();        // the request that follows is what is transcribed by Moonshine
+        enterAwaiting();        // the request that follows is what Deepgram transcribes
 }
 
 void WakeWord::fail(const QString &message)

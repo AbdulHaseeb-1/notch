@@ -99,19 +99,20 @@ Window {
         // for the phrase: a service on the internet needs this explicit yes.
         // How sure the local model has to be (0.2 easy .. 0.9 strict); 0.5 is its own default.
         property real buddyWakeThreshold: 0.5
+        // The wake phrases switched on, by model file name, comma separated
+        // (the Settings page and Wake keep this in step both ways).
+        property string buddyWakeWords: "hey_buddy.onnx"
         property bool buddySpeakReports: false
-        // ---- Spoken answers: "system" | "google" | "kokoro" -------------------
-        property string buddyTtsEngine: "system"
+        // ---- Spoken answers: "google" | "deepgram" -------------------
+        property string buddyTtsEngine: "google"
         property string buddyTtsGoogleKey: ""
         property string buddyTtsGoogleVoice: "Kore"
-        property string buddyTtsKokoroBase: "http://127.0.0.1:8880"
-        property string buddyTtsKokoroVoice: "af_heart"
         property real buddyTtsSpeed: 1.0
         property bool buddyTtsSpeakAll: false
         // ---- Deepgram: one API key for the live conversation, speech to text and the voice ----
         property string buddyDgKey: ""
-        // Speech to text for push-to-talk and the wake word: "local" (on this computer) or "deepgram".
-        property string buddySttEngine: "local"
+        // Speech to text for push-to-talk and the wake word is Deepgram (the
+        // wake phrase itself is still found on this computer).
         // Live conversation (Deepgram Voice Agent): listen / think / speak, all adjustable.
         // Where yt-dlp is (for songs from YouTube); "" = look in the usual places.
         property string buddyYtDlpPath: ""
@@ -154,15 +155,6 @@ Window {
         property bool buddyStreamReplies: true
         // Show what Buddy is doing while it works (steps, draft, reasoning).
         property bool buddyShowThinking: true
-        // JEV: a small decision model labels each request (intent, risk, effort,
-        // and the like) before the agent starts. Off by default: the request text goes
-        // to this endpoint, which is separate from the chat provider. An address
-        // ending in /systemone or /decisions is a decision model (yes/no questions);
-        // any other address is treated as a chat endpoint.
-        property bool buddyClassifierEnabled: false
-        property string buddyClassifierBase: "https://openrouter.ai/api/v1/systemone"
-        property string buddyClassifierKey: ""
-        property string buddyClassifierModel: "inception/mercury-decide:free"
         // ---- Long-term memory (Mem0) ------------------------------------------
         // "local" is the Docker stack in docker/mem0 (nothing leaves this computer),
         // "platform" is api.mem0.ai, "custom" is any address that serves the same API.
@@ -193,12 +185,11 @@ Window {
         cfg.buddyAllowTodoTask,
         cfg.buddyOfficialComputer, cfg.buddyComputerDetail, cfg.buddyMaxSteps, cfg.buddyAllowAskUser, cfg.buddyAllowScreenshots, cfg.buddyAllowMusic, cfg.buddyAllowConnectors, cfg.buddyAllowSkills, cfg.buddyDisabledSkills,
         cfg.buddyVoiceEnabled, cfg.buddyVoiceHotkey, cfg.buddyVoiceAutoSend,
-        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddySpeakReports,
-        cfg.buddyLiveEnabled, cfg.buddySttEngine, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel,
+        cfg.buddyWakeEnabled, cfg.buddyWakePhrase, cfg.buddyWakeThreshold, cfg.buddyWakeWords, cfg.buddySpeakReports,
+        cfg.buddyLiveEnabled, cfg.buddyLiveListenModel, cfg.buddyLiveLanguage, cfg.buddyLiveProvider, cfg.buddyLiveModel,
         cfg.buddyLiveVoice, cfg.buddyLiveSpeed, cfg.buddyLiveVolume, cfg.buddyLiveAudioMode, cfg.buddyLiveFollowUp, cfg.buddyLiveAskBuddy, cfg.buddyLiveEchoCancel, cfg.buddyLiveQuick, cfg.buddyLiveThinkCue,
-        cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsKokoroBase, cfg.buddyTtsKokoroVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
+        cfg.buddyTtsEngine, cfg.buddyTtsGoogleKey, cfg.buddyTtsGoogleVoice, cfg.buddyTtsSpeed, cfg.buddyTtsSpeakAll,
         cfg.buddyPermissionMode, cfg.buddyWorkspaceRoot, cfg.buddyRedactSecrets, cfg.buddyKeepTraces, cfg.buddyStreamReplies, cfg.buddyShowThinking,
-        cfg.buddyClassifierEnabled, cfg.buddyClassifierBase, cfg.buddyClassifierModel,
         cfg.buddyMemEnabled, cfg.buddyMemBackend, cfg.buddyMemUrl, cfg.buddyMemUserId, cfg.buddyMemLlmModel, cfg.buddyMemEmbedModel, cfg.buddyMemEmbedBase,
         cfg.buddySfxEnabled, cfg.buddySfxVolume, cfg.buddySfxStyle
     ].join("|")
@@ -569,20 +560,6 @@ Window {
             r.push({ x: musicDock.x - 8, y: 0, width: musicDock.width + 16, height: sliverH + 4, radius: 12 })
         pushBuddyRegions(r)
         Overlay.setInteractiveRegions(r)
-    }
-
-    // The JEV classifier's key: its own if set, otherwise the chat provider's key, but
-    // only when both point at the same https host (so a key never goes to another host).
-    function classifierKeyFor(ownKey, classifierBase, provider, chatBase, chatKey) {
-        if (String(ownKey).length > 0)
-            return String(ownKey)
-        const host = (u) => {
-            const m = /^https:\/\/([^\/:?#]+)/i.exec(String(u).trim())
-            return m ? m[1].toLowerCase() : ""
-        }
-        const chatHost = host(chatBase) || (provider === "opencode" ? "opencode.ai" : "")
-        const classHost = host(classifierBase)
-        return classHost.length > 0 && classHost === chatHost ? String(chatKey) : ""
     }
 
     Component.onCompleted: {
@@ -995,16 +972,6 @@ Window {
     Binding { target: BuddyAgent; property: "keepTraces"; value: cfg.buddyKeepTraces }
     Binding { target: BuddyAgent; property: "streamReplies"; value: cfg.buddyStreamReplies }
     Binding { target: BuddyAgent; property: "showThinking"; value: cfg.buddyShowThinking }
-    Binding { target: BuddyAgent; property: "classifierBase"; value: cfg.buddyClassifierBase }
-    // Own key if set; otherwise the OpenCode chat key, but only for an OpenCode address,
-    // so a key is never sent to a host it was not made for.
-    Binding {
-        target: BuddyAgent; property: "classifierKey"
-        value: root.classifierKeyFor(cfg.buddyClassifierKey, cfg.buddyClassifierBase,
-                                     cfg.buddyProvider, cfg.buddyApiBase, cfg.buddyApiKey)
-    }
-    Binding { target: BuddyAgent; property: "classifierModel"; value: cfg.buddyClassifierModel }
-    Binding { target: BuddyAgent; property: "classifierEnabled"; value: cfg.buddyClassifierEnabled }
     Binding { target: BuddyAgent; property: "memBackend"; value: cfg.buddyMemBackend }
     Binding { target: BuddyAgent; property: "memUrl"; value: cfg.buddyMemUrl }
     Binding { target: BuddyAgent; property: "memKey"; value: cfg.buddyMemKey }
@@ -1028,14 +995,24 @@ Window {
     Binding { target: Wake; property: "enabled"; value: cfg.buddyWakeEnabled }
     Binding { target: Wake; property: "phrase"; value: cfg.buddyWakePhrase }
     Binding { target: Wake; property: "threshold"; value: cfg.buddyWakeThreshold }
+    Binding { target: Wake; property: "wakeWords"; value: cfg.buddyWakeWords.split(",").filter((s) => s.trim().length > 0) }
+    // Adding a model in Settings switches it on inside Wake; write that back
+    // so the choice survives a restart. (The Binding above pushes the saved
+    // set down; this is the only way it comes back up.)
+    Connections {
+        target: Wake
+        function onWakeWordsChanged() {
+            const v = Wake.wakeWords.join(",")
+            if (cfg.buddyWakeWords !== v)
+                cfg.buddyWakeWords = v
+        }
+    }
     // With a live conversation the wake phrase starts it, and needs no speech to text of its own.
     Binding { target: Wake; property: "handsOff"; value: cfg.buddyLiveEnabled }
     Binding { target: Speech; property: "enabled"; value: cfg.buddySpeakReports }
     Binding { target: Speech; property: "engine"; value: cfg.buddyTtsEngine }
     Binding { target: Speech; property: "googleKey"; value: cfg.buddyTtsGoogleKey }
     Binding { target: Speech; property: "googleVoice"; value: cfg.buddyTtsGoogleVoice }
-    Binding { target: Speech; property: "kokoroBase"; value: cfg.buddyTtsKokoroBase }
-    Binding { target: Speech; property: "kokoroVoice"; value: cfg.buddyTtsKokoroVoice }
     Binding { target: Speech; property: "speed"; value: cfg.buddyTtsSpeed }
     Binding { target: Speech; property: "speakAll"; value: cfg.buddyTtsSpeakAll }
     // Deepgram: one key for the conversation, the listener and the voice.
@@ -1045,7 +1022,6 @@ Window {
     Binding { target: Voice; property: "deepgramModel"; value: cfg.buddyLiveListenModel }
     Binding { target: Voice; property: "deepgramLanguage"; value: cfg.buddyLiveLanguage }
     Binding { target: Voice; property: "deepgramKeyterms"; value: cfg.buddyLiveKeyterms }
-    Binding { target: Voice; property: "sttEngine"; value: cfg.buddySttEngine }
     Binding { target: Youtube; property: "configuredPath"; value: cfg.buddyYtDlpPath }
     Binding { target: Live; property: "enabled"; value: cfg.buddyLiveEnabled }
     Binding { target: Live; property: "apiKey"; value: cfg.buddyDgKey }

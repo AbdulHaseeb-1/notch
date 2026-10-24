@@ -43,8 +43,8 @@ struct TensorOut {
 };
 
 // One model. run() is the one-float-in, one-float-out case (the three models of
-// the openWakeWord pipeline); runNamed() takes any inputs by name (Moonshine's
-// decoder has 27) and returns the float outputs asked for.
+// the openWakeWord pipeline); runNamed() takes any inputs by name and returns
+// the float outputs asked for.
 class Session
 {
 public:

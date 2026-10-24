@@ -52,8 +52,9 @@ private slots:
         const QString dir = QStringLiteral(NOCH_WAKEWORD_DIR);
         models.melspectrogram = readFile(dir + "/melspectrogram.onnx");
         models.embedding = readFile(dir + "/embedding_model.onnx");
-        models.wakeword = readFile(dir + "/hey_buddy.onnx");
-        QVERIFY(!models.melspectrogram.isEmpty() && !models.embedding.isEmpty() && !models.wakeword.isEmpty());
+        models.phrases = { { QStringLiteral("Hey Buddy"), readFile(dir + "/hey_buddy.onnx") } };
+        QVERIFY(!models.melspectrogram.isEmpty() && !models.embedding.isEmpty()
+                && !models.phrases.first().model.isEmpty());
         ready = true;
     }
 
@@ -61,13 +62,57 @@ private slots:
     {
         WakeDetector d;
         WakeDetector::Models bad = models;
-        bad.wakeword = models.embedding;       // wrong input shape
+        bad.phrases = { { QStringLiteral("Hey Buddy"), models.embedding } };   // wrong input shape
         QString why;
         QVERIFY(!d.load(bad, &why));
         QVERIFY(!why.isEmpty());
         QVERIFY(!d.loaded());
-        bad.wakeword = QByteArray("not a model");
+        bad.phrases = { { QStringLiteral("Hey Buddy"), QByteArray("not a model") } };
         QVERIFY(!d.load(bad, &why));
+    }
+
+    void twoPhrasesShareTheSameFeatures()
+    {
+        // The same classifier under two names stands in for two different
+        // phrases: both must be scored from the one mel/embedding stream,
+        // step for step, so a caller can tell which phrase fired.
+        WakeDetector::Models two = models;
+        two.phrases.append({ QStringLiteral("Hey Max"), models.phrases.first().model });
+        WakeDetector d;
+        QVERIFY(d.load(two, nullptr));
+        QCOMPARE(d.phraseCount(), 2);
+        QCOMPARE(d.phraseNames(), QStringList({ QStringLiteral("Hey Buddy"), QStringLiteral("Hey Max") }));
+        const QByteArray pcm = wavPcm(QStringLiteral(NOCH_TEST_DATA_DIR "/hey_buddy_tts.wav"));
+        QVERIFY(!pcm.isEmpty());
+        std::vector<std::vector<float>> perPhrase;
+        const float best = d.feed(pcm, nullptr, &perPhrase);
+        QCOMPARE(perPhrase.size(), size_t(2));
+        QCOMPARE(perPhrase[0].size(), kHeyBuddyRef.size());
+        QCOMPARE(perPhrase[1].size(), kHeyBuddyRef.size());
+        for (size_t i = 0; i < kHeyBuddyRef.size(); ++i) {
+            QVERIFY2(std::fabs(perPhrase[0][i] - kHeyBuddyRef[i]) < 0.01f,
+                     qPrintable(QStringLiteral("phrase 0, step %1").arg(i)));
+            QVERIFY2(std::fabs(perPhrase[1][i] - perPhrase[0][i]) < 1e-4f,
+                     qPrintable(QStringLiteral("phrase 1 must score the same steps, step %1").arg(i)));
+        }
+        QVERIFY(best > 0.9f);
+        // And other speech wakes neither of them.
+        WakeDetector d2;
+        QVERIFY(d2.load(two, nullptr));
+        std::vector<std::vector<float>> pp2;
+        QVERIFY(d2.feed(wavPcm(QStringLiteral(NOCH_TEST_DATA_DIR "/other_phrase_tts.wav")), nullptr, &pp2) < 0.1f);
+        QCOMPARE(pp2.size(), size_t(2));
+    }
+
+    void aBadPhraseInTheSetIsRejectedAndNamed()
+    {
+        WakeDetector::Models bad = models;
+        bad.phrases.append({ QStringLiteral("Broken"), models.embedding });   // not a classifier
+        WakeDetector d;
+        QString why;
+        QVERIFY(!d.load(bad, &why));
+        QVERIFY2(why.contains(QStringLiteral("Broken")), qPrintable(why));
+        QVERIFY(!d.loaded());
     }
 
     void quietRoomScoresNothing()

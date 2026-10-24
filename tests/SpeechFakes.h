@@ -147,4 +147,41 @@ private:
     QByteArray lastPcm;
 };
 
+// The same scripted engine, shaped like the cloud service: asynchronous, no
+// worker thread, answers through the callback. This is the shape Deepgram has,
+// so wake-word tests can prove the follow-up works with a cloud engine.
+class AsyncFakeTranscriber : public Transcriber
+{
+public:
+    std::atomic<int> requests{0};
+    QString reply = QStringLiteral("hello world");
+    QString errorText;
+    QString problemText;
+    int delayMs = 0;
+
+    QString name() const override { return QStringLiteral("Fake cloud"); }
+    QString problem() const override { return problemText; }
+    QString prepare() override { return problemText; }
+    bool isAsync() const override { return true; }
+    QString transcribe(const QByteArray &, QString *error) override
+    {
+        if (error)
+            *error = QStringLiteral("The cloud engine runs asynchronously.");
+        return QString();
+    }
+    void transcribeAsync(const QByteArray &pcm16,
+                         std::function<void(const QString &text, const QString &error)> done) override
+    {
+        ++requests;
+        lastPcm = pcm16;
+        const QString text = errorText.isEmpty() ? reply : QString();
+        const QString error = errorText;
+        QTimer::singleShot(delayMs, [done, text, error] { done(text, error); });
+    }
+    QByteArray pcm() const { return lastPcm; }
+
+private:
+    QByteArray lastPcm;
+};
+
 } // namespace

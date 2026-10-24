@@ -57,13 +57,15 @@ accept shows up there, not in the middle of a conversation.
 
 ## Speech to text and voice, with Buddy's own model
 
-* `VoiceInput` has an engine switch (`sttEngine`): *local* (Moonshine) or *deepgram*
-  (`DeepgramTranscriber`, asynchronous, no worker thread). The wake word refuses to
-  stream the microphone to a cloud engine: it keeps using the on-device detector.
+* `VoiceInput`'s one speech-to-text engine is Deepgram (`DeepgramTranscriber`,
+  asynchronous, no worker thread): push-to-talk clips and the request spoken
+  after the wake word are both transcribed by it. Wake-word phrase detection
+  itself stays on this computer (openWakeWord); only what is spoken after the
+  phrase is sent.
 * `SpeechOut` has a *deepgram* engine. Each sentence is requested as raw PCM and
   streamed into a `StreamingPlayer` as it arrives, so the first sound comes at the
-  first bytes instead of after the whole sentence. Any failure falls back to the
-  system voice with the reason shown in Settings.
+  first bytes instead of after the whole sentence. A failure is shown in
+  Settings (`error`); there is no fallback voice.
 
 ## Tests
 

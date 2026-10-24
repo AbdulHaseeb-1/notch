@@ -5,7 +5,6 @@
 #include <QPointer>
 #include <QThread>
 #include <QTimer>
-#include <QVariantMap>
 
 #include <functional>
 #include <memory>
@@ -34,35 +33,30 @@ signals:
 std::unique_ptr<AudioCapture> makeMicrophoneCapture();
 
 // Push-to-talk voice input. Hold to talk: beginListening() opens the
-// microphone, endListening() closes it and transcribes the recording on this
-// computer with Moonshine Tiny (see Moonshine.h); the words come back through
-// transcript().
+// microphone, endListening() closes it and sends the recording to Deepgram,
+// whose transcription comes back through transcript().
 //
 // Privacy, because this is a microphone:
 //  * off until the user turns it on; nothing is recorded while it is off;
 //  * recording only while the key / button is held, capped at maxSeconds;
-//  * audio lives in memory and is transcribed by a model on this computer: it is
-//    never sent anywhere and never written to disk;
+//  * audio lives in memory and is sent to Deepgram to be transcribed: it is
+//    never written to disk on this computer;
 //  * a clip with nothing in it (muted mic) is not transcribed;
 //  * the state is always visible (state, level) so the UI can show the mic is live.
 class VoiceInput : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY configChanged)
-    // The speech model's files are on this computer (see `problem` when not).
+    // The speech service is set up (see `problem` when not).
     Q_PROPERTY(bool configured READ configured NOTIFY configChanged)
     Q_PROPERTY(QString problem READ problem NOTIFY configChanged)
-    // The model is loaded and ready; false while it starts (a moment after turning voice on).
+    // The engine is ready; a network engine is ready as soon as it is configured.
     Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
     Q_PROPERTY(QString engine READ engine NOTIFY configChanged)
-    // Which speech-to-text engine: "local" (Moonshine, on this computer) or "deepgram" (a cloud service).
-    Q_PROPERTY(QString sttEngine READ sttEngine WRITE setSttEngine NOTIFY configChanged)
-    Q_PROPERTY(bool engineIsLocal READ engineIsLocal NOTIFY configChanged)
     Q_PROPERTY(QString deepgramKey READ deepgramKey WRITE setDeepgramKey NOTIFY configChanged)
     Q_PROPERTY(QString deepgramModel READ deepgramModel WRITE setDeepgramModel NOTIFY configChanged)
     Q_PROPERTY(QString deepgramLanguage READ deepgramLanguage WRITE setDeepgramLanguage NOTIFY configChanged)
     Q_PROPERTY(QString deepgramKeyterms READ deepgramKeyterms WRITE setDeepgramKeyterms NOTIFY configChanged)
-    Q_PROPERTY(QString modelFolder READ modelFolder CONSTANT)
     // "idle" | "listening" | "transcribing"
     Q_PROPERTY(QString state READ state NOTIFY stateChanged)
     Q_PROPERTY(bool listening READ listening NOTIFY stateChanged)
@@ -84,11 +78,6 @@ public:
     QString problem() const;
     bool ready() const { return m_ready; }
     QString engine() const;
-    QString modelFolder() const { return m_modelFolder; }
-    QString sttEngine() const { return m_sttEngine; }
-    void setSttEngine(const QString &engine);
-    // False when the words are recognized by a cloud service.
-    bool engineIsLocal() const { return !m_transcriber || m_transcriber->isLocal(); }
     QString deepgramKey() const { return m_dg.apiKey; }
     void setDeepgramKey(const QString &key);
     QString deepgramModel() const { return m_dg.model; }
@@ -111,10 +100,6 @@ public:
     void setMaxSeconds(int s) { m_maxSeconds = qMax(1, s); }
     // Another speech-to-text engine (tests use a scripted one). Takes effect for the next request.
     void setTranscriber(std::unique_ptr<Transcriber> transcriber);
-    Q_INVOKABLE void openModelFolder() const;
-    // What the settings shows about the speech model: the engine name,
-    // whether it is usable, and its files with their state.
-    Q_INVOKABLE QVariantMap sttModelStatus() const;
 
     // One transcription of a clip (16 kHz mono 16-bit PCM), by the same engine as
     // push-to-talk and without touching push-to-talk's state. `done` runs once on
@@ -162,7 +147,6 @@ private:
     void onFinished(quint64 ticket, const QString &text, const QString &error);
 
     std::unique_ptr<Transcriber> m_transcriber;
-    QString m_sttEngine = QStringLiteral("local");
     DeepgramListenSettings m_dg;
     QThread m_thread;
     TranscribeWorker *m_worker = nullptr;
@@ -171,7 +155,6 @@ private:
     quint64 m_clipTicket = 0;          // push-to-talk's request in flight
     bool m_ready = false;
     QString m_prepareError;
-    QString m_modelFolder;
     std::unique_ptr<AudioCapture> m_capture;
     QTimer m_maxTimer;
     QByteArray m_pcm;

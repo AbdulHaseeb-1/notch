@@ -13,10 +13,11 @@
 
 using namespace noch::buddyprovider;
 
-// Tools of connected apps are named gmail_* or mcp_<server>_*.
+// Tools of connected apps are named gmail_*, github_* or mcp_<server>_*.
 static bool isConnectorToolName(const QString &name)
 {
-    return name.startsWith(QLatin1String("gmail_")) || name.startsWith(QLatin1String("mcp_"));
+    return name.startsWith(QLatin1String("gmail_")) || name.startsWith(QLatin1String("github_"))
+        || name.startsWith(QLatin1String("mcp_"));
 }
 
 QString BuddyProvider::iconForTool(const QString &name, const QJsonObject &input)
@@ -66,6 +67,8 @@ QString BuddyProvider::badgeForTool(const QString &name, const QJsonObject &inpu
 {
     if (name.startsWith(QLatin1String("gmail_")))
         return QStringLiteral("GMAIL");
+    if (name.startsWith(QLatin1String("github_")))
+        return QStringLiteral("GITHUB");
     if (name.startsWith(QLatin1String("mcp_"))) {
         const QString rest = name.mid(4);
         const int cut = rest.indexOf(QLatin1Char('_'));
@@ -125,6 +128,25 @@ QString BuddyProvider::summarizeToolCall(const QString &name, const QJsonObject 
             const QString to = field("to", 40);
             return to.isEmpty() ? verb : QStringLiteral("%1 to %2").arg(verb, to);
         }
+    }
+    if (name.startsWith(QLatin1String("github_"))) {
+        const QString repo = input.value(QStringLiteral("repo")).toString().simplified().left(60);
+        const int number = input.value(QStringLiteral("number")).toInt();
+        if (name == QLatin1String("github_list_repos"))
+            return QStringLiteral("List GitHub repositories");
+        if (name == QLatin1String("github_list_issues"))
+            return repo.isEmpty() ? QStringLiteral("List GitHub issues") : QStringLiteral("List issues in %1").arg(repo);
+        if (name == QLatin1String("github_read_issue"))
+            return QStringLiteral("Read %1#%2").arg(repo).arg(number);
+        if (name == QLatin1String("github_search_issues"))
+            return QStringLiteral("Search GitHub issues: %1").arg(input.value(QStringLiteral("query")).toString().simplified().left(40));
+        if (name == QLatin1String("github_list_notifications"))
+            return QStringLiteral("Check GitHub notifications");
+        if (name == QLatin1String("github_create_issue"))
+            return QStringLiteral("Open an issue in %1").arg(repo);
+        if (name == QLatin1String("github_add_comment"))
+            return QStringLiteral("Comment on %1#%2").arg(repo).arg(number);
+        return connectors::prettyToolName(name);
     }
     if (name.startsWith(QLatin1String("mcp_")))
         return connectors::prettyToolName(name);

@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QTemporaryDir>
 
+#include "BuiltinOAuth.h"
 #include "ConnectorRegistry.h"
 #include "FakeHttp.h"
 #include "FakeMcp.h"
@@ -52,16 +53,24 @@ private slots:
         };
     }
 
-    void startsWithGmailDisconnectedAndNoTools() {
+    void startsWithBuiltInsDisconnectedAndNoTools() {
         ConnectorRegistry r;
         QVERIFY(r.find("gmail"));
+        QVERIFY(r.find("github"));
+        QVERIFY(r.gmail());
+        QVERIFY(r.github());
         QCOMPARE(app(r, "gmail").value("state").toString(), QStringLiteral("disconnected"));
+        QCOMPARE(app(r, "github").value("state").toString(), QStringLiteral("disconnected"));
         QVERIFY(!r.hasTools());
         QVERIFY(r.tools().isEmpty());
         QVERIFY(!r.hasTool("gmail_send_message"));   // not connected: not a tool
-        QCOMPARE(r.connectorList().size(), 1);
+        QVERIFY(!r.hasTool("github_create_issue"));
+        QCOMPARE(r.connectorList().size(), 2);   // exactly the two built-in apps
+        QCOMPARE(app(r, "gmail").value("kind").toString(), QStringLiteral("oauth"));
+        QCOMPARE(app(r, "github").value("kind").toString(), QStringLiteral("oauth"));
         QVERIFY(!app(r, "gmail").value("permissions").toList().isEmpty());
         QVERIFY(app(r, "gmail").value("permissions").toList().last().toMap().value("write").toBool());
+        QVERIFY(!app(r, "github").value("permissions").toList().isEmpty());
     }
 
     void addingServersValidatesAndGivesUniqueIds() {
@@ -69,7 +78,7 @@ private slots:
         QVERIFY(!r.addMcpServer("", "http", "https://example.com/mcp", "").isEmpty());
         QVERIFY(!r.addMcpServer("X", "http", "http://example.com/mcp", "").isEmpty());
         QVERIFY(!r.addMcpServer("X", "stdio", "", "").isEmpty());
-        QCOMPARE(r.connectorList().size(), 1);   // nothing was added
+        QCOMPARE(r.connectorList().size(), 2);   // nothing was added beyond the built-ins
         const QString url = mcpServer.base() + "/mcp";
         QVERIFY(r.addMcpServer("GitHub", "http", url, "Authorization: Bearer tok-123").isEmpty());
         QVERIFY(r.addMcpServer("GitHub", "http", url, "Authorization: Bearer tok-123").isEmpty());
@@ -122,40 +131,39 @@ private slots:
             ConnectorRegistry r;
             r.setStorageDir(dir.path());
             r.load();
-            r.setGoogleClientId("123-abc.apps.googleusercontent.com");
-            r.setGoogleClientSecret("GOCSPX-very-secret");
             QVERIFY(r.addMcpServer("GitHub", "http", url, "Authorization: Bearer tok-123").isEmpty());
             QVERIFY(waitFor(r, "mcp_github", "connected"));
             r.setAlwaysAllow("mcp_github_create_issue_", true);
         }
-        // The plain settings file holds no secret ...
+        // The plain settings file holds no secret and no OAuth client ID of any kind:
+        // the built-in apps' client IDs live in the app (BuiltinOAuth), not in settings.
         QFile f(QDir(dir.path()).filePath("connectors.json"));
         QVERIFY(f.open(QIODevice::ReadOnly));
         const QByteArray plain = f.readAll();
-        QVERIFY(plain.contains("123-abc.apps.googleusercontent.com"));
         QVERIFY(plain.contains(url.toUtf8()));
         QVERIFY(!plain.contains("tok-123"));
-        QVERIFY(!plain.contains("GOCSPX"));
-        // ... and neither does anything else on disk.
+        QVERIFY(!plain.contains("clientId"));
+        QVERIFY(!plain.contains("clientSecret"));
+        // ... and no secret appears anywhere else on disk either.
         for (QDirIterator it(dir.path(), QDir::Files, QDirIterator::Subdirectories); it.hasNext();) {
             QFile file(it.next());
             QVERIFY(file.open(QIODevice::ReadOnly));
             const QByteArray raw = file.readAll();
             if (secrets::encryptionAvailable() || !it.filePath().endsWith(".json"))
-                QVERIFY2(!raw.contains("tok-123") && !raw.contains("GOCSPX"), qPrintable(it.filePath()));
+                QVERIFY2(!raw.contains("tok-123"), qPrintable(it.filePath()));
         }
 
-        // Restart: the server comes back connected, the grant and the client ID are there.
+        // Restart: the server comes back connected and the grant is there.
         ConnectorRegistry again;
         again.setStorageDir(dir.path());
         again.load();
         QVERIFY(again.find("mcp_github"));
-        QCOMPARE(app(again, "gmail").value("clientId").toString(), QStringLiteral("123-abc.apps.googleusercontent.com"));
+        QVERIFY(again.find("gmail"));
+        QVERIFY(again.find("github"));
         QVERIFY(again.alwaysAllowed("mcp_github_create_issue_"));
         if (secrets::encryptionAvailable()) {
             QVERIFY(waitFor(again, "mcp_github", "connected"));   // the encrypted token was read back
             QVERIFY(again.hasTool("mcp_github_list_issues"));
-            QVERIFY(app(again, "gmail").value("hasClientSecret").toBool());
         }
     }
 
@@ -238,13 +246,17 @@ private slots:
         QVERIFY(tools.size() > before);   // the gate must learn about the grant
     }
 
-    void presetsAreUsableAsTheyAre() {
+    void githubConnectWithoutAClientIdFailsPlainly() {
+        // No built-in GitHub client ID in this build and no env override: Connect
+        // must say so at once instead of opening a sign-in that cannot work.
+        if (!builtinoauth::githubClientId().isEmpty())
+            QSKIP("this build or environment provides a GitHub client ID");
         ConnectorRegistry r;
-        for (const QVariant &v : r.presets()) {
-            const QVariantMap p = v.toMap();
-            QVERIFY(!p.value("name").toString().isEmpty());
-            QVERIFY(mcp::validateSpec(p.value("transport").toString(), p.value("target").toString()).isEmpty());
-        }
+        QVERIFY(!app(r, "github").value("configured").toBool());
+        r.connectApp("github");
+        QCOMPARE(app(r, "github").value("state").toString(), QStringLiteral("error"));
+        QVERIFY(app(r, "github").value("status").toString().contains("client ID"));
+        QVERIFY(!r.hasTools());
     }
 };
 

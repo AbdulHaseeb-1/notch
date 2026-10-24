@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 constexpr size_t kMaxMelRows = 970;        // ten seconds
@@ -17,6 +18,8 @@ WakeDetector::~WakeDetector() = default;
 bool WakeDetector::load(const Models &models, QString *error)
 {
     m_loaded = false;
+    m_wakes.clear();
+    m_phraseNames.clear();
     QString why;
     if (!m_mel.open(models.melspectrogram, &why)) {
         if (error)
@@ -28,21 +31,40 @@ bool WakeDetector::load(const Models &models, QString *error)
             *error = QObject::tr("The speech embedding model (embedding_model.onnx) did not load: %1").arg(why);
         return false;
     }
-    if (!m_wake.open(models.wakeword, &why)) {
+    if (models.phrases.isEmpty()) {
         if (error)
-            *error = QObject::tr("The wake word model did not load: %1").arg(why);
+            *error = QObject::tr("No wake word model was given.");
         return false;
+    }
+    for (const Models::Phrase &p : models.phrases) {
+        auto session = std::make_unique<ortrt::Session>();
+        if (!session->open(p.model, &why)) {
+            if (error)
+                *error = QObject::tr("The wake word model for “%1” did not load: %2").arg(p.name, why);
+            return false;
+        }
+        m_wakes.push_back(std::move(session));
+        m_phraseNames << p.name;
     }
     m_loaded = true;
     reset();
     // A model that does not behave (wrong shapes) is caught by the first scores.
-    std::vector<float> scores;
-    feed(QByteArray(kChunkSamples * 2 * 2, '\0'), &scores);
-    if (scores.empty() || !std::isfinite(scores.back())) {
+    std::vector<std::vector<float>> perPhrase;
+    feed(QByteArray(kChunkSamples * 2 * 2, '\0'), nullptr, &perPhrase);
+    if (perPhrase.size() != m_wakes.size()) {
         m_loaded = false;
         if (error)
-            *error = QObject::tr("That wake word model is not an openWakeWord model (it did not accept a 16 x 96 input).");
+            *error = QObject::tr("The wake word models did not run.");
         return false;
+    }
+    for (size_t i = 0; i < perPhrase.size(); ++i) {
+        if (perPhrase[i].empty() || !std::isfinite(perPhrase[i].back())) {
+            m_loaded = false;
+            if (error)
+                *error = QObject::tr("The wake word model for “%1” is not an openWakeWord model (it did not accept a 16 x 96 input).")
+                             .arg(m_phraseNames[int(i)]);
+            return false;
+        }
     }
     reset();
     return true;
@@ -73,8 +95,11 @@ bool WakeDetector::runModel(ortrt::Session &model, const float *in, const std::v
     return model.run(in, shape, out, &outShape, &why);
 }
 
-float WakeDetector::feed(const QByteArray &pcm, std::vector<float> *scores)
+float WakeDetector::feed(const QByteArray &pcm, std::vector<float> *scores,
+                         std::vector<std::vector<float>> *perPhrase)
 {
+    if (perPhrase)
+        perPhrase->assign(m_wakes.size(), {});
     if (!m_loaded || pcm.size() < 2)
         return 0.0f;
     const auto *samples = reinterpret_cast<const int16_t *>(pcm.constData());
@@ -83,11 +108,17 @@ float WakeDetector::feed(const QByteArray &pcm, std::vector<float> *scores)
     float best = 0.0f;
     size_t used = 0;
     while (m_pending.size() - used >= size_t(kChunkSamples)) {
-        float score = 0.0f;
-        if (step(m_pending.data() + used, true, &score)) {
-            best = std::max(best, score);
+        std::vector<float> stepScores;
+        if (step(m_pending.data() + used, true, &stepScores) && stepScores.size() == m_wakes.size()) {
+            float stepBest = 0.0f;
+            for (size_t i = 0; i < stepScores.size(); ++i) {
+                stepBest = std::max(stepBest, stepScores[i]);
+                if (perPhrase)
+                    (*perPhrase)[i].push_back(stepScores[i]);
+            }
+            best = std::max(best, stepBest);
             if (scores)
-                scores->push_back(score);
+                scores->push_back(stepBest);
         }
         used += size_t(kChunkSamples);
     }
@@ -95,7 +126,7 @@ float WakeDetector::feed(const QByteArray &pcm, std::vector<float> *scores)
     return best;
 }
 
-bool WakeDetector::step(const int16_t *chunk, bool wantScore, float *out)
+bool WakeDetector::step(const int16_t *chunk, bool wantScore, std::vector<float> *out)
 {
     // 1. mel frames for the new audio (with a little of the audio before it).
     const size_t window = size_t(kMelContext + kChunkSamples);
@@ -141,14 +172,25 @@ bool WakeDetector::step(const int16_t *chunk, bool wantScore, float *out)
     if (!wantScore)
         return true;
 
-    // 3. the wake word model, on the newest 16 embeddings.
+    // 3. the wake word models, each on the newest 16 embeddings. The features
+    // are computed once; every phrase reads the same window.
     if (m_embeddings.size() < size_t(kWakeEmbeddings) * kEmbedSize)
         return false;
     const float *recent = m_embeddings.data() + (m_embeddings.size() - size_t(kWakeEmbeddings) * kEmbedSize);
-    std::vector<float> score;
-    if (!runModel(m_wake, recent, { 1, kWakeEmbeddings, kEmbedSize }, &score) || score.empty())
-        return false;
     if (out)
-        *out = std::isfinite(score[0]) ? std::clamp(score[0], 0.0f, 1.0f) : 0.0f;
+        out->assign(m_wakes.size(), 0.0f);
+    for (size_t i = 0; i < m_wakes.size(); ++i) {
+        std::vector<float> score;
+        // One broken classifier must not silence the others: it scores NaN
+        // for this step, which load() reports against that phrase by name
+        // and which never wins a "best score" comparison at run time.
+        if (!runModel(*m_wakes[i], recent, { 1, kWakeEmbeddings, kEmbedSize }, &score) || score.empty()) {
+            if (out)
+                (*out)[i] = std::numeric_limits<float>::quiet_NaN();
+            continue;
+        }
+        if (out)
+            (*out)[i] = std::isfinite(score[0]) ? std::clamp(score[0], 0.0f, 1.0f) : 0.0f;
+    }
     return true;
 }

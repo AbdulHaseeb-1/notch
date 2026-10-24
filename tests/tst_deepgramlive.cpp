@@ -272,7 +272,6 @@ private slots:
         QVERIFY(!clip.isEmpty());
         VoiceInput v;
         v.setDeepgramKey(apiKey());
-        v.setSttEngine(QStringLiteral("deepgram"));
         QObject ctx;
         VoiceInput::Transcription got;
         bool done = false;

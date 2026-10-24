@@ -62,9 +62,6 @@ QString hookEventName(HookEvent event)
     switch (event) {
     case HookEvent::PreToolUse: return QStringLiteral("PreToolUse");
     case HookEvent::PostToolUse: return QStringLiteral("PostToolUse");
-    case HookEvent::Stop: return QStringLiteral("Stop");
-    case HookEvent::SessionStart: return QStringLiteral("SessionStart");
-    case HookEvent::PreCompact: return QStringLiteral("PreCompact");
     }
     return QStringLiteral("?");
 }

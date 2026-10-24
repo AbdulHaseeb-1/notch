@@ -1,9 +1,9 @@
 // Spoken reports: when it speaks, what it says, and that nothing in a reply can run as a command.
+// Both voices are cloud services; the tests run them against a fake server and a silent player.
 #include <QtTest>
-#include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QSignalSpy>
-#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include "SpeechFakes.h"
@@ -48,97 +48,94 @@ QByteArray googleRawPcmAnswer(const QByteArray &pcm)
     return googleAnswer(pcm, QStringLiteral("audio/L16;codec=pcm;rate=24000"));
 }
 
+// The text the fake Google server was last asked to speak.
+QString spokenText(const FakeStt &api)
+{
+    const QJsonObject body = QJsonDocument::fromJson(api.body).object();
+    return body["input"].toArray().at(0).toObject()["content"].toArray().at(0).toObject()["text"].toString();
+}
+
+// SpeechOut set up to speak through the fake Google server, with no real sound.
+void useGoogle(SpeechOut &s, FakeStt &api)
+{
+    s.player()->setDeviceDisabled(true);
+    s.setEngine("google");
+    s.setGoogleKey("k");
+    s.setGoogleEndpoint(api.base() + "/v1beta/interactions");
+    s.setEnabled(true);
+}
+
 } // namespace
 
 class TstSpeechOut : public QObject
 {
     Q_OBJECT
 
-    // A "voice" that writes what it is told to a file.
-    static void useRecorder(SpeechOut &s, const QString &file, const QString &script = QString()) {
-        s.setCommand(QStringLiteral("sh"), { QStringLiteral("-c"), script.isEmpty() ? QStringLiteral("cat > '%1'").arg(file) : script });
-    }
-    static QByteArray read(const QString &file) {
-        QFile f(file);
-        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
-    }
-
 private slots:
-    void initTestCase() {
-#ifdef Q_OS_WIN
-        // Git for Windows provides the POSIX shell these tests use as a stand-in
-        // voice. Without it there is nothing to run them against.
-        if (QStandardPaths::findExecutable(QStringLiteral("sh")).isEmpty())
-            QSKIP("These tests use a POSIX shell as the stand-in voice.");
-#endif
-    }
-
     void offByDefaultSaysNothing() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         QVERIFY(!s.enabled());
         s.speakReport("Done.");
         s.say("Hello");
         QTest::qWait(150);
-        QVERIFY(!QFileInfo::exists(out));
         QVERIFY(!s.speaking());
     }
 
     void speaksASummaryOfTheReply() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
+        FakeStt api;
+        api.reply = googleAnswer(wavFile(0.3));
         SpeechOut s;
-        useRecorder(s, out);
-        s.setEnabled(true);
+        useGoogle(s, api);
         s.speakReport("**Done.** I made the file.\n```\nlong code block\n```\nSee https://example.com for more.");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        const QString said = QString::fromUtf8(read(out));
+        QTRY_COMPARE_WITH_TIMEOUT(s.player()->playedUtterances(), 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(!s.speaking(), 3000);
+        const QString said = spokenText(api);
         QVERIFY2(said.contains("Done. I made the file."), qPrintable(said));
         QVERIFY2(!said.contains("long code block") && !said.contains("https") && !said.contains("*"), qPrintable(said));
     }
 
     void sayIsExactlyTheShortLine() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
+        FakeStt api;
+        api.reply = googleAnswer(wavFile(0.3));
         SpeechOut s;
-        useRecorder(s, out);
-        s.setEnabled(true);
+        useGoogle(s, api);
         s.say("I need your approval to continue.");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        QCOMPARE(QString::fromUtf8(read(out)), QStringLiteral("I need your approval to continue."));
+        QTRY_COMPARE_WITH_TIMEOUT(s.player()->playedUtterances(), 1, 3000);
+        QCOMPARE(spokenText(api), QStringLiteral("I need your approval to continue."));
     }
 
     void textIsDataNotACommand() {
-        // The reply goes in on stdin. Shell syntax in it is read aloud as words, never run.
+        // The reply travels as JSON data in a request body. Shell syntax in it
+        // is spoken as words, never run: nothing here can execute it.
+        FakeStt api;
+        api.reply = googleAnswer(wavFile(0.3));
         QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         const QString trap = dir.filePath("PWNED");
         SpeechOut s;
-        useRecorder(s, out);
-        s.setEnabled(true);
+        useGoogle(s, api);
         s.say(QStringLiteral("$(touch '%1'); `touch '%1'`; touch '%1' && echo \"x\" 'y'").arg(trap));
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(s.player()->playedUtterances(), 1, 3000);
         QVERIFY(!QFileInfo::exists(trap));
-        QVERIFY(QString::fromUtf8(read(out)).contains("touch"));
+        QVERIFY(spokenText(api).contains("touch"));
     }
 
     void unicodeSurvives() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
+        FakeStt api;
+        api.reply = googleAnswer(wavFile(0.3));
         SpeechOut s;
-        useRecorder(s, out);
-        s.setEnabled(true);
-        s.say(QString::fromUtf8("Fertig \xc3\xa4\xc3\xb6\xc3\xbc \xe2\x80\x94 caf\xc3\xa9"));
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        QCOMPARE(QString::fromUtf8(read(out)), QString::fromUtf8("Fertig \xc3\xa4\xc3\xb6\xc3\xbc \xe2\x80\x94 caf\xc3\xa9"));
+        useGoogle(s, api);
+        const QString line = QString::fromUtf8("Fertig \xc3\xa4\xc3\xb6\xc3\xbc \xe2\x80\x94 caf\xc3\xa9");
+        s.say(line);
+        QTRY_COMPARE_WITH_TIMEOUT(s.player()->playedUtterances(), 1, 3000);
+        QCOMPARE(spokenText(api), line);
     }
 
     void speakingIsReportedAndStopCutsIt() {
+        FakeStt api;
+        api.delayMs = 2000;
+        api.reply = googleAnswer(wavFile(0.3));
         SpeechOut s;
-        s.setCommand("sh", { "-c", "sleep 5" });
-        s.setEnabled(true);
+        useGoogle(s, api);
         QSignalSpy spy(&s, &SpeechOut::speakingChanged);
         s.say("A long report");
         QTRY_VERIFY(s.speaking());
@@ -147,67 +144,29 @@ private slots:
         QVERIFY(!s.speaking());
     }
 
-    void aNewReportReplacesTheOldOne() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
-        SpeechOut s;
-        // Records, then lingers, so the first is still "speaking" when the second arrives.
-        s.setCommand("sh", { "-c", QStringLiteral("cat >> '%1'; sleep 5").arg(out) });
-        s.setEnabled(true);
-        s.say("first report");
-        QTRY_VERIFY(s.speaking());
-        QTRY_COMPARE_WITH_TIMEOUT(QString::fromUtf8(read(out)), QStringLiteral("first report"), 3000);
-        s.say("second report");
-        QTRY_VERIFY_WITH_TIMEOUT(QString::fromUtf8(read(out)).contains("second report"), 3000);
-        s.stop();
-    }
-
     void turningItOffCutsTheVoiceAtOnce() {
+        FakeStt api;
+        api.delayMs = 2000;
+        api.reply = googleAnswer(wavFile(0.3));
         SpeechOut s;
-        s.setCommand("sh", { "-c", "sleep 5" });
-        s.setEnabled(true);
+        useGoogle(s, api);
         s.say("Hello there");
         QTRY_VERIFY(s.speaking());
         s.setEnabled(false);
         QVERIFY(!s.speaking());
     }
 
-    void noVoiceInstalledIsUnavailableNotAnError() {
-        SpeechOut s;
-        s.setCommand(QString(), {});
+    void noKeyIsUnavailableAndReported() {
+        SpeechOut s;   // google by default, and no key
         s.setEnabled(true);
         QVERIFY(!s.available());
-        s.speakReport("Done.");       // quietly nothing
+        QVERIFY(!s.problem().isEmpty());
+        s.speakReport("Done.");
         QVERIFY(!s.speaking());
-    }
-
-    void aMissingProgramDoesNotCrash() {
-        SpeechOut s;
-        s.setCommand("/nonexistent/voice", {});
-        s.setEnabled(true);
-        s.say("Hello");
-        QTest::qWait(150);
-        QVERIFY(!s.speaking());
+        QCOMPARE(s.error(), s.problem());   // the reason is surfaced, not silently swallowed
     }
 
     // ---- pure helpers ----------------------------------------------------------------------
-
-    void kokoroAddressesAreChecked() {
-        QCOMPARE(SpeechOut::kokoroUrl("http://127.0.0.1:8880"), QString("http://127.0.0.1:8880/v1/audio/speech"));
-        QCOMPARE(SpeechOut::kokoroUrl("localhost:8880/"), QString("http://localhost:8880/v1/audio/speech"));
-        QCOMPARE(SpeechOut::kokoroUrl("http://localhost:8880/v1"), QString("http://localhost:8880/v1/audio/speech"));
-        QCOMPARE(SpeechOut::kokoroUrl("https://tts.example.com"), QString("https://tts.example.com/v1/audio/speech"));
-        QVERIFY(SpeechOut::kokoroUrl("http://tts.example.com").isEmpty());   // plain http to another machine
-        QVERIFY(SpeechOut::kokoroUrl("").isEmpty());
-        QCOMPARE(SpeechOut::kokoroVoicesUrl("http://127.0.0.1:8880"), QString("http://127.0.0.1:8880/v1/audio/voices"));
-        QCOMPARE(SpeechOut::kokoroVoicesUrl("localhost:8880/v1"), QString("http://localhost:8880/v1/audio/voices"));
-        QCOMPARE(SpeechOut::kokoroVoicesUrl("http://127.0.0.1:8880/v1/audio/speech"),
-                 QString("http://127.0.0.1:8880/v1/audio/voices"));
-        QVERIFY(SpeechOut::kokoroVoicesUrl("http://tts.example.com").isEmpty());
-        QVERIFY(SpeechOut::kokoroVoicesUrl("").isEmpty());
-        QVERIFY(!SpeechOut::kokoroAddressProblem("ftp://127.0.0.1").isEmpty());
-        QVERIFY(SpeechOut::kokoroAddressProblem("https://tts.example.com").isEmpty());
-    }
 
     void googleVoiceUsesAGeminiNameAndMigratesTheOldDefault() {
         SpeechOut s;
@@ -256,10 +215,7 @@ private slots:
     void googleSendsTheTextAndPlaysTheAudio() {
         FakeStt api;
         api.reply = googleAnswer(wavFile(0.4));
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         s.player()->setDeviceDisabled(true);
         s.setEngine("google");
         s.setGoogleKey("KEY-123");
@@ -275,7 +231,6 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!s.speaking(), 3000);
         QVERIFY(speaking.count() >= 2);
         QVERIFY(s.error().isEmpty());
-        QVERIFY(!QFileInfo::exists(out));                                  // the system voice stayed quiet
         QVERIFY2(api.headers.contains("x-goog-api-key: key-123"), api.headers.constData());
         QVERIFY(!api.requestLine.contains("KEY"));                         // the key is never in the address
         const QJsonObject body = QJsonDocument::fromJson(api.body).object();
@@ -294,55 +249,48 @@ private slots:
         QCOMPARE(speech["voice"].toString(), QString("Puck"));
     }
 
-    void googleWithoutAKeyUsesTheSystemVoice() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
+    void googleWithoutAKeySaysNothingAndSaysWhy() {
+        FakeStt api;
         SpeechOut s;
-        useRecorder(s, out);
+        s.setGoogleEndpoint(api.base() + "/v1beta/interactions");
         s.setEngine("google");
         s.setEnabled(true);
         QVERIFY(!s.available());
         QVERIFY(!s.problem().isEmpty());
         s.say("Hello");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
         QVERIFY(!s.error().isEmpty());
+        QCOMPARE(api.requests, 0);          // nothing was even asked, let alone spoken
+        QVERIFY(!s.speaking());
     }
 
-    void googleRefusalIsReportedAndReadBySystemVoice() {
+    void googleRefusalIsReportedAndNothingIsPlayed() {
         FakeStt api;
         api.status = 403;
         api.reply = R"({"error":{"code":403,"message":"API key not valid. Please pass a valid API key."}})";
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         s.player()->setDeviceDisabled(true);
         s.setEngine("google");
         s.setGoogleKey("bad");
         s.setGoogleEndpoint(api.base() + "/v1beta/interactions");
         s.setEnabled(true);
         s.say("Please read me");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        QCOMPARE(QString::fromUtf8(read(out)), QString("Please read me"));
+        QTRY_VERIFY_WITH_TIMEOUT(!s.error().isEmpty() && !s.speaking(), 3000);
         QVERIFY2(s.error().contains("API key not valid"), qPrintable(s.error()));
         QCOMPARE(s.player()->playedUtterances(), 0);
     }
 
-    void garbageAudioFallsBack() {
+    void garbageAudioIsReportedAndNothingIsPlayed() {
         FakeStt api;
         api.reply = R"({"steps":[{"type":"model_output","content":[{"type":"audio","data":"bm90IGEgd2F2","mime_type":"audio/wav"}]}]})";
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
         SpeechOut s;
-        useRecorder(s, out);
         s.player()->setDeviceDisabled(true);
         s.setEngine("google");
         s.setGoogleKey("k");
         s.setGoogleEndpoint(api.base() + "/v1beta/interactions");
         s.setEnabled(true);
         s.say("Hello");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        QVERIFY(!s.error().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(!s.error().isEmpty() && !s.speaking(), 3000);
+        QCOMPARE(s.player()->playedUtterances(), 0);
     }
 
     void googleRawPcmIsWrappedAsWav() {
@@ -361,107 +309,14 @@ private slots:
         QVERIFY(s.error().isEmpty());
     }
 
-    // ---- Kokoro ----------------------------------------------------------------------------------
-
-    void kokoroPostsAnOpenAiSpeechRequest() {
+    void googlePipelineSpeaksSentenceBySentence() {
         FakeStt api;
-        api.reply = wavFile(0.4);
+        api.reply = googleAnswer(wavFile(0.4));
         SpeechOut s;
         s.player()->setDeviceDisabled(true);
-        s.setEngine("kokoro");
-        s.setKokoroBase(api.base());
-        s.setKokoroVoice("af_bella");
-        s.setSpeed(0.9);
-        s.setEnabled(true);
-        QVERIFY(s.available());
-        s.speakReport("**Done.** I made the file.");
-        QTRY_COMPARE_WITH_TIMEOUT(s.player()->playedUtterances(), 1, 3000);
-        QTRY_VERIFY_WITH_TIMEOUT(!s.speaking(), 3000);
-        QVERIFY(api.requestLine.contains("POST /v1/audio/speech"));
-        const QJsonObject body = QJsonDocument::fromJson(api.body).object();
-        QCOMPARE(body["voice"].toString(), QString("af_bella"));
-        QCOMPARE(body["response_format"].toString(), QString("wav"));
-        QCOMPARE(body["speed"].toDouble(), 0.9);
-        QVERIFY2(body["input"].toString().contains("Done. I made the file."), qPrintable(body["input"].toString()));
-        QVERIFY(!body["input"].toString().contains("*"));
-        QVERIFY(s.error().isEmpty());
-    }
-
-    void kokoroVoiceListComesFromTheServer() {
-        FakeStt api;
-        api.reply = R"({"voices":["af_heart","am_michael","bf_emma"]})";
-        SpeechOut s;
-        s.setKokoroBase(api.base());
-        QSignalSpy changed(&s, &SpeechOut::kokoroVoicesChanged);
-        s.refreshKokoroVoices();
-        QVERIFY(s.kokoroVoicesLoading());
-        QTRY_COMPARE_WITH_TIMEOUT(s.kokoroVoices().size(), 3, 3000);
-        QTRY_VERIFY_WITH_TIMEOUT(!s.kokoroVoicesLoading(), 3000);
-        QCOMPARE(s.kokoroVoices(), QStringList({ "af_heart", "am_michael", "bf_emma" }));
-        QVERIFY(s.kokoroVoicesProblem().isEmpty());
-        QVERIFY2(api.requestLine.contains("GET /v1/audio/voices"), api.requestLine.constData());
-        QVERIFY(changed.count() >= 2);
-    }
-
-    // Kokoro-FastAPI answers with objects; accept those as well as plain names.
-    void kokoroVoiceListAcceptsObjectEntries() {
-        FakeStt api;
-        api.reply = R"({"voices":[{"id":"af_bella"},{"name":"af_nicole"},"am_adam"]})";
-        SpeechOut s;
-        s.setKokoroBase(api.base());
-        s.refreshKokoroVoices();
-        QTRY_COMPARE_WITH_TIMEOUT(s.kokoroVoices().size(), 3, 3000);
-        QCOMPARE(s.kokoroVoices(), QStringList({ "af_bella", "af_nicole", "am_adam" }));
-        QVERIFY(s.kokoroVoicesProblem().isEmpty());
-    }
-
-    void kokoroVoiceListReportsAnUnreachableServer() {
-        SpeechOut s;
-        s.setKokoroBase("http://127.0.0.1:1");
-        s.refreshKokoroVoices();
-        QTRY_VERIFY_WITH_TIMEOUT(!s.kokoroVoicesLoading(), 5000);
-        QVERIFY2(!s.kokoroVoicesProblem().isEmpty(), "the failure should be explained");
-        QVERIFY(s.kokoroVoices().isEmpty());
-    }
-
-    void changingTheKokoroServerDropsItsVoiceList() {
-        FakeStt api;
-        api.reply = R"({"voices":["af_heart"]})";
-        SpeechOut s;
-        s.setKokoroBase(api.base());
-        s.refreshKokoroVoices();
-        QTRY_COMPARE_WITH_TIMEOUT(s.kokoroVoices().size(), 1, 3000);
-        s.setKokoroBase("http://127.0.0.1:9999");
-        QVERIFY(s.kokoroVoices().isEmpty());
-        QVERIFY(s.kokoroVoicesProblem().isEmpty());
-    }
-
-    void engineStatusesReportWhatIsConfigured() {        SpeechOut s;
-        QVariantMap all = s.engineStatuses();
-        QVERIFY(all.contains(QStringLiteral("system")));
-        QVERIFY(all.contains(QStringLiteral("google")));
-        QVERIFY(all.contains(QStringLiteral("kokoro")));
-
-        const QVariantMap google = all.value(QStringLiteral("google")).toMap();
-        QVERIFY(!google.value(QStringLiteral("ready")).toBool());   // no key yet
-        QVERIFY(!google.value(QStringLiteral("detail")).toString().isEmpty());
-
-        const QVariantMap kokoro = all.value(QStringLiteral("kokoro")).toMap();
-        QVERIFY(kokoro.value(QStringLiteral("ready")).toBool());    // valid defaults
-
-        s.setGoogleKey("abc123");
-        s.setGoogleVoice("Kore");
-        all = s.engineStatuses();
-        QVERIFY(all.value(QStringLiteral("google")).toMap().value(QStringLiteral("ready")).toBool());
-    }
-
-    void kokoroPipelineSpeaksSentenceBySentence() {
-        FakeStt api;
-        api.reply = wavFile(0.4);
-        SpeechOut s;
-        s.player()->setDeviceDisabled(true);
-        s.setEngine("kokoro");
-        s.setKokoroBase(api.base());
+        s.setEngine("google");
+        s.setGoogleKey("k");
+        s.setGoogleEndpoint(api.base() + "/v1beta/interactions");
         s.setEnabled(true);
         // Two sentences: the pipeline sends one synthesis request per chunk
         // and plays them back to back.
@@ -473,32 +328,25 @@ private slots:
         QVERIFY(s.error().isEmpty());
     }
 
-    void kokoroServerDownFallsBackToTheSystemVoice() {        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
+    void engineStatusesReportWhatIsConfigured() {
         SpeechOut s;
-        useRecorder(s, out);
-        s.setEngine("kokoro");
-        s.setKokoroBase("http://127.0.0.1:1");
-        s.setEnabled(true);
-        s.say("Hello");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 5000);
-        QVERIFY2(s.error().contains("Kokoro"), qPrintable(s.error()));
-    }
+        QVariantMap all = s.engineStatuses();
+        QVERIFY(all.contains(QStringLiteral("google")));
+        QVERIFY(all.contains(QStringLiteral("deepgram")));
+        QVERIFY(!all.contains(QStringLiteral("system")));
+        QVERIFY(!all.contains(QStringLiteral("kokoro")));
 
-    void kokoroOnAnotherMachineOverPlainHttpIsRefused() {
-        FakeStt api;
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
-        SpeechOut s;
-        useRecorder(s, out);
-        s.setEngine("kokoro");
-        s.setKokoroBase("http://tts.example.com:8880");
-        s.setEnabled(true);
-        QVERIFY(!s.available());
-        QVERIFY(s.problem().contains("https"));
-        s.say("Hello");
-        QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(out) && !s.speaking(), 3000);
-        QCOMPARE(api.requests, 0);
+        const QVariantMap google = all.value(QStringLiteral("google")).toMap();
+        QVERIFY(!google.value(QStringLiteral("ready")).toBool());   // no key yet
+        QVERIFY(!google.value(QStringLiteral("detail")).toString().isEmpty());
+
+        const QVariantMap deepgram = all.value(QStringLiteral("deepgram")).toMap();
+        QVERIFY(!deepgram.value(QStringLiteral("ready")).toBool());   // no key yet
+
+        s.setGoogleKey("abc123");
+        s.setGoogleVoice("Kore");
+        all = s.engineStatuses();
+        QVERIFY(all.value(QStringLiteral("google")).toMap().value(QStringLiteral("ready")).toBool());
     }
 
     // ---- stopping and replacing ------------------------------------------------------------------
@@ -563,7 +411,11 @@ private slots:
         s.setMaxChars(5);
         QCOMPARE(s.maxChars(), 120);
         s.setEngine("bogus");
-        QCOMPARE(s.engine(), QString("system"));
+        QCOMPARE(s.engine(), QString("google"));   // retired/unknown values land on google
+        s.setEngine("system");
+        QCOMPARE(s.engine(), QString("google"));
+        s.setEngine("kokoro");
+        QCOMPARE(s.engine(), QString("google"));
     }
 
     // ---- sentence chunks for pipelined synthesis -------------------------------------
@@ -601,15 +453,14 @@ private slots:
     }
 
     void emptyOrCodeOnlyReplyIsNotSpoken() {
-        QTemporaryDir dir;
-        const QString out = dir.filePath("said.txt");
+        FakeStt api;
         SpeechOut s;
-        useRecorder(s, out);
-        s.setEnabled(true);
+        useGoogle(s, api);
         s.speakReport("```\nonly code\n```");
         s.speakReport("   ");
         QTest::qWait(150);
-        QVERIFY(!QFileInfo::exists(out));
+        QCOMPARE(api.requests, 0);
+        QVERIFY(!s.speaking());
     }
 };
 

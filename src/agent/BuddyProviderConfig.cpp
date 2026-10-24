@@ -292,8 +292,6 @@ void BuddyProvider::updateResponseMeta()
     meta[QStringLiteral("truncated")] = m_truncated;
     meta[QStringLiteral("maxSteps")] = m_maxSteps;
     meta[QStringLiteral("computerMode")] = computerToolMode();
-    if (m_classification.valid)
-        meta[QStringLiteral("classifier")] = m_classification.toVariantMap();
     m_responseMeta = meta;
     emit responseMetaChanged();
 }
