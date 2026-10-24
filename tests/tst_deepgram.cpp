@@ -523,13 +523,13 @@ private slots:
         StreamingPlayer player;
         player.setDeviceDisabled(true);
         player.setStreaming(true);
-        QCOMPARE(player.prebufferMs(), 300);
+        QCOMPARE(player.prebufferMs(), 400);
         // 200 ms is not enough to start: it is held back ...
         player.write(tone(0.2, 300, 0.3, 24000));
         QVERIFY(player.bufferedSeconds() >= 0.19);
-        // ... and the next 150 ms tips it over 300 ms, so it plays at once instead of waiting longer.
-        player.write(tone(0.15, 300, 0.3, 24000));
-        QTRY_VERIFY_WITH_TIMEOUT(player.bufferedSeconds() < 0.34, 300);
+        // ... and the next 250 ms tips it over 400 ms, so it plays at once instead of waiting longer.
+        player.write(tone(0.25, 300, 0.3, 24000));
+        QTRY_VERIFY_WITH_TIMEOUT(player.bufferedSeconds() < 0.44, 300);
     }
 
     void thePlayerReferenceIsTheDeviceAudioAsMono16k()
@@ -647,6 +647,7 @@ private slots:
         QCOMPARE(r.agent.state(), QStringLiteral("thinking"));
         r.server.sendText(eventJson(QStringLiteral("LatencyReport"), { { QStringLiteral("total_latency"), 0.654 } }));
         r.server.sendText(convo(QStringLiteral("assistant"), QStringLiteral("Two plus two is four.")));
+        r.server.sendText(eventJson(QStringLiteral("AgentStartedSpeaking")));
         r.server.sendBinary(tone(0.5, 250, 0.3, 24000));
         QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
         QCOMPARE(agentSaid.count(), 1);
@@ -846,11 +847,65 @@ private slots:
         QTest::qWait(60);
         QCOMPARE(r.agent.player()->totalFrames(), frames);
         QVERIFY(r.agent.player()->idle());
-        // ...but the next answer is heard.
+        // ...but the next answer is heard, once it explicitly starts.
         QTest::qWait(150);
+        r.server.sendText(eventJson(QStringLiteral("AgentStartedSpeaking")));
         r.server.sendBinary(tone(0.2, 250, 0.3, 24000));
         QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
         QVERIFY(r.agent.player()->totalFrames() > frames);
+    }
+
+    void staleAudioAfterTheFinalWordsIsDroppedUntilTheNextAnswerStarts()
+    {
+        Rig r;
+        r.agent.setAudioMode(QStringLiteral("headphones"));
+        QVERIFY(r.startAndWaitListening());
+        r.server.sendBinary(tone(1.0, 250, 0.3, 24000));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
+        r.server.sendText(eventJson(QStringLiteral("UserStartedSpeaking")));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("listening"));
+        const qint64 frames = r.agent.player()->totalFrames();
+        // Old audio still on the wire: dropped inside the window...
+        r.server.sendBinary(tone(0.2, 250, 0.3, 24000));
+        QTest::qWait(60);
+        QCOMPARE(r.agent.player()->totalFrames(), frames);
+        // ...and after it, past the 150 ms window: the binary stream carries no turn
+        // marker, so anything before the next answer's own start is still the old one.
+        QTest::qWait(300);
+        r.server.sendBinary(tone(0.2, 250, 0.3, 24000));
+        QTest::qWait(60);
+        QCOMPARE(r.agent.player()->totalFrames(), frames);
+        // The final transcript does not reopen the speakers either...
+        r.server.sendText(convo(QStringLiteral("user"), QStringLiteral("What is two plus two?")));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("thinking"));
+        r.server.sendBinary(tone(0.2, 250, 0.3, 24000));
+        QTest::qWait(60);
+        QCOMPARE(r.agent.player()->totalFrames(), frames);
+        QCOMPARE(r.agent.state(), QStringLiteral("thinking"));
+        // ...only the next answer's own start does.
+        r.server.sendText(eventJson(QStringLiteral("AgentStartedSpeaking")));
+        r.server.sendBinary(tone(0.2, 250, 0.3, 24000));
+        QTRY_COMPARE(r.agent.state(), QStringLiteral("speaking"));
+        QVERIFY(r.agent.player()->totalFrames() > frames);
+    }
+
+    void ackWaitsWhileTheUserIsSpeaking()
+    {
+        Rig r;
+        QSignalSpy asked(&r.agent, &DeepgramAgent::buddyRequested);
+        QVERIFY(r.startAndWaitListening());
+        r.server.sendText(eventJson(QStringLiteral("FunctionCallRequest"), { { QStringLiteral("functions"), QJsonArray{
+            QJsonObject{ { "id", "toolu_9" }, { "name", "ask_buddy" }, { "arguments", "{\"request\":\"Take a while\"}" }, { "client_side", true } } } } }));
+        QTRY_COMPARE(asked.count(), 1);
+        // The user starts talking before the 2.2 s ack: no filler over them, even past it.
+        r.server.sendText(eventJson(QStringLiteral("UserStartedSpeaking")));
+        QTest::qWait(2600);
+        QCOMPARE(r.sent("InjectAgentMessage").size(), 0);
+        // Once their words are final, the ack goes out on the next look.
+        r.server.sendText(convo(QStringLiteral("user"), QStringLiteral("Actually, never mind.")));
+        QTRY_COMPARE_WITH_TIMEOUT(r.sent("InjectAgentMessage").size(), 1, 3000);
+        QCOMPARE(r.sent("InjectAgentMessage").first()["message"].toString(), QStringLiteral("One moment."));
+        r.agent.answerBuddy(QStringLiteral("toolu_9"), QStringLiteral("Done."));
     }
 
     void interruptCutsTheAgentOffInSpeakerMode()
